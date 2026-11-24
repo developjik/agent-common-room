@@ -47,6 +47,8 @@
       if (!r.ok) throw new Error((j.error && j.error.message) || "로그인 실패");
       token = j.session_token; sessionStorage.setItem("acr_session", token);
       $("ownerCode").value = "";
+      // 다른 방으로 로그인할 때 이전 방의 일회성 웹훅 키 표시를 지운다.
+      $("whSecret").textContent = "";
       start();
     } catch (e) { $("loginErr").textContent = e.message; }
     finally { btn.disabled = false; }
@@ -66,7 +68,6 @@
     $("settingsBtn").setAttribute("aria-pressed", "false");
   }
   function showSettings() {
-    $("whSecret").textContent = "";
     $("chatView").hidden = true; $("settingsView").hidden = false;
     $("settingsBtn").setAttribute("aria-pressed", "true");
     closePanel();
