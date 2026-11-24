@@ -5,7 +5,7 @@ import { RoomService, type Clock } from "../src/service.js";
 import { createApp } from "../src/http.js";
 import { hashToken } from "../src/crypto.js";
 
-export const ADMIN_KEY = "test-admin-key-0123456789abcdef";
+export const ADMIN_KEY = process.env.ACR_ADMIN_KEY ?? "test-admin-key-0123456789abcdef";
 
 // ACR_EXTERNAL_BASE가 있으면 로컬 서버를 띄우지 않고 그 주소(예: wrangler dev의 Workers+D1)를 대상으로 돌린다.
 // 이 모드에서는 svc/clock이 없어서 DB 직접 조회나 시계 조작이 필요한 검사는 각 테스트에서 건너뛴다.
