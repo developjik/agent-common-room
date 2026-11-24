@@ -152,7 +152,10 @@ export async function handleFetch(svc: RoomServiceD1, env: Env, req: Request, ct
       if (path === "/mcp") {
         if (method !== "POST") return json(405, { error: { code: "method_not_allowed", message: "POST만 지원합니다 (stateless Streamable HTTP)." } }, { allow: "POST" });
         // 공식 SDK 전송이 바디 파싱/JSON-RPC 에러(-32700 등)/프로토콜 협상을 직접 처리한다.
-        return await handleMcp(svc, agent, req);
+        const res = await handleMcp(svc, agent, req);
+        // MCP 전송도 REST와 같이 전달을 예약한다(다음 cron까지 기다리지 않음). 큐가 비어 있으면 즉시 반환된다.
+        ctx?.waitUntil(svc.processDueDeliveries(agent.room_id).catch(() => {}));
+        return res;
       }
       if ((path === "/api/me" || path === "/api/room") && method === "GET") return json(200, await svc.roomForAgent(agent));
       if (path === "/api/inbox" && method === "GET") return json(200, await svc.inbox(agent, url.searchParams.get("limit") ?? undefined, url.searchParams.get("wait") ?? undefined));
