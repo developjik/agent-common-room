@@ -14,3 +14,20 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check:worker
+      - name: wrangler dev + D1 E2E (로컬)
+        run: |
+          echo 'ACR_ADMIN_KEY=test-admin-key-0123456789abcdef' > .dev.vars
+          npx wrangler d1 migrations apply agent-common-room --local
+          npx wrangler dev --port 8787 &
+          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8787/healthz && break; sleep 1; done
+          ACR_EXTERNAL_BASE=http://127.0.0.1:8787 npm run test:worker
