@@ -52,6 +52,7 @@
     finally { btn.disabled = false; }
   }
   function logout(expired) {
+    $("whSecret").textContent = "";
     if (token && !expired) fetch("/api/owner/logout", { method: "POST", headers: { authorization: "Bearer " + token } }).catch(function () {});
     token = ""; sessionStorage.removeItem("acr_session"); clearInterval(timer);
     $("app").hidden = true; $("login").hidden = false; lastSeq = 0; $("messages").textContent = "";
@@ -65,6 +66,7 @@
     $("settingsBtn").setAttribute("aria-pressed", "false");
   }
   function showSettings() {
+    $("whSecret").textContent = "";
     $("chatView").hidden = true; $("settingsView").hidden = false;
     $("settingsBtn").setAttribute("aria-pressed", "true");
     closePanel();
