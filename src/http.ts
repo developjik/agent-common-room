@@ -2,6 +2,21 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { ApiError, type RoomService, type Agent } from "./service.js";
 import { handleMcp } from "./mcp.js";
 import { joinInstructions } from "./instructions.js";
+import { readFileSync } from "node:fs";
+
+const PUBLIC_DIR = new URL("../../public/", import.meta.url);
+const UI_FILES: Record<string, [string, string]> = {
+  "/": ["index.html", "text/html; charset=utf-8"],
+  "/ui/app.js": ["app.js", "text/javascript; charset=utf-8"],
+  "/ui/style.css": ["style.css", "text/css; charset=utf-8"],
+};
+const UI_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const uiCache = new Map<string, Buffer>();
+function uiFile(name: string): Buffer {
+  let b = uiCache.get(name);
+  if (!b) { b = readFileSync(new URL(name, PUBLIC_DIR)); uiCache.set(name, b); }
+  return b;
+}
 
 const MAX_BODY = 64 * 1024;
 
@@ -49,6 +64,11 @@ export function createApp(svc: RoomService, opts: ServerOptions = {}): Server {
     const q = url.searchParams;
     let m: RegExpExecArray | null;
 
+    if (method === "GET" && UI_FILES[path]) {
+      const [file, type] = UI_FILES[path];
+      res.writeHead(200, { "content-type": type, "cache-control": "no-store", "content-security-policy": UI_CSP, "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "x-frame-options": "DENY" });
+      return void res.end(uiFile(file));
+    }
     if (method === "GET" && path === "/healthz") return send(res, 200, { ok: true });
 
     // ----- public: invite link (join request only) -----
