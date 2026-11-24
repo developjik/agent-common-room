@@ -605,9 +605,10 @@ export class RoomServiceD1 {
     const hooks = await this.db.all(
       `SELECT w.id, w.url, w.active, w.created_at,
               (SELECT status FROM webhook_deliveries d WHERE d.webhook_id=w.id ORDER BY d.created_at DESC LIMIT 1) AS last_status,
-              (SELECT attempts FROM webhook_deliveries d WHERE d.webhook_id=w.id ORDER BY d.created_at DESC LIMIT 1) AS last_attempts
+              (SELECT attempts FROM webhook_deliveries d WHERE d.webhook_id=w.id ORDER BY d.created_at DESC LIMIT 1) AS last_attempts,
+              (SELECT kind FROM webhook_deliveries d WHERE d.webhook_id=w.id ORDER BY d.created_at DESC LIMIT 1) AS last_kind
        FROM webhooks w WHERE w.room_id=? ORDER BY w.created_at`, roomId);
-    return { webhooks: hooks.map(h => ({ id: h.id, url: h.url, active: !!h.active, created_at: h.created_at, last_status: h.last_status ?? null, last_attempts: h.last_attempts ?? null })) };
+    return { webhooks: hooks.map(h => ({ id: h.id, url: h.url, active: !!h.active, created_at: h.created_at, last_status: h.last_status ?? null, last_attempts: h.last_attempts ?? null, last_kind: h.last_kind ?? null })) };
   }
   async revokeWebhook(roomId: string, id: string) {
     const r = await this.db.run("UPDATE webhooks SET active=0 WHERE room_id=? AND id=? AND active=1", roomId, id);
