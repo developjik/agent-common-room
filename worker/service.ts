@@ -8,7 +8,7 @@
 //  - client_id 멱등: messages_idem 부분 고유 인덱스 + 충돌 후 재조회.
 //  - claim/approve 경합: 조건부 UPDATE의 changes 검사 + 보상(compensation) 쓰기.
 //  - login throttle: login_fails 테이블(격리(isolate) 간 공유를 위해 인메모리 Map 대신 DB 사용).
-import { hashToken, newId, newToken, safeEqualHex, sha256Hex } from "./crypto";
+import { hashToken, hmacSha256Hex, newId, newToken, safeEqualHex, sha256Hex } from "./crypto";
 import { batchChanges, isConstraintError, type Db, type Row } from "./db";
 
 export class ApiError extends Error {
@@ -39,6 +39,8 @@ export interface PublicMessage {
   recipient: { id: string; name: string } | null;
   reply_to: number | null; content: string | null; deleted: boolean;
   context_category: string; created_at: string;
+  // 지정 수신 메시지만: 받는 에이전트의 처리 단계 (보냄→전달됨→처리 확인→답장함).
+  delivery: { state: "sent" | "fetched" | "acked" | "replied" } | null;
 }
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -361,7 +363,7 @@ export class RoomServiceD1 {
   }
 
   // ---------- messages ----------
-  private publicOf(m: Row, rec?: Row): PublicMessage {
+  private publicOf(m: Row, rec?: Row, replied?: boolean): PublicMessage {
     return {
       seq: m.seq, id: m.id, client_id: m.client_id ?? null, kind: m.kind,
       sender: { type: m.sender_type, id: m.sender_id, name: m.sender_name },
@@ -369,23 +371,35 @@ export class RoomServiceD1 {
       reply_to: m.reply_to_seq ?? null,
       content: m.deleted_at ? null : m.content, deleted: !!m.deleted_at,
       context_category: m.context_category, created_at: iso(m.created_at),
+      delivery: rec
+        ? { state: replied ? "replied" : Number(m.seq) <= Number(rec.acked_seq) ? "acked" : Number(m.seq) <= Number(rec.fetched_seq) ? "fetched" : "sent" }
+        : null,
     };
   }
   private async toPublic(m: Row): Promise<PublicMessage> {
-    const rec = m.recipient_id ? await this.db.one("SELECT id, name FROM agents WHERE id=?", m.recipient_id) : undefined;
-    return this.publicOf(m, rec);
+    return (await this.toPublicMany([m]))[0];
   }
   /** 페이지 단위 변환: 수신자를 IN 한 번으로 묶어 N+1 쿼리를 피한다. */
   private async toPublicMany(rows: Row[]): Promise<PublicMessage[]> {
     const ids = [...new Set(rows.map(m => m.recipient_id).filter(Boolean))] as string[];
     const recs = new Map<string, Row>();
+    const repliedSeqs = new Set<string>();
     // D1 바인드 파라미터 상한(100) 때문에 90개씩 나눠 조회한다.
     for (let i = 0; i < ids.length; i += 90) {
       const slice = ids.slice(i, i + 90);
-      const found = await this.db.all(`SELECT id, name FROM agents WHERE id IN (${slice.map(() => "?").join(",")})`, ...slice);
+      const found = await this.db.all(`SELECT id, name, fetched_seq, acked_seq FROM agents WHERE id IN (${slice.map(() => "?").join(",")})`, ...slice);
       for (const a of found) recs.set(a.id, a);
     }
-    return rows.map(m => this.publicOf(m, m.recipient_id ? recs.get(m.recipient_id) : undefined));
+    // 수신 에이전트 본인이 reply_to로 답한 메시지만 replied. 지정 수신 메시지의 seq를 90개씩 나눠 조회.
+    const addrSeqs = rows.filter(m => m.recipient_id).map(m => String(m.seq));
+    for (let i = 0; i < addrSeqs.length; i += 90) {
+      const slice = addrSeqs.slice(i, i + 90);
+      const replies = await this.db.all(
+        `SELECT DISTINCT reply_to_seq, sender_id FROM messages WHERE room_id=? AND reply_to_seq IN (${slice.map(() => "?").join(",")})`,
+        rows[0].room_id, ...slice);
+      for (const r of replies) repliedSeqs.add(`${r.reply_to_seq}:${r.sender_id}`);
+    }
+    return rows.map(m => this.publicOf(m, m.recipient_id ? recs.get(m.recipient_id) : undefined, repliedSeqs.has(`${m.seq}:${m.recipient_id}`)));
   }
   private visibleSql = "room_id=? AND seq>? AND (recipient_id IS NULL OR recipient_id=? OR sender_id=?)";
 
@@ -411,13 +425,25 @@ export class RoomServiceD1 {
   }
 
   /** Inbox: everything after acked_seq (at-least-once). Advances fetched position only. */
-  async inbox(agent: Agent, limit?: unknown) {
+  async inbox(agent: Agent, limit?: unknown, wait?: unknown) {
     this.requireRead(agent);
     const lim = this.clampLimit(limit);
-    const st = (await this.db.one("SELECT fetched_seq, acked_seq FROM agents WHERE id=?", agent.id))!;
-    const floor = Math.max(st.acked_seq, agent.history_floor);
-    const rows = await this.db.all(`SELECT * FROM messages WHERE ${this.visibleSql} AND sender_id<>? ORDER BY seq LIMIT ?`, agent.room_id, floor, agent.id, agent.id, agent.id, lim + 1);
+    // 롱폴링: wait 초(최대 25) 동안 새 메시지를 기다린다. 대기는 실시간 기준(가짜 시계와 무관).
+    const waitSec = wait === undefined || wait === null || wait === "" ? 0
+      : typeof wait === "string" ? Number(wait) : typeof wait === "number" ? wait : NaN;
+    if (!Number.isFinite(waitSec) || waitSec < 0 || waitSec > 25) throw err(400, "bad_wait", "wait는 0~25초 숫자여야 합니다.");
+    const deadline = Date.now() + Math.floor(waitSec) * 1000;
+    const st0 = (await this.db.one("SELECT fetched_seq, acked_seq FROM agents WHERE id=?", agent.id))!;
+    const floor = Math.max(Number(st0.acked_seq), agent.history_floor);
+    const baseFetched = Number(st0.fetched_seq);
+    // Free 플랜은 요청당 서브요청 50회 상한: 대기 루프는 초당 메시지 테이블만 1회 읽는다(최대 25+α).
+    let rows = await this.db.all(`SELECT * FROM messages WHERE ${this.visibleSql} AND sender_id<>? ORDER BY seq LIMIT ?`, agent.room_id, floor, agent.id, agent.id, agent.id, lim + 1);
+    while (!rows.some(pg => pg.seq > baseFetched) && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 1000));
+      rows = await this.db.all(`SELECT * FROM messages WHERE ${this.visibleSql} AND sender_id<>? ORDER BY seq LIMIT ?`, agent.room_id, floor, agent.id, agent.id, agent.id, lim + 1);
+    }
     const page = rows.slice(0, lim);
+    const st = (await this.db.one("SELECT fetched_seq, acked_seq FROM agents WHERE id=?", agent.id))!;
     const prevFetched = Number(st.fetched_seq);
     if (page.length) {
       const last = page[page.length - 1].seq as number;
@@ -433,7 +459,6 @@ export class RoomServiceD1 {
       notice: UNTRUSTED_NOTICE,
     };
   }
-
   async ack(agent: Agent, seq: unknown) {
     this.requireRead(agent);
     if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 0) throw err(400, "bad_seq", "seq는 0 이상의 정수여야 합니다.");
@@ -556,7 +581,146 @@ export class RoomServiceD1 {
       if (r2.paused && sender.type === "agent") throw err(423, "room_paused", `방이 일시정지 상태입니다(${r2.pause_reason ?? "owner"}). 오너가 재개해야 합니다.`);
       throw err(500, "internal", "메시지를 저장하지 못했습니다.");
     }
+    if (recipientId) await this.enqueueDeliveries(roomId, msg);
     return { duplicate: false, message: await this.toPublic(msg) };
+  }
+
+  // ---------- webhooks (오너가 등록하는 지정 수신 알림) ----------
+  // 오너가 임의 URL을 적기 때문에 SSRF 가드(https + 공인 호스트만)와 최대치를 둔다.
+  async createWebhook(roomId: string, urlRaw: unknown) {
+    await this.room(roomId);
+    if (typeof urlRaw !== "string") throw err(400, "bad_url", "url 문자열이 필요합니다.");
+    const u = this.checkWebhookUrl(urlRaw);
+    await this.assertPublicHost(u.toString());
+    const count = (await this.db.one("SELECT count(*) c FROM webhooks WHERE room_id=?", roomId))!.c;
+    if (count >= 10) throw err(409, "webhook_limit", "웹훅은 방당 최대 10개입니다.");
+    const id = newId("whk");
+    const secret = newToken("whsec");
+    await this.db.run("INSERT INTO webhooks(id, room_id, url, secret, active, created_at) VALUES (?,?,?,?,1,?)", id, roomId, u.toString(), secret, this.clock.now());
+    await this.audit(roomId, "owner", "webhook.create", u.host);
+    return { id, url: u.toString(), secret, signing: "응답은 이 secret을 한 번만 보여줍니다. 수신 서버는 X-Acr-Signature 헤더(sha256=<HMAC-SHA256(secret, 원문 body)>)로 검증하세요." };
+  }
+  async listWebhooks(roomId: string) {
+    await this.room(roomId);
+    const hooks = await this.db.all(
+      `SELECT w.id, w.url, w.active, w.created_at,
+              (SELECT status FROM webhook_deliveries d WHERE d.webhook_id=w.id ORDER BY d.created_at DESC LIMIT 1) AS last_status,
+              (SELECT attempts FROM webhook_deliveries d WHERE d.webhook_id=w.id ORDER BY d.created_at DESC LIMIT 1) AS last_attempts
+       FROM webhooks w WHERE w.room_id=? ORDER BY w.created_at`, roomId);
+    return { webhooks: hooks.map(h => ({ id: h.id, url: h.url, active: !!h.active, created_at: h.created_at, last_status: h.last_status ?? null, last_attempts: h.last_attempts ?? null })) };
+  }
+  async revokeWebhook(roomId: string, id: string) {
+    const r = await this.db.run("UPDATE webhooks SET active=0 WHERE room_id=? AND id=? AND active=1", roomId, id);
+    if (!r.changes) throw err(404, "webhook_not_found", "웹훅을 찾을 수 없습니다.");
+    await this.audit(roomId, "owner", "webhook.revoke", id);
+  }
+  async testWebhook(roomId: string, id: string) {
+    const w = await this.db.one("SELECT * FROM webhooks WHERE room_id=? AND id=? AND active=1", roomId, id);
+    if (!w) throw err(404, "webhook_not_found", "웹훅을 찾을 수 없습니다.");
+    const payload = JSON.stringify({ type: "ping", room_id: roomId, webhook_id: id, sent_at: this.clock.now() });
+    const dId = newId("whd");
+    await this.db.run(
+      "INSERT INTO webhook_deliveries(id, webhook_id, room_id, kind, message_id, payload, status, attempts, next_attempt_at, created_at) VALUES (?,?,?,?,?,?, 'pending', 0, ?, ?)",
+      dId, id, roomId, "ping", null, payload, this.clock.now(), this.clock.now());
+    await this.processDueDeliveries(roomId);
+    return await this.db.one("SELECT id, kind, status, attempts, http_status, last_error FROM webhook_deliveries WHERE id=?", dId);
+  }
+  /** 지정 수신 메시지가 저장된 직후 활성 웹훅 각각에 전달 레코드를 만든다. 실제 전송은 processDueDeliveries. */
+  private async enqueueDeliveries(roomId: string, msg: Row) {
+    const hooks = await this.db.all("SELECT id FROM webhooks WHERE room_id=? AND active=1", roomId);
+    if (!hooks.length) return;
+    const pub = await this.toPublic(msg);
+    const now = this.clock.now();
+    for (const h of hooks) {
+      const payload = JSON.stringify({ type: "message", room_id: roomId, webhook_id: h.id, message: pub });
+      await this.db.run(
+        "INSERT INTO webhook_deliveries(id, webhook_id, room_id, kind, message_id, payload, status, attempts, next_attempt_at, created_at) VALUES (?,?,?,?,?,?, 'pending', 0, ?, ?)",
+        newId("whd"), h.id, roomId, "message", msg.id, payload, now, now);
+    }
+  }
+  /** 기한이 된 전달을 시도한다. cron과 전송 직후(ctx.waitUntil) 양쪽에서 호출. */
+  async processDueDeliveries(roomId?: string): Promise<number> {
+    const now = this.clock.now();
+    const due = roomId
+      ? await this.db.all("SELECT * FROM webhook_deliveries WHERE status='pending' AND next_attempt_at<=? AND room_id=? ORDER BY next_attempt_at LIMIT 50", now, roomId)
+      : await this.db.all("SELECT * FROM webhook_deliveries WHERE status='pending' AND next_attempt_at<=? ORDER BY next_attempt_at LIMIT 100", now);
+    let done = 0;
+    for (const d of due) {
+      await this.deliverOnce(d, now);
+      done++;
+    }
+    return done;
+  }
+  private async deliverOnce(d: Row, now: number) {
+    const w = await this.db.one("SELECT * FROM webhooks WHERE id=?", d.webhook_id);
+    if (!w || !w.active) {
+      await this.db.run("UPDATE webhook_deliveries SET status='failed', last_error='webhook_revoked' WHERE id=?", d.id);
+      return;
+    }
+    const attempts = Number(d.attempts) + 1;
+    let httpStatus: number | null = null;
+    let error: string | null = null;
+    try {
+      const sig = await hmacSha256Hex(w.secret, d.payload);
+      // 수신 측 멱등 키: X-Acr-Delivery-Id (전달은 at-least-once라 재시도 시 같은 ID가 다시 온다).
+      const res = await fetch(w.url, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-acr-signature": `sha256=${sig}`, "x-acr-delivery-id": d.id, "user-agent": "agent-common-room/1.0" },
+        body: d.payload,
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      httpStatus = res.status;
+      // 응답 본문은 읽지 않고 닫는다(대용량 응답으로 메모리를 쓰지 않기 위해).
+      await res.body?.cancel().catch(() => {});
+      if (res.status < 200 || res.status >= 300) error = `http_${res.status}`;
+    } catch (e) {
+      error = e instanceof Error && e.name === "TimeoutError" ? "timeout" : "fetch_failed";
+    }
+    const BACKOFF = [60_000, 300_000, 900_000, 3_600_000, 21_600_000]; // 1m, 5m, 15m, 1h, 6h
+    if (!error) {
+      await this.db.run("UPDATE webhook_deliveries SET status='ok', attempts=?, http_status=?, last_error=NULL WHERE id=?", attempts, httpStatus, d.id);
+    } else if (attempts > BACKOFF.length) {
+      await this.db.run("UPDATE webhook_deliveries SET status='failed', attempts=?, http_status=?, last_error=? WHERE id=?", attempts, httpStatus, error, d.id);
+    } else {
+      await this.db.run("UPDATE webhook_deliveries SET attempts=?, http_status=?, last_error=?, next_attempt_at=? WHERE id=?",
+        attempts, httpStatus, error, now + BACKOFF[attempts - 1], d.id);
+    }
+  }
+  private checkWebhookUrl(raw: string): URL {
+    let u: URL;
+    try { u = new URL(raw); } catch { throw err(400, "bad_url", "URL 형식이 올바르지 않습니다."); }
+    if (u.protocol !== "https:") throw err(400, "bad_url", "https URL만 등록할 수 있습니다.");
+    const h = u.hostname.toLowerCase();
+    // IP 리터럴은 전면 금지(숫자 인코딩 우회 차단). URL 파서가 2130706433 같은 형태도 정규화한다.
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(h) || h.startsWith("[")) throw err(400, "bad_url", "IP 주소가 아닌 도메인으로 등록하세요.");
+    if (h === "localhost" || h.endsWith(".local") || h.endsWith(".internal") || h.endsWith(".localhost")) throw err(400, "bad_url", "내부망/로컬 주소는 등록할 수 없습니다.");
+    if (!h.includes(".")) throw err(400, "bad_url", "전체 도메인 이름으로 등록하세요.");
+    if (u.username || u.password) throw err(400, "bad_url", "URL에 인증 정보를 넣을 수 없습니다.");
+    return u;
+  }
+  /** 등록/전달 시점에 DoH로 실제 해석 결과를 검사해 사설 IP로 향하는 도메인을 막는다 (DNS 리바인딩 완화, TOCTOU 잔여 위험은 문서화). */
+  private async assertPublicHost(url: string) {
+    const host = new URL(url).hostname;
+    const isPrivate = (ip: string) =>
+      /^127\./.test(ip) || /^10\./.test(ip) || /^192\.168\./.test(ip) || /^169\.254\./.test(ip) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(ip) || /^0\./.test(ip) ||
+      ip === "::1" || ip.startsWith("fc") || ip.startsWith("fd") || ip.startsWith("fe80");
+    for (const type of ["A", "AAAA"]) {
+      try {
+        const res = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=${type}`, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(5000) });
+        if (!res.ok) continue;
+        const j: any = await res.json();
+        for (const ans of j.Answer ?? []) {
+          if ((ans.type === 1 || ans.type === 28) && isPrivate(String(ans.data))) {
+            throw err(400, "bad_url", "해당 도메인이 사설/로컬 IP로 해석되어 등록할 수 없습니다.");
+          }
+        }
+      } catch (e) {
+        if (e instanceof ApiError) throw e;
+        // DoH 자체 실패는 통과(가용성 우선). 문자열 가드와 TLS가 남는다.
+      }
+    }
   }
 
   // ---------- owner message ops ----------
@@ -578,6 +742,8 @@ export class RoomServiceD1 {
     const now = this.clock.now();
     // 세션 정리는 항상 실행되게 방 정리보다 먼저 둔다.
     await this.db.run("DELETE FROM sessions WHERE expires_at<=?", now);
+    // 종결된 웹훅 전달은 7일 보관: 테이블이 무한히 자라지 않게 한다 (재시도 큐는 status 인덱스로 제한된다).
+    await this.db.run("DELETE FROM webhook_deliveries WHERE status IN ('ok','failed') AND created_at<?", now - 7 * 86400_000);
     await this.db.run("DELETE FROM login_fails WHERE ? - first >= 900000", now);
     let n = 0;
     // 방 목록은 페이지로 읽고, 보존 기간 값은 삭제 문장 안에서 원자적으로 다시 읽는다
