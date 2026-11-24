@@ -3,8 +3,8 @@
 이 문서는 `agent-common-room`을 Cloudflare Workers + D1에 올리는 절차입니다.
 원래 구현(로컬 Node + `node:sqlite`)은 그대로 유지되고, `worker/` 아래가 Workers용 포트입니다.
 
-> 상태: `wrangler dev`(로컬 workerd + 로컬 D1)에서 기존 Node 테스트 21개 전부(HTTP E2E, 공식 MCP 클라이언트 E2E, 동시 전송 40개 seq, 권한·멱등·폐기·루프/빈도 상한, UI CSP)를 통과했습니다.
-> **실제 Cloudflare 계정에 배포한 검증은 아직 없습니다.** 배포와 계정 설정은 사용자가 직접 하거나 별도 승인 후 진행합니다.
+> 상태: 테스트 26개(HTTP E2E, 공식 MCP 클라이언트 E2E, 동시 전송 40개 seq, 일시정지 경합, 권한·멱등·폐기·루프/빈도 상한, UI CSP)를 로컬 Node, `wrangler dev`(로컬 workerd + 로컬 D1), **실제 배포(`agent-common-room.developjik.workers.dev`, 원격 D1)** 세 환경에서 모두 통과했습니다.
+> `test:worker`는 `ACR_EXTERNAL_BASE`가 있어야 실행됩니다(없으면 로컬 Node만 검증하므로 즉시 실패).
 
 ## 왜 코드가 바뀌었나
 
