@@ -262,7 +262,11 @@ test("본문 크기와 잘못된 입력", async () => {
   const huge = await fetch(t.base + "/api/messages", { method: "POST", headers: { authorization: `Bearer ${a.token}`, connection: "close" }, body: "x".repeat(70_000) });
   assert.equal(huge.status, 413);
   await huge.text();
-  const isRemote = EXTERNAL && !/127\.0\.0\.1|localhost/.test(t.base);
+  // 로컬 분류는 엄격하게: http 스킴 + 루프백 호스트(127.0.0.1, ::1, localhost)만.
+  // https://localhost는 로컬이어도 조기 차단 요청이 평문 http라 여기선 원격 취급한다.
+  const uh = new URL(t.base);
+  const isLoopbackHttp = uh.protocol === "http:" && (uh.hostname === "127.0.0.1" || uh.hostname === "localhost" || uh.hostname === "[::1]");
+  const isRemote = EXTERNAL && !isLoopbackHttp;
   if (isRemote) {
     // 원격(Cloudflare 엣지 경유): 엣지가 업로드 완료 전 응답을 보류하므로 조기 차단 증명은 불가.
     // 여기서는 유한 chunked 본문(128KB)에 대한 종단간 413만 확인하고, 조기 차단 증명은 로컬 두 환경이 담당한다.
@@ -291,6 +295,33 @@ test("본문 크기와 잘못된 입력", async () => {
     const pump = (): void => { if (settled || req.destroyed) return; if (req.write(chunk)) setTimeout(pump, 5); else req.once("drain", () => setTimeout(pump, 5)); };
     pump();
   });
+  // 경계 정밀 증명: 정확히 64KiB+1바이트(65,537)까지만 보내고 열어 두면 상한 집행 서버는 그 시점에 413을,
+  // 더 넉넉한 상한의 서버는 응답 없이 대기한다. 반대로 정확히 64KiB(65,536)에서는 413이 오지 않아야 한다.
+  const sendBytes = (total: number) => new Promise<{ status: number | null }>((resolve) => {
+    let settled = false;
+    const done = (status: number | null) => { if (!settled) { settled = true; clearTimeout(watchdog); req.destroy(); resolve({ status }); } };
+    const watchdog = setTimeout(() => done(null), 15_000);
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: "POST",
+      headers: { authorization: `Bearer ${a.token}`, "content-type": "application/json", connection: "close" } }, (res) => {
+      res.resume();
+      done(res.statusCode ?? null);
+    });
+    req.on("error", () => done(null));
+    let left = total;
+    const pump2 = (): void => {
+      if (settled || req.destroyed) return;
+      if (left <= 0) return; // 본문을 열어 둔 채 응답을 기다린다
+      const n = Math.min(8192, left);
+      left -= n;
+      if (req.write(Buffer.alloc(n, 0x79))) setTimeout(pump2, 2); else req.once("drain", () => setTimeout(pump2, 2));
+    };
+    pump2();
+  });
+  const over = await sendBytes(65_537);
+  assert.equal(over.status, 413, "64KiB+1바이트에서 조기 413이어야 한다 (status=" + over.status + ")");
+  // 상한 이하(정확히 64KiB)에서는 조기 413이 오면 안 된다. 응답이 없음을 짧게 확인한 뒤 소켓을 닫는다.
+  const atLimit = await Promise.race([sendBytes(65_536), new Promise<{ status: number | null }>(r => setTimeout(() => r({ status: null }), 3_000))]);
+  assert.equal(atLimit.status, null, "정확히 64KiB에서는 조기 413이 오면 안 된다");
 });
 
 test("오너 로그인 시도 제한과 코드 교체 시 세션 무효화", async () => {
@@ -316,3 +347,87 @@ test("오너 웹 UI 정적 파일은 엄격한 CSP로 제공된다", async () =>
   assert.equal((await fetch(t.base + "/ui/../package.json")).status, 404);
 });
 
+
+test("지정 수신 메시지의 전달 상태(보냄→전달됨→처리 확인→답장함)가 보인다", async (ctx) => {
+  if (!EXTERNAL) return ctx.skip("전달 상태는 Workers 구현에만 있다");
+  const r = await t.setupRoom();
+  const a = await t.join(r, "상태봇");
+  await t.call("POST", "/api/owner/messages", r.sess, { client_id: "ds-1", content: "상태 확인용", recipient: a.id });
+  const stateOf = async () => {
+    const msgs = (await t.call("GET", "/api/owner/messages", r.sess)).json.messages;
+    return msgs.find((m: any) => m.content === "상태 확인용")?.delivery?.state;
+  };
+  assert.equal(await stateOf(), "sent");
+  await t.call("GET", "/api/inbox", a.token);
+  assert.equal(await stateOf(), "fetched");
+  await t.call("POST", "/api/ack", a.token, { seq: 1 });
+  assert.equal(await stateOf(), "acked");
+  await t.call("POST", "/api/messages", a.token, { client_id: "ds-2", content: "답장", reply_to: 1 });
+  assert.equal(await stateOf(), "replied");
+  // 지정 수신이 아닌 메시지에는 delivery가 없다.
+  await t.call("POST", "/api/owner/messages", r.sess, { client_id: "ds-3", content: "전체 공지" });
+  const msgs = (await t.call("GET", "/api/owner/messages", r.sess)).json.messages;
+  assert.equal(msgs.find((m: any) => m.content === "전체 공지").delivery, null);
+});
+
+test("오너 웹훅: URL 검증, 등록/삭제, 지정 수신 메시지 전달 파이프라인", async (ctx) => {
+  if (!EXTERNAL) return ctx.skip("웹훅은 Workers 구현에만 있다");
+  const r = await t.setupRoom();
+  const a = await t.join(r, "훅봇");
+  // SSRF/프로토콜 가드
+  for (const bad of ["http://example.com/h", "https://127.0.0.1/h", "https://localhost/h", "https://192.168.0.1/h", "not-a-url", "https://user:pw@example.com/h", "https://2130706433/h", "https://[::1]/h", "https://intranet/h", "https://host.local/h"]) {
+    const res = await t.call("POST", "/api/owner/webhooks", r.sess, { url: bad });
+    assert.equal(res.status, 400, bad);
+  }
+  const w = (await t.call("POST", "/api/owner/webhooks", r.sess, { url: "https://example.com/acr-hook" })).json;
+  assert.ok(w.id.startsWith("whk_"));
+  assert.ok(w.secret.startsWith("whsec_"));
+  // 핑 테스트: 인라인으로 1회 시도가 기록된다 (example.com은 실제로 응답하므로 ok/failed 둘 다 시도 증거).
+  const ping = (await t.call("POST", `/api/owner/webhooks/${w.id}/test`, r.sess)).json.delivery;
+  assert.equal(ping.kind, "ping");
+  assert.equal(ping.attempts, 1);
+  assert.ok(ping.status === "ok" || ping.status === "pending" || ping.status === "failed");
+  // 지정 수신 메시지 → 전달 레코드 생성 (실제 전송은 비동기 waitUntil이라 목록에서 시도 흔적을 폴링)
+  await t.call("POST", "/api/owner/messages", r.sess, { client_id: "wh-1", content: "웹훅 알림 대상", recipient: a.id });
+  let seen: any = null;
+  for (let i = 0; i < 10; i++) {
+    const l = (await t.call("GET", "/api/owner/webhooks", r.sess)).json;
+    seen = l.webhooks.find((x: any) => x.id === w.id);
+    if (seen && seen.last_attempts >= 1) break;
+    await new Promise(r2 => setTimeout(r2, 500));
+  }
+  assert.ok(seen, "웹훅이 목록에 있다");
+  assert.ok(seen.last_status, "전달이 시도되었다 (last_status=" + seen.last_status + ")");
+  // 지정 수신이 아닌 메시지는 전달 대상이 아니다: 직전 상태 그대로인지는 전달 수로 간접 확인한다.
+  const before = seen.last_attempts;
+  await t.call("POST", "/api/owner/messages", r.sess, { client_id: "wh-2", content: "전체 공지" });
+  await new Promise(r2 => setTimeout(r2, 1200));
+  const after = (await t.call("GET", "/api/owner/webhooks", r.sess)).json.webhooks.find((x: any) => x.id === w.id);
+  assert.equal(after.last_attempts, before, "전체 공지는 새 전달을 만들지 않는다");
+  assert.equal((await t.call("DELETE", `/api/owner/webhooks/${w.id}`, r.sess)).status, 200);
+  assert.equal((await t.call("GET", "/api/owner/webhooks", r.sess)).json.webhooks.find((x: any) => x.id === w.id).active, false);
+});
+
+test("inbox 롱폴링: wait 동안 새 메시지를 기다렸다가 즉시 반환한다", async (ctx) => {
+  if (!EXTERNAL) return ctx.skip("롱폴링은 Workers 구현에만 있다");
+  const r = await t.setupRoom();
+  const a = await t.join(r, "폴봇");
+  // 잘못된 wait
+  assert.equal((await t.call("GET", "/api/inbox?wait=99", a.token)).status, 400);
+  // 빈 inbox에서 wait=2는 약 2초 후 빈 결과
+  const t0 = Date.now();
+  const empty = (await t.call("GET", "/api/inbox?wait=2", a.token)).json;
+  const dt = Date.now() - t0;
+  assert.equal(empty.messages.length, 0);
+  assert.ok(dt >= 1800 && dt < 6000, "대기 시간 " + dt + "ms");
+  // 기다리는 동안 메시지가 오면 일찍 돌아온다
+  const t1 = Date.now();
+  const pending = t.call("GET", "/api/inbox?wait=10", a.token);
+  await new Promise(r2 => setTimeout(r2, 500));
+  await t.call("POST", "/api/owner/messages", r.sess, { client_id: "lp-1", content: "깨어나라" });
+  const got = (await pending).json;
+  const dt2 = Date.now() - t1;
+  assert.equal(got.messages.length, 1);
+  assert.equal(got.messages[0].content, "깨어나라");
+  assert.ok(dt2 < 5000, "조기 반환 " + dt2 + "ms");
+});
