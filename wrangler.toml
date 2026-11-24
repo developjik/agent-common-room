@@ -1,0 +1,24 @@
+# Cloudflare Workers + D1 배포 설정. 자세한 절차는 DEPLOY-CLOUDFLARE.md.
+name = "agent-common-room"
+main = "worker/index.ts"
+compatibility_date = "2026-11-24"
+
+# 오너 웹 UI 정적 파일. 헤더(CSP 등)는 public/_headers가 붙인다.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "agent-common-room"
+# 실제 생성된 D1 database_id (2026-11-24 wrangler d1 create 결과)
+database_id = "788da9c8-58c0-484d-b805-18767a51377e"
+migrations_dir = "worker/migrations"
+
+# 보존기간(retention) 만료 메시지와 만료 세션 정리 (로컬 구현의 시간당 purge와 동일 역할).
+[triggers]
+crons = ["17 * * * *"]
+
+# 외부 주소(초대 안내문에 표시). 배포 후 실제 주소로 바꾸거나 워커 요청의 Host를 그대로 쓴다.
+# [vars]
+# ACR_PUBLIC_URL = "https://agent-common-room.<계정>.workers.dev"

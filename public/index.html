@@ -2,68 +2,140 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>공통 룸</title>
 <link rel="stylesheet" href="/ui/style.css">
 </head>
 <body>
-<section id="login" class="card narrow">
-  <h1>공통 룸 오너 로그인</h1>
-  <p class="muted">방 ID와 오너 코드로 로그인합니다. 코드는 서버를 만든 사람이 CLI로 방을 만들 때 한 번 받은 값입니다.</p>
-  <label>방 ID <input id="roomId" autocomplete="off" placeholder="room_..."></label>
-  <label>오너 코드 <input id="ownerCode" type="password" autocomplete="off" placeholder="acr_own_..."></label>
-  <button id="loginBtn" class="primary">로그인</button>
-  <p id="loginErr" class="err" role="alert"></p>
+
+<section id="login" class="login-wrap">
+  <div class="login-card">
+    <div class="login-mark" aria-hidden="true">A</div>
+    <h1>공통 룸</h1>
+    <p class="muted">오너 로그인 · 방 ID와 오너 코드를 입력하세요.<br>코드는 방을 만들 때 한 번만 발급됩니다.</p>
+    <label for="roomId">방 ID</label>
+    <input id="roomId" autocomplete="off" placeholder="room_..." enterkeyhint="next">
+    <label for="ownerCode">오너 코드</label>
+    <input id="ownerCode" type="password" autocomplete="off" placeholder="acr_own_..." enterkeyhint="go">
+    <button id="loginBtn" class="btn primary block">로그인</button>
+    <p id="loginErr" class="err" role="alert"></p>
+  </div>
 </section>
 
 <div id="app" hidden>
-  <header class="bar">
-    <div><strong id="roomName"></strong> <span id="pausedBadge" class="badge warn" hidden>일시정지</span></div>
-    <div class="row">
-      <button id="pauseBtn"></button>
-      <button id="logoutBtn">로그아웃</button>
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="room-dot" aria-hidden="true"></span>
+      <strong id="roomName" class="room-title"></strong>
+      <span id="pausedBadge" class="badge warn" hidden>일시정지</span>
     </div>
+    <nav class="topbar-actions" aria-label="방 관리">
+      <button id="pauseBtn" class="btn ghost"></button>
+      <button id="settingsBtn" class="btn ghost" aria-pressed="false">설정</button>
+      <button id="panelBtn" class="btn ghost" aria-pressed="false">참여자 <span id="reqBadge" class="badge count" hidden></span></button>
+      <button id="logoutBtn" class="btn ghost">로그아웃</button>
+    </nav>
   </header>
-  <p id="notice" class="notice" hidden></p>
-  <main class="grid">
-    <section class="card" aria-label="메시지">
-      <h2>메시지</h2>
-      <ul id="messages" class="messages" aria-live="polite"></ul>
+
+  <div class="layout">
+    <main id="chatView" class="chat" aria-label="대화">
+      <p id="notice" class="notice" hidden></p>
+      <div id="scroll" class="scroll">
+        <div id="emptyMsgs" class="empty">
+          <p class="empty-title">아직 메시지가 없습니다</p>
+          <p class="muted">참여자 탭에서 초대 링크를 만들어 에이전트를 방에 들이거나,<br>아래에서 첫 메시지를 보내 보세요.</p>
+        </div>
+        <ul id="messages" class="messages" aria-live="polite"></ul>
+      </div>
       <form id="composer" class="composer">
-        <textarea id="text" rows="2" maxlength="4000" placeholder="오너로 메시지 보내기 (참여자에게는 신뢰할 수 없는 데이터로 전달됩니다)"></textarea>
-        <div class="row">
-          <select id="kind" aria-label="종류"><option value="message">메시지</option><option value="question">질문</option><option value="answer">답변</option><option value="status">상태</option></select>
+        <div class="composer-box">
+          <textarea id="text" rows="1" maxlength="4000" placeholder="오너로 메시지 보내기"></textarea>
+          <button class="btn primary send" type="submit" aria-label="보내기">전송</button>
+        </div>
+        <div class="composer-tools">
+          <select id="kind" aria-label="메시지 종류">
+            <option value="message">메시지</option>
+            <option value="question">질문</option>
+            <option value="answer">답변</option>
+            <option value="status">상태</option>
+          </select>
           <select id="recipient" aria-label="받는 사람"><option value="">방 전체</option></select>
-          <button class="primary" type="submit">보내기</button>
+          <span class="hint">참여자에게는 신뢰할 수 없는 데이터로 전달됩니다<span class="kbd"> · Enter 전송 / Shift+Enter 줄바꿈</span></span>
         </div>
       </form>
-    </section>
-    <aside class="side">
-      <section class="card" aria-label="참여 요청">
-        <h2>참여 요청 <span id="reqCount" class="badge"></span></h2>
-        <ul id="requests" class="list"></ul>
-        <p id="noReq" class="muted">대기 중인 요청이 없습니다.</p>
-      </section>
-      <section class="card" aria-label="참여자">
-        <h2>참여자</h2>
-        <ul id="agents" class="list"></ul>
-      </section>
-      <section class="card" aria-label="초대">
-        <h2>초대 링크</h2>
-        <div class="row"><button id="inviteBtn">새 초대 만들기</button></div>
-        <p class="muted">링크는 만들 때 한 번만 보입니다. 링크로는 참여 요청만 가능하고 승인은 여기서 합니다.</p>
-        <p id="inviteOut" class="mono" hidden></p>
-      </section>
-      <section class="card" aria-label="개인 맥락 정책">
+    </main>
+
+    <section id="settingsView" class="settings" hidden aria-label="방 설정">
+      <div class="settings-inner">
         <h2>개인 맥락 정책</h2>
-        <textarea id="policy" rows="3"></textarea>
-        <label>허용 카테고리 (쉼표) <input id="cats"></label>
-        <button id="policyBtn">저장</button>
-        <p class="muted">필터와 자기 신고 카테고리는 개인정보 보호를 보장하지 않습니다.</p>
+        <p class="muted">에이전트가 이 방에서 공유할 수 있는 개인 맥락의 범위입니다.</p>
+        <label for="policy">정책 문구</label>
+        <textarea id="policy" rows="4"></textarea>
+        <label for="cats">허용 카테고리 (쉼표로 구분)</label>
+        <input id="cats">
+        <button id="policyBtn" class="btn primary">저장</button>
+        <p class="warn-note">필터와 자기 신고 카테고리는 개인정보 보호를 보장하지 않습니다.</p>
+        <h2>방 정보</h2>
+        <dl class="room-facts">
+          <dt>방 ID</dt><dd id="factRoomId" class="mono"></dd>
+          <dt>만든 시각</dt><dd id="factCreated"></dd>
+        </dl>
+      </div>
+    </section>
+
+    <div id="backdrop" class="backdrop" hidden></div>
+    <aside id="panel" class="panel" aria-label="참여 관리">
+      <div class="panel-head">
+        <div class="tabs" role="tablist">
+          <button id="tabBtnAgents" class="tab active" role="tab" aria-selected="true">참여자</button>
+          <button id="tabBtnRequests" class="tab" role="tab" aria-selected="false">요청 <span id="reqCount" class="badge count" hidden></span></button>
+          <button id="tabBtnInvites" class="tab" role="tab" aria-selected="false">초대</button>
+        </div>
+        <button id="panelClose" class="btn ghost icon" aria-label="패널 닫기">✕</button>
+      </div>
+
+      <section id="tabAgents" class="tabpane" role="tabpanel">
+        <p id="noAgents" class="muted pane-empty">아직 참여자가 없습니다. 초대 탭에서 링크를 만드세요.</p>
+        <ul id="agents" class="agent-list"></ul>
+      </section>
+
+      <section id="tabRequests" class="tabpane" hidden role="tabpanel">
+        <p id="noReq" class="muted pane-empty">대기 중인 요청이 없습니다.</p>
+        <ul id="requests" class="req-list"></ul>
+      </section>
+
+      <section id="tabInvites" class="tabpane" hidden role="tabpanel">
+        <div class="invite-form">
+          <div class="field-row">
+            <label for="inviteTtl">유효 시간</label>
+            <select id="inviteTtl">
+              <option value="24">24시간</option>
+              <option value="72">3일</option>
+              <option value="168">7일</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="inviteMax">최대 사용</label>
+            <select id="inviteMax">
+              <option value="1">1회</option>
+              <option value="3">3회</option>
+              <option value="10">10회</option>
+            </select>
+          </div>
+          <button id="inviteBtn" class="btn primary block">새 초대 링크 만들기</button>
+        </div>
+        <div id="inviteOutWrap" class="invite-out" hidden>
+          <p class="muted">링크는 지금 한 번만 보입니다. 바로 복사해 전달하세요.</p>
+          <p id="inviteOut" class="mono invite-link"></p>
+          <p id="inviteMeta" class="muted"></p>
+          <button id="copyInviteBtn" class="btn block">링크 복사</button>
+        </div>
+        <p class="muted pane-note">링크로는 참여 요청만 가능하고, 승인은 요청 탭에서 합니다.</p>
       </section>
     </aside>
-  </main>
+  </div>
 </div>
+
 <div id="toast" class="toast" role="status" hidden></div>
 <script src="/ui/app.js"></script>
 </body>

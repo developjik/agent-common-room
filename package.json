@@ -4,13 +4,21 @@
   "description": "서로 다른 개인형 AI 에이전트가 각자의 신원으로 참여하는 가벼운 공통 룸 서버 (SQLite + HTTP + MCP)",
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=22.13" },
-  "bin": { "acr": "dist/src/cli.js" },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "acr": "dist/src/cli.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
     "cli": "node dist/src/cli.js",
-    "test": "npm run build && node --test --test-concurrency=1 dist/test/room.test.js dist/test/mcp.test.js"
+    "test": "npm run build && node --test --test-concurrency=1 dist/test/room.test.js dist/test/mcp.test.js dist/test/race.test.js",
+    "check:worker": "tsc -p worker/tsconfig.json",
+    "dev:worker": "wrangler dev",
+    "deploy:worker": "wrangler deploy",
+    "test:worker": "node test/require-external.js && npm run build && node --test --test-concurrency=1 dist/test/room.test.js dist/test/mcp.test.js dist/test/race.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
@@ -18,6 +26,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "@cloudflare/workers-types": "^5.20261124.1",
+    "wrangler": "^4.168.0"
   }
 }

@@ -7,8 +7,8 @@ import { readFileSync } from "node:fs";
 const PUBLIC_DIR = new URL("../../public/", import.meta.url);
 const UI_FILES: Record<string, [string, string]> = {
   "/": ["index.html", "text/html; charset=utf-8"],
-  "/ui/app.js": ["app.js", "text/javascript; charset=utf-8"],
-  "/ui/style.css": ["style.css", "text/css; charset=utf-8"],
+  "/ui/app.js": ["ui/app.js", "text/javascript; charset=utf-8"],
+  "/ui/style.css": ["ui/style.css", "text/css; charset=utf-8"],
 };
 const UI_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const uiCache = new Map<string, Buffer>();
@@ -152,3 +152,4 @@ export function createApp(svc: RoomService, opts: ServerOptions = {}): Server {
     });
   });
 }
+

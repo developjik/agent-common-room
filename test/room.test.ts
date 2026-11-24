@@ -1,6 +1,6 @@
 import { test, after, before } from "node:test";
 import assert from "node:assert/strict";
-import { start, ADMIN_KEY } from "./helpers.js";
+import { start, ADMIN_KEY, EXTERNAL } from "./helpers.js";
 
 let t: Awaited<ReturnType<typeof start>>;
 before(async () => { t = await start(); });
@@ -43,10 +43,12 @@ test("토큰은 발급 시 한 번만 평문, DB에는 해시만", async () => {
   assert.equal(c2.status, 409);
   assert.ok(!c2.text.includes(token));
   assert.equal((await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: "wrong" })).status, 404);
-  for (const secret of [token, r.ownerCode, r.sess, r.invite, jr.claim_secret, ADMIN_KEY]) {
-    for (const tbl of ["agents", "rooms", "sessions", "invites", "join_requests", "meta", "audit", "messages"]) {
-      const rows = t.svc.db.prepare(`SELECT * FROM ${tbl}`).all();
-      assert.ok(!JSON.stringify(rows).includes(secret), `${tbl}에 평문 비밀이 있음`);
+  if (!EXTERNAL) {
+    for (const secret of [token, r.ownerCode, r.sess, r.invite, jr.claim_secret, ADMIN_KEY]) {
+      for (const tbl of ["agents", "rooms", "sessions", "invites", "join_requests", "meta", "audit", "messages"]) {
+        const rows = t.svc.db.prepare(`SELECT * FROM ${tbl}`).all();
+        assert.ok(!JSON.stringify(rows).includes(secret), `${tbl}에 평문 비밀이 있음`);
+      }
     }
   }
 });
@@ -81,7 +83,7 @@ test("멱등 재시도: 같은 id 같은 내용은 중복 없음, 다른 내용�
   assert.equal((await t.call("POST", "/api/messages", a.token, msg("dup", "내용", { kind: "question" }))).status, 409);
   const b = await t.join(r, "beta");
   assert.equal((await t.call("POST", "/api/messages", b.token, msg("dup", "다른 내용"))).status, 201, "client_id는 발신자별");
-  assert.equal(t.svc.db.prepare("SELECT count(*) c FROM messages WHERE room_id=?").get(r.roomId)!.c, 2);
+  if (!EXTERNAL) assert.equal(t.svc.db.prepare("SELECT count(*) c FROM messages WHERE room_id=?").get(r.roomId)!.c, 2);
 });
 
 test("동시 전송에서도 seq가 중복/누락 없이 할당된다", async () => {
@@ -187,12 +189,14 @@ test("삭제는 tombstone, 재시도 멱등 유지; 보존기간은 내용을 �
   assert.equal(retry.json.duplicate, true);
   assert.equal(retry.json.message.deleted, true);
   assert.equal((await t.call("DELETE", "/api/owner/messages/1", r.sess)).status, 404);
-  await t.call("PATCH", "/api/owner/room", r.sess, { retention_days: 1 });
-  t.clock.advance(2 * 86400_000);
-  assert.ok(t.svc.purgeExpired() >= 1);
-  const all = (await t.call("GET", "/api/messages?after=0", b.token)).json.messages;
-  assert.ok(all.every((m: any) => m.deleted && m.content === null));
-  assert.equal(t.svc.db.prepare("SELECT count(*) c FROM messages WHERE room_id=? AND content<>''").get(r.roomId)!.c, 0);
+  if (!EXTERNAL) {
+    await t.call("PATCH", "/api/owner/room", r.sess, { retention_days: 1 });
+    t.clock.advance(2 * 86400_000);
+    assert.ok(t.svc.purgeExpired() >= 1);
+    const all = (await t.call("GET", "/api/messages?after=0", b.token)).json.messages;
+    assert.ok(all.every((m: any) => m.deleted && m.content === null));
+    assert.equal(t.svc.db.prepare("SELECT count(*) c FROM messages WHERE room_id=? AND content<>''").get(r.roomId)!.c, 0);
+  }
 });
 
 test("루프 상한: 답장 체인 깊이는 서버가 계산하고 오너 메시지가 체인을 재시작한다", async () => {
@@ -229,8 +233,10 @@ test("빈도 상한: 넘으면 방이 자동 일시정지, 오너가 재개", as
   const sys = (await t.call("GET", "/api/owner/messages", r.sess)).json.messages.at(-1);
   assert.equal(sys.sender.type, "system");
   await t.call("PATCH", "/api/owner/room", r.sess, { paused: false });
-  t.clock.advance(61_000);
-  assert.equal((await t.call("POST", "/api/messages", a.token, msg("r5", "n5"))).status, 201);
+  if (!EXTERNAL) {
+    t.clock.advance(61_000);
+    assert.equal((await t.call("POST", "/api/messages", a.token, msg("r5", "n5"))).status, 201);
+  }
 });
 
 test("개인 맥락 기본 금지: 카테고리, 토큰, 이메일/전화 필터 (최선의 보조 수단)", async () => {
@@ -254,6 +260,10 @@ test("본문 크기와 잘못된 입력", async () => {
   assert.equal((await t.call("POST", "/api/messages", a.token, msg("k", "x", { kind: "command" }))).status, 400);
   const huge = await fetch(t.base + "/api/messages", { method: "POST", headers: { authorization: `Bearer ${a.token}` }, body: "x".repeat(70_000) });
   assert.equal(huge.status, 413);
+  // content-length 없는 chunked 전송도 스트림 상한으로 413이어야 한다.
+  const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("y".repeat(70_000))); c.close(); } });
+  const chunked = await fetch(t.base + "/api/messages", { method: "POST", headers: { authorization: `Bearer ${a.token}` }, body: stream, duplex: "half" } as any);
+  assert.equal(chunked.status, 413);
 });
 
 test("오너 로그인 시도 제한과 코드 교체 시 세션 무효화", async () => {
@@ -278,3 +288,4 @@ test("오너 웹 UI 정적 파일은 엄격한 CSP로 제공된다", async () =>
   assert.equal((await fetch(t.base + "/ui/style.css")).status, 200);
   assert.equal((await fetch(t.base + "/ui/../package.json")).status, 404);
 });
+
