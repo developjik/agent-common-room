@@ -379,8 +379,10 @@ export class RoomServiceD1 {
   private async toPublicMany(rows: Row[]): Promise<PublicMessage[]> {
     const ids = [...new Set(rows.map(m => m.recipient_id).filter(Boolean))] as string[];
     const recs = new Map<string, Row>();
-    if (ids.length) {
-      const found = await this.db.all(`SELECT id, name FROM agents WHERE id IN (${ids.map(() => "?").join(",")})`, ...ids);
+    // D1 바인드 파라미터 상한(100) 때문에 90개씩 나눠 조회한다.
+    for (let i = 0; i < ids.length; i += 90) {
+      const slice = ids.slice(i, i + 90);
+      const found = await this.db.all(`SELECT id, name FROM agents WHERE id IN (${slice.map(() => "?").join(",")})`, ...slice);
       for (const a of found) recs.set(a.id, a);
     }
     return rows.map(m => this.publicOf(m, m.recipient_id ? recs.get(m.recipient_id) : undefined));
@@ -580,8 +582,10 @@ export class RoomServiceD1 {
     let n = 0;
     // 방 목록은 페이지로 읽고, 보존 기간 값은 삭제 문장 안에서 원자적으로 다시 읽는다
     // (읽은 뒤 오너가 기간을 바꿔도 낡은 값으로 지우지 않는다).
-    for (let off = 0; ; off += 200) {
-      const rooms = await this.db.all("SELECT id FROM rooms WHERE retention_days IS NOT NULL ORDER BY id LIMIT 200 OFFSET ?", off);
+    // OFFSET 대신 ID 커서: 순회 중 보존 해제/추가로 목록이 당겨져도 방을 건너뛰지 않는다.
+    let lastId = "";
+    for (;;) {
+      const rooms = await this.db.all("SELECT id FROM rooms WHERE retention_days IS NOT NULL AND id > ? ORDER BY id LIMIT 200", lastId);
       if (!rooms.length) break;
       for (const r of rooms) {
         n += Number((await this.db.run(
@@ -590,6 +594,7 @@ export class RoomServiceD1 {
              AND created_at < ? - (SELECT retention_days * 86400000 FROM rooms WHERE id=? AND retention_days IS NOT NULL)`,
           now, r.id, now, r.id)).changes);
       }
+      lastId = rooms[rooms.length - 1].id;
       if (rooms.length < 200) break;
     }
     if (n) await this.audit(null, "system", "retention.purge", String(n));
