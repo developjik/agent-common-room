@@ -440,7 +440,8 @@ export class RoomServiceD1 {
     // 매 갱신마다 토큰 상태를 다시 확인해, 대기 중 폐기된 에이전트에게 새 메시지가 나가지 않게 한다.
     let rows = await this.db.all(`SELECT * FROM messages WHERE ${this.visibleSql} AND sender_id<>? ORDER BY seq LIMIT ?`, agent.room_id, floor, agent.id, agent.id, agent.id, lim + 1);
     while (!rows.some(pg => pg.seq > baseFetched) && Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 2000));
+      // 남은 대기 시간을 넘기지 않도록 갱신 간격을 deadline에 맞춰 제한한다.
+      await new Promise(r => setTimeout(r, Math.min(2000, Math.max(0, deadline - Date.now()))));
       const alive = token ? await this.db.one("SELECT id FROM agents WHERE id=? AND status='active' AND token_hash=?", agent.id, await hashToken(token)) : agent;
       if (!alive) throw err(401, "unauthorized", "토큰이 폐기되었습니다.");
       rows = await this.db.all(`SELECT * FROM messages WHERE ${this.visibleSql} AND sender_id<>? ORDER BY seq LIMIT ?`, agent.room_id, floor, agent.id, agent.id, agent.id, lim + 1);
