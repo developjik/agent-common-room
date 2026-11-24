@@ -1,5 +1,6 @@
 import { test, after, before } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
 import { start, ADMIN_KEY, EXTERNAL } from "./helpers.js";
 
 let t: Awaited<ReturnType<typeof start>>;
@@ -258,12 +259,28 @@ test("본문 크기와 잘못된 입력", async () => {
   assert.equal((await t.call("POST", "/api/messages", a.token, msg("big", "x".repeat(4001)))).status, 400);
   assert.equal((await t.call("POST", "/api/messages", a.token, { content: "no id" })).status, 400);
   assert.equal((await t.call("POST", "/api/messages", a.token, msg("k", "x", { kind: "command" }))).status, 400);
-  const huge = await fetch(t.base + "/api/messages", { method: "POST", headers: { authorization: `Bearer ${a.token}` }, body: "x".repeat(70_000) });
+  const huge = await fetch(t.base + "/api/messages", { method: "POST", headers: { authorization: `Bearer ${a.token}`, connection: "close" }, body: "x".repeat(70_000) });
   assert.equal(huge.status, 413);
-  // content-length 없는 chunked 전송도 스트림 상한으로 413이어야 한다.
-  const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("y".repeat(70_000))); c.close(); } });
-  const chunked = await fetch(t.base + "/api/messages", { method: "POST", headers: { authorization: `Bearer ${a.token}` }, body: stream, duplex: "half" } as any);
-  assert.equal(chunked.status, 413);
+  await huge.text();
+  // content-length 없는 chunked 전송: 끝나지 않는 본문을 node:http로 직접 흘려보낸다.
+  // 서버가 상한에서 조기 차단하면 본문이 끝나지 않았는데도 413 응답이 오고,
+  // 끝까지 읽는 구현이면 응답이 오지 않아 타임아웃으로 실패한다. 소켓은 항상 파괴해 정리한다.
+  const u = new URL(t.base + "/api/messages");
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const done = (e?: Error) => { if (!settled) { settled = true; clearTimeout(watchdog); req.destroy(); e ? reject(e) : resolve(); } };
+    const watchdog = setTimeout(() => done(new Error("서버가 초과 본문을 끝까지 읽습니다")), 20_000);
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: "POST",
+      headers: { authorization: `Bearer ${a.token}`, "content-type": "application/json", connection: "close" } }, (res) => {
+      res.resume();
+      try { assert.equal(res.statusCode, 413); done(); } catch (e) { done(e as Error); }
+    });
+    req.on("error", () => done(new Error("요청이 응답 전에 끊겼습니다")));
+    const chunk = Buffer.alloc(8192, 0x79);
+    // 느린 점적: 홍수처럼 쓰면 dev 프록시가 응답 전달 전에 소켓을 끊을 수 있어, 청크 사이에 간격을 둔다.
+    const pump = (): void => { if (settled || req.destroyed) return; if (req.write(chunk)) setTimeout(pump, 5); else req.once("drain", () => setTimeout(pump, 5)); };
+    pump();
+  });
 });
 
 test("오너 로그인 시도 제한과 코드 교체 시 세션 무효화", async () => {
