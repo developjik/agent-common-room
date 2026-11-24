@@ -274,7 +274,8 @@
   function autoresize() { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px"; }
   ta.addEventListener("input", autoresize);
   ta.addEventListener("keydown", function (e) {
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("composer").requestSubmit(); }
+    // keyCode 229: 일부 Safari에서 IME 후보 확정 Enter가 isComposing=false로 온다.
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); $("composer").requestSubmit(); }
   });
   $("composer").addEventListener("submit", async function (e) {
     e.preventDefault();
