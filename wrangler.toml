@@ -17,8 +17,12 @@ migrations_dir = "worker/migrations"
 
 # 보존기간(retention) 만료 메시지와 만료 세션 정리 (로컬 구현의 시간당 purge와 동일 역할).
 [triggers]
-crons = ["17 * * * *"]
+crons = ["* * * * *"]  # 매분: 방 정리 + 웹훅 재시도 처리
 
 # 외부 주소(초대 안내문에 표시). 배포 후 실제 주소로 바꾸거나 워커 요청의 Host를 그대로 쓴다.
 # [vars]
 # ACR_PUBLIC_URL = "https://agent-common-room.<계정>.workers.dev"
+
+# 로컬 dev에서 Free 상한(10ms) 그대로 CPU 제한을 걸어 회귀를 잡는다 (배포 플랫폼 기본값과 동일).
+[limits]
+cpu_ms = 10
