@@ -529,4 +529,6 @@ export class RoomService {
     if (n) this.audit(null, "system", "retention.purge", String(n));
     return n;
   }
-                                    }
+}
+
+export const SERVICE_VERSION = 1;
