@@ -158,7 +158,7 @@ export async function handleFetch(svc: RoomServiceD1, env: Env, req: Request, ct
         return res;
       }
       if ((path === "/api/me" || path === "/api/room") && method === "GET") return json(200, await svc.roomForAgent(agent));
-      if (path === "/api/inbox" && method === "GET") return json(200, await svc.inbox(agent, url.searchParams.get("limit") ?? undefined, url.searchParams.get("wait") ?? undefined));
+      if (path === "/api/inbox" && method === "GET") return json(200, await svc.inbox(agent, url.searchParams.get("limit") ?? undefined, url.searchParams.get("wait") ?? undefined, bearer(req)));
       if (path === "/api/ack" && method === "POST") return json(200, await svc.ack(agent, obj(await readJson(req)).seq));
       if (path === "/api/messages" && method === "GET") return json(200, await svc.readMessages(agent, Number(url.searchParams.get("after") ?? 0), url.searchParams.get("limit") ?? undefined));
       if (path === "/api/messages" && method === "POST") { const r = await svc.postAsAgent(agent, obj(await readJson(req))); if (!r.duplicate) ctx?.waitUntil(svc.processDueDeliveries(agent.room_id).catch(() => {})); return json(r.duplicate ? 200 : 201, r); }
