@@ -111,14 +111,27 @@ export class RoomServiceD1 {
     if (f && now - f.first < 15 * 60_000 && f.n >= 10) throw err(429, "too_many_attempts", "로그인 시도가 너무 많습니다. 15분 뒤 다시 시도하세요.");
     const room = await this.db.one("SELECT * FROM rooms WHERE id=?", roomId);
     if (!room || !safeEqualHex(await hashToken(ownerCode), room.owner_code_hash)) {
-      const cur = f && now - f.first < 15 * 60_000 ? { n: Number(f.n), first: Number(f.first) } : { n: 0, first: now };
-      await this.db.run("INSERT INTO login_fails(room_id,n,first) VALUES (?,?,?) ON CONFLICT(room_id) DO UPDATE SET n=excluded.n, first=excluded.first", roomId, cur.n + 1, cur.first);
+      // 실패 카운트는 실제 존재하는 방에만 원자적으로 기록한다
+      // (없는 방 ID로의 요청이 D1 쓰기 할당량을 소모하지 못하게).
+      if (room) {
+        await this.db.run(
+          `INSERT INTO login_fails(room_id,n,first) VALUES (?,1,?)
+           ON CONFLICT(room_id) DO UPDATE SET
+             n = CASE WHEN ? - login_fails.first < 900000 THEN login_fails.n + 1 ELSE 1 END,
+             first = CASE WHEN ? - login_fails.first < 900000 THEN login_fails.first ELSE ? END`,
+          roomId, now, now, now, now);
+      }
       throw err(401, "bad_credentials", "방 ID 또는 오너 코드가 올바르지 않습니다.");
     }
     await this.db.run("DELETE FROM login_fails WHERE room_id=?", roomId);
     const token = newToken("acr_ses");
     const ttl = 12 * 3600_000;
-    await this.db.run("INSERT INTO sessions(token_hash, room_id, created_at, expires_at) VALUES (?,?,?,?)", await hashToken(token), roomId, now, now + ttl);
+    // 코드 확인과 세션 발급 사이에 오너 코드가 교체되면 세션을 만들지 않는다.
+    const ins = await this.db.batch([
+      this.db.prep("UPDATE rooms SET id=id WHERE id=? AND owner_code_hash=?", roomId, room.owner_code_hash),
+      this.db.prep("INSERT INTO sessions(token_hash, room_id, created_at, expires_at) VALUES (?,?,?,?)", await hashToken(token), roomId, now, now + ttl),
+    ]);
+    if (!batchChanges(ins[0])) throw err(401, "bad_credentials", "오너 코드가 변경되었습니다. 새 코드로 다시 로그인하세요.");
     await this.audit(roomId, "owner", "login");
     return { session_token: token, expires_at: iso(now + ttl), room_id: roomId };
   }
@@ -147,6 +160,7 @@ export class RoomServiceD1 {
       max_chain_depth: r.max_chain_depth,
       rate_limit: { count: r.rate_limit_count, window_seconds: r.rate_limit_window_s },
       last_seq: r.next_seq - 1,
+      created_at: iso(r.created_at),
     };
   }
   async updateRoom(roomId: string, patch: Row) {
@@ -347,8 +361,7 @@ export class RoomServiceD1 {
   }
 
   // ---------- messages ----------
-  private async toPublic(m: Row): Promise<PublicMessage> {
-    const rec = m.recipient_id ? await this.db.one("SELECT id, name FROM agents WHERE id=?", m.recipient_id) : undefined;
+  private publicOf(m: Row, rec?: Row): PublicMessage {
     return {
       seq: m.seq, id: m.id, client_id: m.client_id ?? null, kind: m.kind,
       sender: { type: m.sender_type, id: m.sender_id, name: m.sender_name },
@@ -357,6 +370,20 @@ export class RoomServiceD1 {
       content: m.deleted_at ? null : m.content, deleted: !!m.deleted_at,
       context_category: m.context_category, created_at: iso(m.created_at),
     };
+  }
+  private async toPublic(m: Row): Promise<PublicMessage> {
+    const rec = m.recipient_id ? await this.db.one("SELECT id, name FROM agents WHERE id=?", m.recipient_id) : undefined;
+    return this.publicOf(m, rec);
+  }
+  /** 페이지 단위 변환: 수신자를 IN 한 번으로 묶어 N+1 쿼리를 피한다. */
+  private async toPublicMany(rows: Row[]): Promise<PublicMessage[]> {
+    const ids = [...new Set(rows.map(m => m.recipient_id).filter(Boolean))] as string[];
+    const recs = new Map<string, Row>();
+    if (ids.length) {
+      const found = await this.db.all(`SELECT id, name FROM agents WHERE id IN (${ids.map(() => "?").join(",")})`, ...ids);
+      for (const a of found) recs.set(a.id, a);
+    }
+    return rows.map(m => this.publicOf(m, m.recipient_id ? recs.get(m.recipient_id) : undefined));
   }
   private visibleSql = "room_id=? AND seq>? AND (recipient_id IS NULL OR recipient_id=? OR sender_id=?)";
 
@@ -377,8 +404,7 @@ export class RoomServiceD1 {
     const floor = Math.max(after, agent.history_floor);
     const rows = await this.db.all(`SELECT * FROM messages WHERE ${this.visibleSql} ORDER BY seq LIMIT ?`, agent.room_id, floor, agent.id, agent.id, lim + 1);
     const page = rows.slice(0, lim);
-    const messages: PublicMessage[] = [];
-    for (const m of page) messages.push(await this.toPublic(m));
+    const messages = await this.toPublicMany(page);
     return { messages, has_more: rows.length > lim, notice: UNTRUSTED_NOTICE };
   }
 
@@ -396,8 +422,7 @@ export class RoomServiceD1 {
       // 단조 증가 가드로 동시 inbox 호출 간 경합을 막는다.
       if (last > prevFetched) await this.db.run("UPDATE agents SET fetched_seq=? WHERE id=? AND fetched_seq<?", last, agent.id, last);
     }
-    const messages = [] as any[];
-    for (const m of page) messages.push({ ...(await this.toPublic(m)), redelivered: m.seq <= prevFetched });
+    const messages = (await this.toPublicMany(page)).map((m, i) => ({ ...m, redelivered: page[i].seq <= prevFetched }));
     return {
       messages,
       has_more: rows.length > lim,
@@ -498,8 +523,9 @@ export class RoomServiceD1 {
     const guard = sender.type === "owner"
       ? "UPDATE rooms SET next_seq=next_seq+1 WHERE id=?"
       : "UPDATE rooms SET next_seq=next_seq+1 WHERE id=? AND paused=0";
+    let guardRes: D1Result[];
     try {
-      await this.db.batch([
+      guardRes = await this.db.batch([
         this.db.prep(guard, roomId),
         this.db.prep(`INSERT INTO messages(${MSG_COLS}) SELECT ?, r.next_seq-1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM rooms r WHERE r.id=? AND r.next_seq>=2`,
           roomId, id, clientId, sender.type, sender.id, sender.name, kind, recipientId, replySeq, content, hash, category, depth, now, roomId),
@@ -511,7 +537,15 @@ export class RoomServiceD1 {
         if (p2.content_hash !== hash) throw err(409, "client_id_conflict", "같은 client_id로 다른 내용이 이미 전송되었습니다. 새 client_id를 쓰세요.");
         return { duplicate: true, message: await this.toPublic(p2) };
       }
+      // 메시지가 있는 방에서 전송과 일시정지가 겹치면 가드 롤백이 seq 충돌로 나타난다 → 423으로 번역.
+      const rPaused = await this.room(roomId);
+      if (rPaused.paused && sender.type === "agent") throw err(423, "room_paused", `방이 일시정지 상태입니다(${rPaused.pause_reason ?? "owner"}). 오너가 재개해야 합니다.`);
       throw e;
+    }
+    // 에이전트 가드가 0행(전송 사이 일시정지)이면 INSERT도 롤백된다. seq 충돌 없는 경우(빈 방)를 여기서 잡는다.
+    if (sender.type === "agent" && !batchChanges(guardRes[0])) {
+      const rPaused = await this.room(roomId);
+      throw err(423, "room_paused", `방이 일시정지 상태입니다(${rPaused.pause_reason ?? "owner"}). 오너가 재개해야 합니다.`);
     }
     const msg = await this.db.one("SELECT * FROM messages WHERE id=?", id);
     if (!msg) {
@@ -529,8 +563,7 @@ export class RoomServiceD1 {
     const lim = this.clampLimit(limit);
     const rows = await this.db.all("SELECT * FROM messages WHERE room_id=? AND seq>? ORDER BY seq LIMIT ?", roomId, after, lim + 1);
     const page = rows.slice(0, lim);
-    const messages: PublicMessage[] = [];
-    for (const m of page) messages.push(await this.toPublic(m));
+    const messages = await this.toPublicMany(page);
     return { messages, has_more: rows.length > lim };
   }
   async deleteMessage(roomId: string, seq: number) {
@@ -540,13 +573,25 @@ export class RoomServiceD1 {
   }
   /** Retention: wipe content older than the room's retention window. Keeps seq and tombstone. */
   async purgeExpired(): Promise<number> {
-    let n = 0;
     const now = this.clock.now();
-    for (const r of await this.db.all("SELECT id, retention_days FROM rooms WHERE retention_days IS NOT NULL")) {
-      const cutoff = now - r.retention_days * 86400_000;
-      n += Number((await this.db.run("UPDATE messages SET content='', deleted_at=? WHERE room_id=? AND created_at<? AND deleted_at IS NULL", now, r.id, cutoff)).changes);
-    }
+    // 세션 정리는 항상 실행되게 방 정리보다 먼저 둔다.
     await this.db.run("DELETE FROM sessions WHERE expires_at<=?", now);
+    await this.db.run("DELETE FROM login_fails WHERE ? - first >= 900000", now);
+    let n = 0;
+    // 방 목록은 페이지로 읽고, 보존 기간 값은 삭제 문장 안에서 원자적으로 다시 읽는다
+    // (읽은 뒤 오너가 기간을 바꿔도 낡은 값으로 지우지 않는다).
+    for (let off = 0; ; off += 200) {
+      const rooms = await this.db.all("SELECT id FROM rooms WHERE retention_days IS NOT NULL ORDER BY id LIMIT 200 OFFSET ?", off);
+      if (!rooms.length) break;
+      for (const r of rooms) {
+        n += Number((await this.db.run(
+          `UPDATE messages SET content='', deleted_at=?
+           WHERE room_id=? AND deleted_at IS NULL
+             AND created_at < ? - (SELECT retention_days * 86400000 FROM rooms WHERE id=? AND retention_days IS NOT NULL)`,
+          now, r.id, now, r.id)).changes);
+      }
+      if (rooms.length < 200) break;
+    }
     if (n) await this.audit(null, "system", "retention.purge", String(n));
     return n;
   }
