@@ -433,3 +433,14 @@ test("inbox 롱폴링: wait 동안 새 메시지를 기다렸다가 즉시 반�
   assert.equal(got.messages[0].content, "깨어나라");
   assert.ok(dt2 < 5000, "조기 반환 " + dt2 + "ms");
 });
+
+test("롱폴링 대기 중 토큰이 폐기되면 대기가 끊긴다", async (ctx) => {
+  if (!EXTERNAL) return ctx.skip("롱폴링은 Workers 구현에만 있다");
+  const r = await t.setupRoom();
+  const a = await t.join(r, "폐기봇");
+  const pending = t.call("GET", "/api/inbox?wait=15", a.token);
+  await new Promise(r2 => setTimeout(r2, 500));
+  assert.equal((await t.call("POST", `/api/owner/agents/${a.id}/revoke`, r.sess)).status, 200);
+  const res = await pending;
+  assert.equal(res.status, 401, "폐기 후 대기는 401로 끊겨야 한다");
+});
