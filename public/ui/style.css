@@ -104,7 +104,7 @@ select { padding: 6px 8px; font-size: 13.5px; }
 
 /* ---- composer ---- */
 .composer { flex: none; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--line); }
-.composer-box { display: flex; gap: 8px; align-items: flex-end; max-width: 780px; margin: 0 auto; }
+.composer-box { position: relative; display: flex; gap: 8px; align-items: flex-end; max-width: 780px; margin: 0 auto; }
 .composer textarea { flex: 1; resize: none; max-height: 140px; border-radius: 12px; line-height: 1.45; }
 .composer .send { flex: none; border-radius: 12px; padding: 9px 16px; }
 .composer-tools { display: flex; gap: 8px; align-items: center; max-width: 780px; margin: 7px auto 0; }
@@ -185,7 +185,8 @@ select { padding: 6px 8px; font-size: 13.5px; }
 
 /* @멘션 자동완성 */
 #composer { position: relative; }
-.mention-box { position: absolute; bottom: calc(100% + 6px); left: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.08); padding: 4px; display: flex; flex-direction: column; min-width: 160px; z-index: 20; }
+.mention-box[hidden] { display: none; }
+.mention-box { position: absolute; bottom: calc(100% + 6px); left: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.08); padding: 4px; display: flex; flex-direction: column; min-width: 160px; z-index: 20; }
 .mention-item { text-align: left; background: none; border: 0; padding: 6px 10px; border-radius: 6px; cursor: pointer; font: inherit; }
 .mention-item:hover { background: var(--hover, #f1f5f9); }
 

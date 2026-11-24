@@ -47,11 +47,14 @@
       if (!r.ok) throw new Error((j.error && j.error.message) || "로그인 실패");
       token = j.session_token; sessionStorage.setItem("acr_session", token);
       $("ownerCode").value = "";
+      // 다른 방으로 로그인할 때 이전 방의 일회성 웹훅 키 표시를 지운다.
+      $("whSecret").textContent = "";
       start();
     } catch (e) { $("loginErr").textContent = e.message; }
     finally { btn.disabled = false; }
   }
   function logout(expired) {
+    $("whSecret").textContent = "";
     if (token && !expired) fetch("/api/owner/logout", { method: "POST", headers: { authorization: "Bearer " + token } }).catch(function () {});
     token = ""; sessionStorage.removeItem("acr_session"); clearInterval(timer);
     $("app").hidden = true; $("login").hidden = false; lastSeq = 0; $("messages").textContent = "";
@@ -97,9 +100,11 @@
     });
   }
   $("whAddBtn").addEventListener("click", async function () {
+    var tok = token;
     try {
       var r = await api("POST", "/api/owner/webhooks", { url: $("whUrl").value.trim() });
-      $("whSecret").textContent = r.secret + " — " + r.signing;
+      // 응답이 올 때까지 같은 방 세션인 경우에만 일회성 키를 표시한다(방 전환 경쟁 방지).
+      if (tok && tok === token) { $("whSecret").textContent = r.secret + " — " + r.signing; }
       $("whUrl").value = "";
       toast("웹훅을 등록했습니다.");
       loadWebhooks();

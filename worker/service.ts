@@ -102,7 +102,13 @@ export class RoomServiceD1 {
   }
   async deleteRoom(roomId: string) {
     await this.room(roomId);
-    await this.db.run("DELETE FROM rooms WHERE id=?", roomId);
+    // 0002의 webhook 테이블은 ON DELETE CASCADE가 없어 방 삭제 전에 먼저 지운다.
+    // 한 batch(=SQL 트랜잭션)로 묶어, 중간 실패 시 전달 이력만 지워지고 방이 남는 상태를 막는다.
+    await this.db.batch([
+      this.db.prep("DELETE FROM webhook_deliveries WHERE room_id=?", roomId),
+      this.db.prep("DELETE FROM webhooks WHERE room_id=?", roomId),
+      this.db.prep("DELETE FROM rooms WHERE id=?", roomId),
+    ]);
     await this.audit(roomId, "admin", "room.delete");
   }
 
@@ -425,7 +431,7 @@ export class RoomServiceD1 {
   }
 
   /** Inbox: everything after acked_seq (at-least-once). Advances fetched position only. */
-  async inbox(agent: Agent, limit?: unknown, wait?: unknown) {
+  async inbox(agent: Agent, limit?: unknown, wait?: unknown, token?: string) {
     this.requireRead(agent);
     const lim = this.clampLimit(limit);
     // 롱폴링: wait 초(최대 25) 동안 새 메시지를 기다린다. 대기는 실시간 기준(가짜 시계와 무관).
@@ -436,10 +442,14 @@ export class RoomServiceD1 {
     const st0 = (await this.db.one("SELECT fetched_seq, acked_seq FROM agents WHERE id=?", agent.id))!;
     const floor = Math.max(Number(st0.acked_seq), agent.history_floor);
     const baseFetched = Number(st0.fetched_seq);
-    // Free 플랜은 요청당 서브요청 50회 상한: 대기 루프는 초당 메시지 테이블만 1회 읽는다(최대 25+α).
+    // Free 플랜은 요청당 서브요청 50회 상한: 2초 간격으로 최대 12회 갱신(읽기 2회/회 + 상하수 ~30).
+    // 매 갱신마다 토큰 상태를 다시 확인해, 대기 중 폐기된 에이전트에게 새 메시지가 나가지 않게 한다.
     let rows = await this.db.all(`SELECT * FROM messages WHERE ${this.visibleSql} AND sender_id<>? ORDER BY seq LIMIT ?`, agent.room_id, floor, agent.id, agent.id, agent.id, lim + 1);
     while (!rows.some(pg => pg.seq > baseFetched) && Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 1000));
+      // 남은 대기 시간을 넘기지 않도록 갱신 간격을 deadline에 맞춰 제한한다.
+      await new Promise(r => setTimeout(r, Math.min(2000, Math.max(0, deadline - Date.now()))));
+      const alive = token ? await this.db.one("SELECT id FROM agents WHERE id=? AND status='active' AND token_hash=?", agent.id, await hashToken(token)) : agent;
+      if (!alive) throw err(401, "unauthorized", "토큰이 폐기되었습니다.");
       rows = await this.db.all(`SELECT * FROM messages WHERE ${this.visibleSql} AND sender_id<>? ORDER BY seq LIMIT ?`, agent.room_id, floor, agent.id, agent.id, agent.id, lim + 1);
     }
     const page = rows.slice(0, lim);
@@ -657,6 +667,14 @@ export class RoomServiceD1 {
     if (!w || !w.active) {
       await this.db.run("UPDATE webhook_deliveries SET status='failed', last_error='webhook_revoked' WHERE id=?", d.id);
       return;
+    }
+    // 삭제/보존 만료된 메시지의 원문은 큐에 남아 있어도 다시 보내지 않는다.
+    if (d.kind === "message" && d.message_id) {
+      const m = await this.db.one("SELECT deleted_at FROM messages WHERE id=?", d.message_id);
+      if (!m || m.deleted_at) {
+        await this.db.run("UPDATE webhook_deliveries SET status='failed', last_error='message_deleted' WHERE id=?", d.id);
+        return;
+      }
     }
     const attempts = Number(d.attempts) + 1;
     let httpStatus: number | null = null;
