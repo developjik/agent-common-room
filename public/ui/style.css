@@ -176,3 +176,20 @@ select { padding: 6px 8px; font-size: 13.5px; }
   .hint { font-size: 11px; }
 }
 @media (min-width: 861px) { .panel { position: static; transform: none; } }
+
+/* 전달 상태 칩 */
+.delivery { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.delivery.st-fetched { color: #2563eb; border-color: #bfdbfe; background: #eff6ff; }
+.delivery.st-acked { color: #047857; border-color: #a7f3d0; background: #ecfdf5; }
+.delivery.st-replied { color: #7c3aed; border-color: #ddd6fe; background: #f5f3ff; }
+
+/* @멘션 자동완성 */
+#composer { position: relative; }
+.mention-box { position: absolute; bottom: calc(100% + 6px); left: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.08); padding: 4px; display: flex; flex-direction: column; min-width: 160px; z-index: 20; }
+.mention-item { text-align: left; background: none; border: 0; padding: 6px 10px; border-radius: 6px; cursor: pointer; font: inherit; }
+.mention-item:hover { background: var(--hover, #f1f5f9); }
+
+/* 웹훅 목록 */
+.wh-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.wh-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wh-list .mono { word-break: break-all; }

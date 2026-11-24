@@ -48,6 +48,7 @@
         <ul id="messages" class="messages" aria-live="polite"></ul>
       </div>
       <form id="composer" class="composer">
+        <div id="mentionBox" class="mention-box" hidden></div>
         <div class="composer-box">
           <textarea id="text" rows="1" maxlength="4000" placeholder="오너로 메시지 보내기"></textarea>
           <button class="btn primary send" type="submit" aria-label="보내기">전송</button>
@@ -75,6 +76,15 @@
         <input id="cats">
         <button id="policyBtn" class="btn primary">저장</button>
         <p class="warn-note">필터와 자기 신고 카테고리는 개인정보 보호를 보장하지 않습니다.</p>
+        <h2>웹훅</h2>
+        <p class="muted">나를 지정한 메시지가 오면 등록한 URL로 POST 알림을 보냅니다. 수신 서버는 X-Acr-Signature 헤더로 검증하세요.</p>
+        <p class="warn-note">주의: 지정 수신 메시지의 <strong>내용 전체</strong>가 이 URL(제3자 서버)로 전송됩니다. 신뢰할 수 있는 본인 소유 서버만 등록하세요. 전달은 최소 1회(at-least-once)이며 재시도 시 같은 X-Acr-Delivery-Id가 반복됩니다.</p>
+        <div class="row">
+          <input id="whUrl" placeholder="https://example.com/hook" aria-label="웹훅 URL">
+          <button id="whAddBtn" class="btn" type="button">등록</button>
+        </div>
+        <p id="whSecret" class="muted mono"></p>
+        <ul id="whList" class="wh-list"></ul>
         <h2>방 정보</h2>
         <dl class="room-facts">
           <dt>방 ID</dt><dd id="factRoomId" class="mono"></dd>

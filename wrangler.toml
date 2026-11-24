@@ -17,7 +17,7 @@ migrations_dir = "worker/migrations"
 
 # 보존기간(retention) 만료 메시지와 만료 세션 정리 (로컬 구현의 시간당 purge와 동일 역할).
 [triggers]
-crons = ["17 * * * *"]
+crons = ["* * * * *"]  # 매분: 방 정리 + 웹훅 재시도 처리
 
 # 외부 주소(초대 안내문에 표시). 배포 후 실제 주소로 바꾸거나 워커 요청의 Host를 그대로 쓴다.
 # [vars]

@@ -76,7 +76,7 @@ async function checkAdminKey(env: Env, req: Request): Promise<boolean> {
   return safeEqualHex(await hashToken(bearer(req)), await hashToken(configured));
 }
 
-export async function handleFetch(svc: RoomServiceD1, env: Env, req: Request): Promise<Response> {
+export async function handleFetch(svc: RoomServiceD1, env: Env, req: Request, ctx?: ExecutionContext): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
   const method = req.method ?? "GET";
@@ -136,8 +136,12 @@ export async function handleFetch(svc: RoomServiceD1, env: Env, req: Request): P
       if (path === "/api/owner/agents" && method === "GET") return json(200, { agents: await svc.listAgents(room) });
       if ((m = /^\/api\/owner\/agents\/([^/]+)\/revoke$/.exec(path)) && method === "POST") { await svc.revokeAgent(room, m[1]); return json(200, { revoked: true }); }
       if (path === "/api/owner/messages" && method === "GET") return json(200, await svc.ownerMessages(room, Number(url.searchParams.get("after") ?? 0), url.searchParams.get("limit") ?? undefined));
-      if (path === "/api/owner/messages" && method === "POST") { const r = await svc.postAsOwner(room, obj(await readJson(req))); return json(r.duplicate ? 200 : 201, r); }
+      if (path === "/api/owner/messages" && method === "POST") { const r = await svc.postAsOwner(room, obj(await readJson(req))); if (!r.duplicate) ctx?.waitUntil(svc.processDueDeliveries(room).catch(() => {})); return json(r.duplicate ? 200 : 201, r); }
       if ((m = /^\/api\/owner\/messages\/(\d+)$/.exec(path)) && method === "DELETE") { await svc.deleteMessage(room, Number(m[1])); return json(200, { deleted: true }); }
+      if (path === "/api/owner/webhooks" && method === "GET") return json(200, await svc.listWebhooks(room));
+      if (path === "/api/owner/webhooks" && method === "POST") return json(201, await svc.createWebhook(room, obj(await readJson(req)).url));
+      if ((m = /^\/api\/owner\/webhooks\/(whk_[A-Za-z0-9]+)$/.exec(path)) && method === "DELETE") { await svc.revokeWebhook(room, m[1]); return json(200, { revoked: true }); }
+      if ((m = /^\/api\/owner\/webhooks\/(whk_[A-Za-z0-9]+)\/test$/.exec(path)) && method === "POST") return json(200, { delivery: await svc.testWebhook(room, m[1]) });
       throw new ApiError(404, "not_found", "없는 경로입니다.");
     }
 
@@ -148,13 +152,16 @@ export async function handleFetch(svc: RoomServiceD1, env: Env, req: Request): P
       if (path === "/mcp") {
         if (method !== "POST") return json(405, { error: { code: "method_not_allowed", message: "POST만 지원합니다 (stateless Streamable HTTP)." } }, { allow: "POST" });
         // 공식 SDK 전송이 바디 파싱/JSON-RPC 에러(-32700 등)/프로토콜 협상을 직접 처리한다.
-        return await handleMcp(svc, agent, req);
+        const res = await handleMcp(svc, agent, req);
+        // MCP 전송도 REST와 같이 전달을 예약한다(다음 cron까지 기다리지 않음). 큐가 비어 있으면 즉시 반환된다.
+        ctx?.waitUntil(svc.processDueDeliveries(agent.room_id).catch(() => {}));
+        return res;
       }
       if ((path === "/api/me" || path === "/api/room") && method === "GET") return json(200, await svc.roomForAgent(agent));
-      if (path === "/api/inbox" && method === "GET") return json(200, await svc.inbox(agent, url.searchParams.get("limit") ?? undefined));
+      if (path === "/api/inbox" && method === "GET") return json(200, await svc.inbox(agent, url.searchParams.get("limit") ?? undefined, url.searchParams.get("wait") ?? undefined));
       if (path === "/api/ack" && method === "POST") return json(200, await svc.ack(agent, obj(await readJson(req)).seq));
       if (path === "/api/messages" && method === "GET") return json(200, await svc.readMessages(agent, Number(url.searchParams.get("after") ?? 0), url.searchParams.get("limit") ?? undefined));
-      if (path === "/api/messages" && method === "POST") { const r = await svc.postAsAgent(agent, obj(await readJson(req))); return json(r.duplicate ? 200 : 201, r); }
+      if (path === "/api/messages" && method === "POST") { const r = await svc.postAsAgent(agent, obj(await readJson(req))); if (!r.duplicate) ctx?.waitUntil(svc.processDueDeliveries(agent.room_id).catch(() => {})); return json(r.duplicate ? 200 : 201, r); }
     }
     throw new ApiError(404, "not_found", "없는 경로입니다.");
   } catch (e) {
