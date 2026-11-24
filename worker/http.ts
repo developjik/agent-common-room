@@ -28,16 +28,41 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
 const fail = (e: ApiError) => json(e.status, { error: { code: e.code, message: e.message } });
 
 async function readJson(req: Request): Promise<any> {
-  // 헤더가 크기를 알려주면 본문을 읽기 전에 거른다(대형 본문의 메모리 할당 방지).
+  // 헤더가 크기를 알려주면 본문을 읽기 전에 거른다.
   if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY) throw new ApiError(413, "body_too_large", "요청 본문이 너무 큽니다 (최대 64KB).");
-  const text = await req.text();
+  // 헤더가 없거나 거짓이어도 스트림을 MAX_BODY까지만 읽으므로 메모리는 항상 상한 안이다.
+  const text = await readBounded(req);
   if (!text) return {};
-  if (new TextEncoder().encode(text).length > MAX_BODY) throw new ApiError(413, "body_too_large", "요청 본문이 너무 큽니다 (최대 64KB).");
   try {
     return JSON.parse(text);
   } catch {
     throw new ApiError(400, "bad_json", "JSON을 해석할 수 없습니다.");
   }
+}
+
+async function readBounded(req: Request): Promise<string> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_BODY) {
+        await reader.cancel().catch(() => {});
+        throw new ApiError(413, "body_too_large", "요청 본문이 너무 큽니다 (최대 64KB).");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const buf = new Uint8Array(size);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+  return new TextDecoder().decode(buf);
 }
 function bearer(req: Request): string {
   const m = /^Bearer\s+(\S+)$/i.exec(req.headers.get("authorization") ?? "");
