@@ -18,7 +18,7 @@
     "check:worker": "tsc -p worker/tsconfig.json",
     "dev:worker": "wrangler dev",
     "deploy:worker": "wrangler deploy",
-    "test:worker": "npm run build && node --test --test-concurrency=1 dist/test/room.test.js dist/test/mcp.test.js dist/test/race.test.js"
+    "test:worker": "node test/require-external.js && npm run build && node --test --test-concurrency=1 dist/test/room.test.js dist/test/mcp.test.js dist/test/race.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
