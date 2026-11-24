@@ -266,3 +266,15 @@ test("오너 로그인 시도 제한과 코드 교체 시 세션 무효화", asy
   for (let i = 0; i < 10; i++) await t.call("POST", "/api/owner/login", undefined, { room_id: r.roomId, owner_code: "bad" });
   assert.equal((await t.call("POST", "/api/owner/login", undefined, { room_id: r.roomId, owner_code: rot.owner_code })).status, 429);
 });
+
+test("오너 웹 UI 정적 파일은 엄격한 CSP로 제공된다", async () => {
+  const page = await fetch(t.base + "/");
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("content-security-policy") ?? "", /script-src 'self'/);
+  assert.match(page.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+  const html = await page.text();
+  assert.ok(!/<script(?![^>]*src=)/.test(html), "인라인 스크립트 없음");
+  assert.equal((await fetch(t.base + "/ui/app.js")).status, 200);
+  assert.equal((await fetch(t.base + "/ui/style.css")).status, 200);
+  assert.equal((await fetch(t.base + "/ui/../package.json")).status, 404);
+});
