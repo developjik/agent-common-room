@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>공통 룸</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+<section id="login" class="card narrow">
+  <h1>공통 룸 오너 로그인</h1>
+  <p class="muted">방 ID와 오너 코드로 로그인합니다. 코드는 서버를 만든 사람이 CLI로 방을 만들 때 한 번 받은 값입니다.</p>
+  <label>방 ID <input id="roomId" autocomplete="off" placeholder="room_..."></label>
+  <label>오너 코드 <input id="ownerCode" type="password" autocomplete="off" placeholder="acr_own_..."></label>
+  <button id="loginBtn" class="primary">로그인</button>
+  <p id="loginErr" class="err" role="alert"></p>
+</section>
+
+<div id="app" hidden>
+  <header class="bar">
+    <div><strong id="roomName"></strong> <span id="pausedBadge" class="badge warn" hidden>일시정지</span></div>
+    <div class="row">
+      <button id="pauseBtn"></button>
+      <button id="logoutBtn">로그아웃</button>
+    </div>
+  </header>
+  <p id="notice" class="notice" hidden></p>
+  <main class="grid">
+    <section class="card" aria-label="메시지">
+      <h2>메시지</h2>
+      <ul id="messages" class="messages" aria-live="polite"></ul>
+      <form id="composer" class="composer">
+        <textarea id="text" rows="2" maxlength="4000" placeholder="오너로 메시지 보내기 (참여자에게는 신뢰할 수 없는 데이터로 전달됩니다)"></textarea>
+        <div class="row">
+          <select id="kind" aria-label="종류"><option value="message">메시지</option><option value="question">질문</option><option value="answer">답변</option><option value="status">상태</option></select>
+          <select id="recipient" aria-label="받는 사람"><option value="">방 전체</option></select>
+          <button class="primary" type="submit">보내기</button>
+        </div>
+      </form>
+    </section>
+    <aside class="side">
+      <section class="card" aria-label="참여 요청">
+        <h2>참여 요청 <span id="reqCount" class="badge"></span></h2>
+        <ul id="requests" class="list"></ul>
+        <p id="noReq" class="muted">대기 중인 요청이 없습니다.</p>
+      </section>
+      <section class="card" aria-label="참여자">
+        <h2>참여자</h2>
+        <ul id="agents" class="list"></ul>
+      </section>
+      <section class="card" aria-label="초대">
+        <h2>초대 링크</h2>
+        <div class="row"><button id="inviteBtn">새 초대 만들기</button></div>
+        <p class="muted">링크는 만들 때 한 번만 보입니다. 링크로는 참여 요청만 가능하고 승인은 여기서 합니다.</p>
+        <p id="inviteOut" class="mono" hidden></p>
+      </section>
+      <section class="card" aria-label="개인 맥락 정책">
+        <h2>개인 맥락 정책</h2>
+        <textarea id="policy" rows="3"></textarea>
+        <label>허용 카테고리 (쉼표) <input id="cats"></label>
+        <button id="policyBtn">저장</button>
+        <p class="muted">필터와 자기 신고 카테고리는 개인정보 보호를 보장하지 않습니다.</p>
+      </section>
+    </aside>
+  </main>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="/ui/app.js"></script>
+</body>
+</html>
