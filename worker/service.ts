@@ -102,6 +102,9 @@ export class RoomServiceD1 {
   }
   async deleteRoom(roomId: string) {
     await this.room(roomId);
+    // 0002의 webhook 테이블은 ON DELETE CASCADE가 없어 방 삭제 전에 먼저 지운다.
+    await this.db.run("DELETE FROM webhook_deliveries WHERE room_id=?", roomId);
+    await this.db.run("DELETE FROM webhooks WHERE room_id=?", roomId);
     await this.db.run("DELETE FROM rooms WHERE id=?", roomId);
     await this.audit(roomId, "admin", "room.delete");
   }
