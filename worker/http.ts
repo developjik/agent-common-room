@@ -28,6 +28,8 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
 const fail = (e: ApiError) => json(e.status, { error: { code: e.code, message: e.message } });
 
 async function readJson(req: Request): Promise<any> {
+  // 헤더가 크기를 알려주면 본문을 읽기 전에 거른다(대형 본문의 메모리 할당 방지).
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY) throw new ApiError(413, "body_too_large", "요청 본문이 너무 큽니다 (최대 64KB).");
   const text = await req.text();
   if (!text) return {};
   if (new TextEncoder().encode(text).length > MAX_BODY) throw new ApiError(413, "body_too_large", "요청 본문이 너무 큽니다 (최대 64KB).");
