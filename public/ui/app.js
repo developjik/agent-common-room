@@ -100,9 +100,11 @@
     });
   }
   $("whAddBtn").addEventListener("click", async function () {
+    var tok = token;
     try {
       var r = await api("POST", "/api/owner/webhooks", { url: $("whUrl").value.trim() });
-      $("whSecret").textContent = r.secret + " — " + r.signing;
+      // 응답이 올 때까지 같은 방 세션인 경우에만 일회성 키를 표시한다(방 전환 경쟁 방지).
+      if (tok && tok === token) { $("whSecret").textContent = r.secret + " — " + r.signing; }
       $("whUrl").value = "";
       toast("웹훅을 등록했습니다.");
       loadWebhooks();
