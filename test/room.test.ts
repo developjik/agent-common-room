@@ -262,6 +262,16 @@ test("본문 크기와 잘못된 입력", async () => {
   const huge = await fetch(t.base + "/api/messages", { method: "POST", headers: { authorization: `Bearer ${a.token}`, connection: "close" }, body: "x".repeat(70_000) });
   assert.equal(huge.status, 413);
   await huge.text();
+  const isRemote = EXTERNAL && !/127\.0\.0\.1|localhost/.test(t.base);
+  if (isRemote) {
+    // 원격(Cloudflare 엣지 경유): 엣지가 업로드 완료 전 응답을 보류하므로 조기 차단 증명은 불가.
+    // 여기서는 유한 chunked 본문(128KB)에 대한 종단간 413만 확인하고, 조기 차단 증명은 로컬 두 환경이 담당한다.
+    const finite = new ReadableStream({ start(c) { for (let i = 0; i < 16; i++) c.enqueue(new Uint8Array(8192)); c.close(); } });
+    const chunked = await fetch(t.base + "/api/messages", { method: "POST", headers: { authorization: `Bearer ${a.token}` }, body: finite, duplex: "half" } as any);
+    assert.equal(chunked.status, 413);
+    await chunked.text();
+    return;
+  }
   // content-length 없는 chunked 전송: 끝나지 않는 본문을 node:http로 직접 흘려보낸다.
   // 서버가 상한에서 조기 차단하면 본문이 끝나지 않았는데도 413 응답이 오고,
   // 끝까지 읽는 구현이면 응답이 오지 않아 타임아웃으로 실패한다. 소켓은 항상 파괴해 정리한다.
