@@ -68,7 +68,43 @@
     $("chatView").hidden = true; $("settingsView").hidden = false;
     $("settingsBtn").setAttribute("aria-pressed", "true");
     closePanel();
+    loadWebhooks();
   }
+
+  async function loadWebhooks() {
+    var list = $("whList");
+    try { var r = await api("GET", "/api/owner/webhooks"); } catch (e) { return; }
+    list.textContent = "";
+    r.webhooks.forEach(function (w) {
+      var li = el("li");
+      var stat = w.last_status === "ok" ? "최근 전달 성공" : w.last_status === "failed" ? "최근 전달 실패" : w.last_status === "pending" ? "전달 대기/재시도 중" : "아직 전달 없음";
+      li.appendChild(el("span", "mono", w.url));
+      li.appendChild(el("span", "muted", " · " + stat));
+      var tb = el("button", "btn", "테스트"); tb.type = "button";
+      tb.addEventListener("click", async function () {
+        try {
+          var t = await api("POST", "/api/owner/webhooks/" + w.id + "/test");
+          toast("테스트 전달: " + t.delivery.status + (t.delivery.http_status ? " (HTTP " + t.delivery.http_status + ")" : ""));
+          loadWebhooks();
+        } catch (e) { toast(e.message); }
+      });
+      var db = el("button", "btn", "삭제"); db.type = "button";
+      db.addEventListener("click", async function () {
+        try { await api("DELETE", "/api/owner/webhooks/" + w.id); loadWebhooks(); } catch (e) { toast(e.message); }
+      });
+      li.appendChild(tb); li.appendChild(db);
+      list.appendChild(li);
+    });
+  }
+  $("whAddBtn").addEventListener("click", async function () {
+    try {
+      var r = await api("POST", "/api/owner/webhooks", { url: $("whUrl").value.trim() });
+      $("whSecret").textContent = r.secret + " — " + r.signing;
+      $("whUrl").value = "";
+      toast("웹훅을 등록했습니다.");
+      loadWebhooks();
+    } catch (e) { toast(e.message); }
+  });
   function openPanel() {
     var p = $("panel");
     p.hidden = false;
@@ -121,6 +157,13 @@
       var foot = el("div", "msg-foot");
       foot.appendChild(el("span", "", "#" + m.seq));
       if (m.recipient) foot.appendChild(el("span", "", "→ " + m.recipient.name + "에게"));
+      if (m.recipient && m.delivery) {
+        var DL = { sent: "보냄", fetched: "전달됨", acked: "처리 확인", replied: "답장함" };
+        var DT = { sent: "아직 받아가지 않음", fetched: "에이전트가 받아감(inbox)", acked: "에이전트가 처리를 확인함(ack)", replied: "에이전트가 답장함" };
+        var dchip = el("span", "delivery st-" + m.delivery.state, DL[m.delivery.state] || m.delivery.state);
+        dchip.title = DT[m.delivery.state] || "";
+        foot.appendChild(dchip);
+      }
       if (m.reply_to) foot.appendChild(el("span", "", "↩ #" + m.reply_to + "에 대한 답장"));
       if (!m.deleted) {
         var del = el("button", "del-btn", "삭제");
@@ -273,6 +316,30 @@
   var ta = $("text");
   function autoresize() { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px"; }
   ta.addEventListener("input", autoresize);
+  // @이름 입력 중이면 참여자 자동완성. 고르면 받는 사람으로 지정하고 본문의 @토큰을 지운다.
+  var mentionBox = $("mentionBox");
+  function updateMention() {
+    var upto = ta.value.slice(0, ta.selectionStart == null ? ta.value.length : ta.selectionStart);
+    var mm = /(?:^|\s)@([가-힣A-Za-z0-9_-]{0,30})$/.exec(upto);
+    var cands = mm ? agents.filter(function (a) { return a.name.toLowerCase().indexOf(mm[1].toLowerCase()) !== -1; }) : [];
+    mentionBox.textContent = "";
+    if (!mm || !cands.length) { mentionBox.hidden = true; return; }
+    cands.forEach(function (a) {
+      var b = el("button", "mention-item", "@" + a.name);
+      b.type = "button";
+      b.addEventListener("click", function () {
+        $("recipient").value = a.id;
+        var after = ta.value.slice(ta.selectionStart == null ? ta.value.length : ta.selectionStart);
+        ta.value = upto.slice(0, upto.length - mm[0].length) + after;
+        autoresize();
+        mentionBox.hidden = true;
+        ta.focus();
+      });
+      mentionBox.appendChild(b);
+    });
+    mentionBox.hidden = false;
+  }
+  ta.addEventListener("input", updateMention);
   ta.addEventListener("keydown", function (e) {
     // keyCode 229: 일부 Safari에서 IME 후보 확정 Enter가 isComposing=false로 온다.
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); $("composer").requestSubmit(); }
