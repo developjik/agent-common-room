@@ -165,6 +165,7 @@ export class RoomService {
       max_chain_depth: r.max_chain_depth,
       rate_limit: { count: r.rate_limit_count, window_seconds: r.rate_limit_window_s },
       last_seq: r.next_seq - 1,
+      created_at: iso(r.created_at),
     };
   }
   updateRoom(roomId: string, patch: Row) {
@@ -532,3 +533,4 @@ export class RoomService {
 }
 
 export const SERVICE_VERSION = 1;
+
