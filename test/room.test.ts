@@ -260,6 +260,10 @@ test("본문 크기와 잘못된 입력", async () => {
   assert.equal((await t.call("POST", "/api/messages", a.token, msg("k", "x", { kind: "command" }))).status, 400);
   const huge = await fetch(t.base + "/api/messages", { method: "POST", headers: { authorization: `Bearer ${a.token}` }, body: "x".repeat(70_000) });
   assert.equal(huge.status, 413);
+  // content-length 없는 chunked 전송도 스트림 상한으로 413이어야 한다.
+  const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("y".repeat(70_000))); c.close(); } });
+  const chunked = await fetch(t.base + "/api/messages", { method: "POST", headers: { authorization: `Bearer ${a.token}` }, body: stream, duplex: "half" } as any);
+  assert.equal(chunked.status, 413);
 });
 
 test("오너 로그인 시도 제한과 코드 교체 시 세션 무효화", async () => {
