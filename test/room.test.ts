@@ -284,7 +284,7 @@ test("본문 크기와 잘못된 입력", async () => {
     let settled = false;
     const done = (e?: Error) => { if (!settled) { settled = true; clearTimeout(watchdog); req.destroy(); e ? reject(e) : resolve(); } };
     const watchdog = setTimeout(() => done(new Error("서버가 초과 본문을 끝까지 읽습니다")), 20_000);
-    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: "POST",
+    const req = http.request({ hostname: u.hostname.replace(/^\[|\]$/g, ""), port: u.port, path: u.pathname, method: "POST",
       headers: { authorization: `Bearer ${a.token}`, "content-type": "application/json", connection: "close" } }, (res) => {
       res.resume();
       try { assert.equal(res.statusCode, 413); done(); } catch (e) { done(e as Error); }
@@ -301,7 +301,7 @@ test("본문 크기와 잘못된 입력", async () => {
     let settled = false;
     const done = (status: number | null) => { if (!settled) { settled = true; clearTimeout(watchdog); req.destroy(); resolve({ status }); } };
     const watchdog = setTimeout(() => done(null), 15_000);
-    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: "POST",
+    const req = http.request({ hostname: u.hostname.replace(/^\[|\]$/g, ""), port: u.port, path: u.pathname, method: "POST",
       headers: { authorization: `Bearer ${a.token}`, "content-type": "application/json", connection: "close" } }, (res) => {
       res.resume();
       done(res.statusCode ?? null);
@@ -383,21 +383,23 @@ test("오너 웹훅: URL 검증, 등록/삭제, 지정 수신 메시지 전달 �
   assert.ok(w.id.startsWith("whk_"));
   assert.ok(w.secret.startsWith("whsec_"));
   // 핑 테스트: 인라인으로 1회 시도가 기록된다 (example.com은 실제로 응답하므로 ok/failed 둘 다 시도 증거).
-  const ping = (await t.call("POST", `/api/owner/webhooks/${w.id}/test`, r.sess)).json.delivery;
-  assert.equal(ping.kind, "ping");
-  assert.equal(ping.attempts, 1);
-  assert.ok(ping.status === "ok" || ping.status === "pending" || ping.status === "failed");
-  // 지정 수신 메시지 → 전달 레코드 생성 (실제 전송은 비동기 waitUntil이라 목록에서 시도 흔적을 폴링)
+  const ping2 = (await t.call("POST", `/api/owner/webhooks/${w.id}/test`, r.sess)).json.delivery;
+  assert.equal(ping2.kind, "ping");
+  assert.equal(ping2.attempts, 1);
+  assert.ok(ping2.status === "ok" || ping2.status === "pending" || ping2.status === "failed");
+  // 지정 수신 메시지 → 핑과 구분되는 새 전달이 시도되어야 한다. 전송 직후 목록의 최신 전달은
+  // 방금 만들어진 메시지 전달(attempts=0)이므로, attempts>=1이 되면 핑이 아니라 이 메시지의 시도다.
   await t.call("POST", "/api/owner/messages", r.sess, { client_id: "wh-1", content: "웹훅 알림 대상", recipient: a.id });
   let seen: any = null;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 20; i++) {
     const l = (await t.call("GET", "/api/owner/webhooks", r.sess)).json;
     seen = l.webhooks.find((x: any) => x.id === w.id);
-    if (seen && seen.last_attempts >= 1) break;
-    await new Promise(r2 => setTimeout(r2, 500));
+    if (seen && seen.last_kind === "message" && seen.last_attempts >= 1) break;
+    await new Promise(r2 => setTimeout(r2, 700));
   }
   assert.ok(seen, "웹훅이 목록에 있다");
-  assert.ok(seen.last_status, "전달이 시도되었다 (last_status=" + seen.last_status + ")");
+  assert.equal(seen.last_kind, "message", "최신 전달은 핑이 아니라 지정 수신 메시지여야 한다");
+  assert.ok(seen.last_attempts >= 1, "지정 수신 메시지의 새 전달이 시도되었다 (attempts=" + seen.last_attempts + ")");
   // 지정 수신이 아닌 메시지는 전달 대상이 아니다: 직전 상태 그대로인지는 전달 수로 간접 확인한다.
   const before = seen.last_attempts;
   await t.call("POST", "/api/owner/messages", r.sess, { client_id: "wh-2", content: "전체 공지" });
