@@ -15,7 +15,7 @@
     "build:web": "npm --prefix web ci --no-audit --no-fund && npm --prefix web run build",
     "start": "node dist/src/server.js",
     "cli": "node dist/src/cli.js",
-    "test": "npm run build && node --test --test-concurrency=1 dist/test/room.test.js dist/test/mcp.test.js dist/test/race.test.js dist/test/setup.test.js dist/test/onboarding-ui.test.js dist/test/ui-overhaul.test.js dist/test/driver-contract.test.js dist/test/schema.test.js dist/test/property.test.js",
+    "test": "npm run build && node --test --test-concurrency=1 dist/test/room.test.js dist/test/mcp.test.js dist/test/race.test.js dist/test/setup.test.js dist/test/onboarding-ui.test.js dist/test/ui-overhaul.test.js dist/test/web-ui.test.js dist/test/driver-contract.test.js dist/test/schema.test.js dist/test/property.test.js",
     "check": "npm run build && npm run check:worker",
     "check:worker": "tsc -p worker/tsconfig.json",
     "test:worker": "node test/require-external.js && npm run build && node --test --test-concurrency=1 dist/test/room.test.js dist/test/mcp.test.js dist/test/race.test.js",
