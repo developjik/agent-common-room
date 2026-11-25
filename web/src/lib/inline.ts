@@ -71,7 +71,7 @@ export function emphasisBounded(line: string, index: number, token: string): boo
 export function tokenizeLine(line: string, agents: Agent[]): Part[] {
   const parts: Part[] = [];
   const lower = new Map(agents.map((a) => [a.name.toLowerCase(), a]));
-  const protected_ = protectedSpans(line);
+  const spans = protectedSpans(line);
   let last = 0;
   INLINE.lastIndex = 0;
   let m: RegExpExecArray | null;
@@ -84,7 +84,7 @@ export function tokenizeLine(line: string, agents: Agent[]): Part[] {
     else if (token.startsWith("*") || token.startsWith("_")) {
       const bounded = emphasisBounded(line, m.index, token);
       // 닫는 기호가 코드·주소 안에 있으면 그 글자가 사라져 링크·코드가 깨진다.
-      const closesOutside = closesOutsideProtected(protected_, m.index, m.index + token.length - 1);
+      const closesOutside = closesOutsideProtected(spans, m.index, m.index + token.length - 1);
       if (bounded && closesOutside) {
         parts.push({ type: "italic", text: token.slice(1, -1) });
         last = m.index + token.length;
