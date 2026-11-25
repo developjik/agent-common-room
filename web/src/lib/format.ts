@@ -176,14 +176,20 @@ function stripEmphasis(text: string, mark: "*" | "_"): string {
 
 /** 인용 미리보기: 마크다운 표시자를 걷어내고 한 줄로. */
 export function plainPreview(text: string | null, max = 80): string {
+  const urls: string[] = [];
   const flat = String(text ?? "")
     .replace(/```[\s\S]*?```/g, " [코드] ")
     .replace(/`([^`]*)`/g, "$1")
+    // 주소 안의 `_`는 강조가 아니라 주소의 일부다(미리보기에서도 그대로 둔다).
+    .replace(/https?:\/\/[^\s<>"']+/g, (u) => {
+      urls.push(u);
+      return `\u0000${urls.length - 1}\u0000`;
+    })
     .replace(/\*\*([^*]*)\*\*/g, "$1")
     .replace(/~~([^~]*)~~/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
-  const emphasized = stripEmphasis(stripEmphasis(flat, "*"), "_");
+  const emphasized = stripEmphasis(stripEmphasis(flat, "*"), "_").replace(/\u0000(\d+)\u0000/g, (_, i: string) => urls[Number(i)] ?? "");
   return emphasized.length > max ? emphasized.slice(0, max).trimEnd() + "…" : emphasized;
 }
 

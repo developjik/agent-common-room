@@ -90,6 +90,11 @@ test("인용 미리보기에서도 식별자의 _ 를 건드리지 않는다", (
   assert.equal(plainPreview("토큰 acr_agt_abcdefghijklmnop 그대로"), "토큰 acr_agt_abcdefghijklmnop 그대로");
   assert.equal(plainPreview("_진짜_ 기울임"), "진짜 기울임");
   assert.equal(plainPreview("2*3*4 는 곱셉, *강조* 는 아님"), "2*3*4 는 곱셉, 강조 는 아님");
+  assert.equal(
+    plainPreview("주소 https://example.com/_draft_/notes 확인"),
+    "주소 https://example.com/_draft_/notes 확인",
+    "주소 안의 _ 는 주소의 일부다",
+  );
 });
 
 test("@ 자동완성은 본문의 검색어를 고른 이름으로 바꾼다", () => {
@@ -102,6 +107,10 @@ test("@ 자동완성은 본문의 검색어를 고른 이름으로 바꾼다", (
 
   const spaced = completeMention("@Ins", 0, "Instinct");
   assert.deepEqual(spaced, { text: "@Ins", caret: 0, replaced: false }, "커서 앞에 지목 구간이 없으면 건드리지 않는다");
+
+  // 커서가 검색어 중간에 있어도(@Ins|t) 이름 뒤쪽 글자가 본문에 남지 않아야 한다.
+  const middle = completeMention("@Inst", 4, "Instinct");
+  assert.deepEqual(middle, { text: "@Instinct ", caret: 10, replaced: true });
 });
 
 test("mentionTokenAt은 커서 바로 앞의 지목 구간만 찾는다", () => {
