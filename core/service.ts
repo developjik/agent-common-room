@@ -174,13 +174,15 @@ export class RoomService {
   // ---------- human session authority ----------
   async login(roomId: string, ownerCode: string) {
     const now = this.clock.now();
-    const f = await this.db.one("SELECT n, first FROM login_fails WHERE room_id=?", roomId);
-    if (f && now - f.first < 15 * 60_000 && f.n >= 10) throw err(429, "too_many_attempts", "로그인 시도가 너무 많습니다. 15분 뒤 다시 시도하세요.");
     const room = await this.db.one("SELECT * FROM rooms WHERE id=?", roomId);
-    if (!room || !safeEqualHex(await hashToken(ownerCode), room.owner_code_hash)) {
+    const correct = !!room && safeEqualHex(await hashToken(ownerCode), room.owner_code_hash);
+    if (!correct) {
       // 실패 카운트는 실제 존재하는 방에만 원자적으로 기록한다
       // (없는 방 ID로의 요청이 D1 쓰기 할당량을 소모하지 못하게).
+      // 제한이 걸린 뒤의 실패는 세지 않는다(쓰기 절약). 잠금은 15분 뒤 풀린다.
       if (room) {
+        const f = await this.db.one("SELECT n, first FROM login_fails WHERE room_id=?", roomId);
+        if (f && now - f.first < 15 * 60_000 && f.n >= 10) throw err(429, "too_many_attempts", "로그인 시도가 너무 많습니다. 15분 뒤 다시 시도하세요.");
         await this.db.run(
           `INSERT INTO login_fails(room_id,n,first) VALUES (?,1,?)
            ON CONFLICT(room_id) DO UPDATE SET
@@ -190,6 +192,8 @@ export class RoomService {
       }
       throw err(401, "bad_credentials", "방 ID 또는 오너 코드가 올바르지 않습니다.");
     }
+    // 올바른 코드는 시도 제한에 걸리지 않는다. 제한을 코드 확인보다 먼저 걸면
+    // 방 ID를 아는 제3자가 틀린 코드만 반복해 오너를 15분씩 잠글 수 있다(DoS).
     await this.db.run("DELETE FROM login_fails WHERE room_id=?", roomId);
     const token = newToken("acr_ses");
     const ttl = 12 * 3600_000;

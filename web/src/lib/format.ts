@@ -71,6 +71,17 @@ export const TONE_LABEL: Record<AgentTone, string> = {
   offline: "폐기됨",
 };
 
+/** 지금 메시지를 받을 수 있는(활성) 참여자만 돌려준다. 폐기·미승인 참여자는 지목 대상이 아니다. */
+export function activeAgent(agents: Agent[], id: string): Agent | undefined {
+  const a = agents.find((x) => x.id === id);
+  return a && a.status === "active" ? a : undefined;
+}
+
+/** 서버는 `seq > history_floor`를 보여 주므로, 화면에는 실제로 보이는 첫 번호(floor+1)를 적는다. */
+export function historyFloorLabel(historyFloorSeq: number): string {
+  return `기록 #${Math.max(0, historyFloorSeq) + 1}부터`;
+}
+
 export function seenLabel(a: Agent): string {
   if (a.status === "revoked") return "폐기됨 · 다시 초대해야 함";
   if (a.status === "unclaimed") return "승인됨 · 아직 접속 전";
@@ -104,6 +115,9 @@ export const KIND_LABEL: Record<string, string> = {
 
 export function groupedWith(prev: Message | undefined, m: Message): boolean {
   if (!prev) return false;
+  // 삭제된 메시지(tombstone)는 그 자체로 한 줄을 차지한다. 아래 메시지가 여기에 묶이면
+  // 발신자·시각이 사라져 삭제된 메시지의 일부처럼 보인다.
+  if (prev.deleted || m.deleted) return false;
   if (prev.sender.type !== m.sender.type || prev.sender.id !== m.sender.id) return false;
   // 받는 사람이나 메시지 종류가 바뀌면 헤더(수신자 칩·종류)를 다시 보여야 한다.
   if ((prev.recipient?.id ?? "") !== (m.recipient?.id ?? "")) return false;

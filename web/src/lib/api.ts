@@ -109,7 +109,7 @@ export const owner = {
     ),
   invites: (token: string, signal?: AbortSignal) =>
     request<{ invites: import("./types.js").Invite[] }>("GET", "/api/owner/invites", { token, signal }),
-  approve: (token: string, id: string, body: { history: "all" | "none"; can_read: boolean; can_write: boolean }) =>
+  approve: (token: string, id: string, body: { history: "all" | "none"; can_read: boolean; can_write: boolean; name?: string }) =>
     request<{ agent_id: string; name: string }>("POST", `/api/owner/join-requests/${id}/approve`, { token, body }),
   deny: (token: string, id: string) =>
     request<{ denied: boolean }>("POST", `/api/owner/join-requests/${id}/deny`, { token, body: {} }),

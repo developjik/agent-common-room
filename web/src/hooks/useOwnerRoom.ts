@@ -37,7 +37,7 @@ export interface RoomStore {
   requestInvites: () => void;
   send: (input: { content: string; kind?: string; recipient?: string; reply_to?: number }) => Promise<Message>;
   patchRoom: (patch: Record<string, unknown>) => Promise<void>;
-  approve: (id: string, body: { history: "all" | "none"; can_read: boolean; can_write: boolean }) => Promise<string>;
+  approve: (id: string, body: { history: "all" | "none"; can_read: boolean; can_write: boolean; name?: string }) => Promise<string>;
   deny: (id: string) => Promise<void>;
   revokeAgent: (id: string) => Promise<void>;
   createInvite: (ttlHours: number, maxUses: number) => Promise<{ invite_token: string; expires_at: string; max_uses: number }>;

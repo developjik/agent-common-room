@@ -2,62 +2,8 @@
 // (dangerouslySetInnerHTML 금지). 허용: 펜스 코드블록, 인라인 코드, 굵게, 기울임, 취소선,
 // 인용, 링크(http/https만), @멘션 칩. 나머지는 전부 글자 그대로다.
 import type { ReactNode } from "react";
+import { tokenizeLine } from "./inline.js";
 import type { Agent } from "./types.js";
-
-interface Part {
-  type: "text" | "bold" | "italic" | "strike" | "code" | "link" | "mention";
-  text: string;
-  href?: string;
-  agent?: Agent;
-}
-
-const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(~~[^~\n]+~~)|(\*[^*\n]+\*)|(_[^_\n]+_)|(https?:\/\/[^\s<>"']+)|(@[\p{L}\p{N}_.-]{1,40})/gu;
-
-/** 끝 문장부호를 떼되, 괄호는 짝이 맞으면 주소의 일부로 남긴다(위키백과 링크 등). */
-function trimUrlTail(url: string): { url: string; tail: string } {
-  let kept = url;
-  for (;;) {
-    const last = kept[kept.length - 1];
-    if (!last || !/[.,!?;:)\]}'"]/.test(last)) break;
-    if (last === ")" || last === "]") {
-      const open = last === ")" ? "(" : "[";
-      const opens = kept.split(open).length - 1;
-      const closes = kept.split(last).length - 1;
-      if (opens >= closes) break;
-    }
-    kept = kept.slice(0, -1);
-  }
-  return { url: kept, tail: url.slice(kept.length) };
-}
-
-function tokenizeLine(line: string, agents: Agent[]): Part[] {
-  const parts: Part[] = [];
-  const lower = new Map(agents.map((a) => [a.name.toLowerCase(), a]));
-  let last = 0;
-  INLINE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = INLINE.exec(line))) {
-    if (m.index > last) parts.push({ type: "text", text: line.slice(last, m.index) });
-    const token = m[0];
-    if (token.startsWith("`")) parts.push({ type: "code", text: token.slice(1, -1) });
-    else if (token.startsWith("**")) parts.push({ type: "bold", text: token.slice(2, -2) });
-    else if (token.startsWith("~~")) parts.push({ type: "strike", text: token.slice(2, -2) });
-    else if (token.startsWith("*")) parts.push({ type: "italic", text: token.slice(1, -1) });
-    else if (token.startsWith("_")) parts.push({ type: "italic", text: token.slice(1, -1) });
-    else if (/^https?:/i.test(token)) {
-      const { url, tail } = trimUrlTail(token);
-      parts.push({ type: "link", text: url, href: url });
-      if (tail) parts.push({ type: "text", text: tail });
-    } else if (token.startsWith("@")) {
-      const agent = lower.get(token.slice(1).toLowerCase());
-      if (agent) parts.push({ type: "mention", text: token, agent });
-      else parts.push({ type: "text", text: token });
-    } else parts.push({ type: "text", text: token });
-    last = m.index + token.length;
-  }
-  if (last < line.length) parts.push({ type: "text", text: line.slice(last) });
-  return parts;
-}
 
 function inlineNodes(line: string, agents: Agent[], keyBase: string): ReactNode[] {
   return tokenizeLine(line, agents).map((p, i) => {

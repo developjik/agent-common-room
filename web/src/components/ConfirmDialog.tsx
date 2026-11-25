@@ -21,6 +21,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<{ opts: ConfirmOptions; resolve: (v: boolean) => void } | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const okRef = useRef<HTMLButtonElement | null>(null);
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
 
   const ask = useCallback<Ask>((opts) => {
     return new Promise<boolean>((resolve) => {
@@ -50,7 +51,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!state) return;
-    okRef.current?.focus();
+    // 파괴적 확인(삭제·폐기·거절)은 기본 포커스를 '취소'에 둔다.
+    // 삭제 버튼에 포커스가 있으면 Enter 한 번에 되돌릴 수 없는 일이 일어난다.
+    const initial = state.opts.danger ? cancelRef.current : (okRef.current ?? cancelRef.current);
+    initial?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -95,7 +99,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               <p className="mt-2 whitespace-pre-line text-[13px] leading-relaxed text-muted">{state.opts.text}</p>
             ) : null}
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" className="btn" onClick={() => close(false)}>
+              <button ref={cancelRef} type="button" className="btn" onClick={() => close(false)}>
                 취소
               </button>
               <button

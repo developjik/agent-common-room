@@ -12,7 +12,7 @@ import { useConfirm } from "./ConfirmDialog.js";
 import { copyText } from "../lib/browserClipboard.js";
 import { useOwnerRoom } from "../hooks/useOwnerRoom.js";
 import { useMediaQuery, type Theme } from "../hooks/useTheme.js";
-import { durationLabel, threadRootOf, threadSummaries } from "../lib/format.js";
+import { activeAgent, durationLabel, threadRootOf, threadSummaries } from "../lib/format.js";
 import type { Agent, Message, RoomOwner } from "../lib/types.js";
 
 type PanelState = { kind: "thread"; seq: number } | { kind: "manage"; section: ManageSection } | null;
@@ -81,6 +81,13 @@ export function ChatScreen({ token, theme, onTheme, onLogout, onUnauthorized }: 
 
   useEffect(() => () => window.clearTimeout(flashTimer.current), []);
 
+  // 폐기·미승인 참여자가 수신자로 남아 있으면 select에는 '방 전체'로 보이면서
+  // 전송은 404로 깨진다. 상태가 바뀌면 수신자를 방 전체로 되돌린다.
+  useEffect(() => {
+    if (!recipient) return;
+    if (!activeAgent(agents, recipient)) setRecipient("");
+  }, [agents, recipient]);
+
   const flash = useCallback((seq: number) => {
     setFlashSeq(seq);
     window.clearTimeout(flashTimer.current);
@@ -105,13 +112,26 @@ export function ChatScreen({ token, theme, onTheme, onLogout, onUnauthorized }: 
     [bySeq],
   );
 
-  const quoteReply = useCallback((m: Message) => {
-    setReplyTo(m);
-    setFocusComposer((n) => n + 1);
-  }, []);
+  const quoteReply = useCallback(
+    (m: Message) => {
+      // 인용 답장은 방 전체에 보내는 글이다. 직전 DM 대상이 남아 있으면
+      // 방 전체에 알리려던 답장이 한 에이전트에게만 간다.
+      if (recipient) {
+        setRecipient("");
+        notify("인용 답장은 방 전체로 보냅니다. 한 에이전트에게만 보내려면 받는 사람을 다시 고르세요.");
+      }
+      setReplyTo(m);
+      setFocusComposer((n) => n + 1);
+    },
+    [recipient, notify],
+  );
 
   const mention = useCallback(
     (a: Agent) => {
+      if (a.status !== "active") {
+        notify(`@${a.name} 은(는) 지금 메시지를 받을 수 없습니다. 참여자 관리에서 상태를 확인하세요.`);
+        return;
+      }
       setRecipient(a.id);
       setFocusComposer((n) => n + 1);
       notify(`@${a.name} 에게 보냅니다. 방 전체에 말하려면 받는 사람을 비우세요.`);
@@ -158,6 +178,8 @@ export function ChatScreen({ token, theme, onTheme, onLogout, onUnauthorized }: 
         recipient: input.recipient || undefined,
         reply_to: input.reply_to,
       });
+      // 한 번 보낸 뒤에는 받는 사람을 방 전체로 되돌린다(다음 글이 모르는 사이 DM이 되지 않게).
+      setRecipient("");
       setReplyTo(null);
     } catch (e) {
       notify(e instanceof Error ? e.message : "보내지 못했습니다.");
