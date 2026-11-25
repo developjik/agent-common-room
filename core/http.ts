@@ -35,14 +35,42 @@ export interface Assets {
 }
 
 const MAX_BODY = 64 * 1024;
+// "/"는 web/(Vite+React) 빌드 산출물인 public/app/index.html을 서빙한다.
+// 이전 콘솔은 파일을 그대로 남겨 /ui/ 에서 계속 쓸 수 있다(정책·웹훅 설정 등).
 const UI_FILES: Record<string, [string, string]> = {
-  "/": ["index.html", "text/html; charset=utf-8"],
+  "/": ["app/index.html", "text/html; charset=utf-8"],
+  "/index.html": ["app/index.html", "text/html; charset=utf-8"],
+  "/app": ["app/index.html", "text/html; charset=utf-8"],
+  "/app/": ["app/index.html", "text/html; charset=utf-8"],
+  "/ui": ["ui/index.html", "text/html; charset=utf-8"],
+  "/ui/": ["ui/index.html", "text/html; charset=utf-8"],
   "/ui/app.js": ["ui/app.js", "text/javascript; charset=utf-8"],
   "/ui/style.css": ["ui/style.css", "text/css; charset=utf-8"],
   "/ui/join.js": ["ui/join.js", "text/javascript; charset=utf-8"],
 };
+const STATIC_TYPES: Record<string, string> = {
+  html: "text/html; charset=utf-8",
+  js: "text/javascript; charset=utf-8",
+  css: "text/css; charset=utf-8",
+  svg: "image/svg+xml",
+};
 const UI_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+/** 오너 UI 정적 응답. HTML·해시된 번들 모두 같은 엄격한 CSP로만 내보낸다. */
+function assetResponse(body: Uint8Array, type: string): Response {
+  return new Response(body as unknown as BodyInit, {
+    status: 200,
+    headers: {
+      "content-type": type,
+      "content-security-policy": UI_CSP,
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "x-frame-options": "DENY",
+      "cache-control": "no-store",
+    },
+  });
+}
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(typeof body === "string" ? body : JSON.stringify(body), {
@@ -148,21 +176,21 @@ export async function handleFetch(
 
   try {
     // ----- 오너 UI (정적 파일) -----
-    if (method === "GET" && assets && UI_FILES[path]) {
-      const [file, type] = UI_FILES[path];
-      const found = await assets.read(file);
-      if (found) {
-        return new Response(found.body as unknown as BodyInit, {
-          status: 200,
-          headers: {
-            "content-type": type,
-            "content-security-policy": UI_CSP,
-            "x-content-type-options": "nosniff",
-            "referrer-policy": "no-referrer",
-            "x-frame-options": "DENY",
-            "cache-control": "no-store",
-          },
-        });
+    // 고정 경로("/", "/ui/...")와 web 빌드 산출물(/app/assets/index-<hash>.js|css)을 함께 서빙한다.
+    if (method === "GET" && assets) {
+      const fixed = UI_FILES[path];
+      if (fixed) {
+        const found = await assets.read(fixed[0]);
+        if (found) return assetResponse(found.body, fixed[1]);
+      }
+      if (/^\/(?:app|ui)\/[A-Za-z0-9._/-]+$/.test(path) && !path.includes("..")) {
+        const name = path.slice(1);
+        const ext = name.split(".").pop() ?? "";
+        const type = STATIC_TYPES[ext];
+        if (type) {
+          const found = await assets.read(name);
+          if (found) return assetResponse(found.body, type);
+        }
       }
     }
 
