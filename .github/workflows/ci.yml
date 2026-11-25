@@ -32,5 +32,21 @@ jobs:
           for i in $(seq 1 90); do curl -sf http://127.0.0.1:8787/healthz && break; sleep 1; done
           ACR_EXTERNAL_BASE=http://127.0.0.1:8787 npm run test:worker
       - name: Bombadil UI 프로퍼티 탐색 (로컬)
-        run: npm run test:ui
+        run: |
+          # 탐색 중 무작위 입력이 웹훅 등록·전송으로 외부에 요청을 보내지 못하도록 이 단계에서만 외부 80/443/DNS를 끊는다 (loopback만 허용).
+          sudo iptables -A OUTPUT -o lo -j ACCEPT
+          sudo iptables -A OUTPUT -p tcp --dport 80 -j REJECT
+          sudo iptables -A OUTPUT -p tcp --dport 443 -j REJECT
+          sudo iptables -A OUTPUT -p udp --dport 53 -j REJECT
+          sudo iptables -A OUTPUT -p tcp --dport 53 -j REJECT
+          # test:ui와 같은 명령이지만 --output-path를 고정해 실패 시 trace를 아티팩트로 보존한다.
+          npx bombadil browser test --headless --time-limit 2m --exit-on-violation --output-path bombadil-trace.bin --output-path-overwrite http://127.0.0.1:8787 test/bombadil/spec.js
+      - name: Bombadil trace 보존 (실패 시)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bombadil-trace
+          path: bombadil-trace.bin
+          if-no-files-found: ignore
+          retention-days: 7
 
