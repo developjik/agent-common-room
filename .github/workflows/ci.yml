@@ -33,14 +33,26 @@ jobs:
           ACR_EXTERNAL_BASE=http://127.0.0.1:8787 npm run test:worker
       - name: Bombadil UI 프로퍼티 탐색 (로컬)
         run: |
-          # 탐색 중 무작위 입력이 웹훅 등록·전송으로 외부에 요청을 보내지 못하도록 이 단계에서만 외부 80/443/DNS를 끊는다 (loopback만 허용).
+          # 탐색 동안만 외부 80/443/DNS를 끊는다 (loopback만 허용). OUTPUT 체인은 러너 전체에 적용되므로
+          # Chrome뿐 아니라 웹훅 발신을 담당하는 wrangler/workerd 프로세스의 외부 fetch도 차단된다.
           sudo iptables -A OUTPUT -o lo -j ACCEPT
           sudo iptables -A OUTPUT -p tcp --dport 80 -j REJECT
           sudo iptables -A OUTPUT -p tcp --dport 443 -j REJECT
           sudo iptables -A OUTPUT -p udp --dport 53 -j REJECT
           sudo iptables -A OUTPUT -p tcp --dport 53 -j REJECT
+          # 차단 검증: 외부 HTTPS가 닿으면 이 단계를 실패시킨다.
+          if curl -sf --max-time 8 https://example.com >/dev/null; then echo '외부 차단 실패'; exit 1; else echo '외부 차단 확인'; fi
           # test:ui와 같은 명령이지만 --output-path를 고정해 실패 시 trace를 아티팩트로 보존한다.
+          set +e
           npx bombadil browser test --headless --time-limit 2m --exit-on-violation --output-path bombadil-trace.bin --output-path-overwrite http://127.0.0.1:8787 test/bombadil/spec.js
+          RC=$?
+          # 아티팩트 업로드 등 뒤 단계의 정상 CI 통신을 위해 규칙을 되돌린다.
+          sudo iptables -D OUTPUT -p tcp --dport 80 -j REJECT
+          sudo iptables -D OUTPUT -p tcp --dport 443 -j REJECT
+          sudo iptables -D OUTPUT -p udp --dport 53 -j REJECT
+          sudo iptables -D OUTPUT -p tcp --dport 53 -j REJECT
+          sudo iptables -D OUTPUT -o lo -j ACCEPT
+          exit $RC
       - name: Bombadil trace 보존 (실패 시)
         if: failure()
         uses: actions/upload-artifact@v4
