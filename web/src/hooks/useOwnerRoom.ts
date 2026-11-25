@@ -87,16 +87,29 @@ export function useOwnerRoom(token: string, onUnauthorized: () => void): RoomSto
       // 전체 재조회에서도 '새 메시지'는 이전 커서 이후만 센다(폴링 간격 판단용).
       const previousLast = lastSeq.current;
       if (full) {
-        lastSeq.current = 0;
-        setMessages([]);
+        // 목록을 비우며 페이지를 붙이면 스레드 원문·입력창이 잠깐 사라진다.
+        // 전부 모은 뒤 한 번에 반영하고, 그 사이 보낸 새 메시지는 남겨 둔다.
+        const collected: Message[] = [];
+        let cursor = 0;
+        for (;;) {
+          const page = await owner.messages(token, cursor, 200);
+          if (!alive.current) return 0;
+          collected.push(...page.messages);
+          if (page.messages.length) cursor = page.messages[page.messages.length - 1].seq;
+          if (!page.has_more) break;
+        }
+        if (!alive.current) return 0;
+        const lastFetched = collected.length ? collected[collected.length - 1].seq : 0;
+        setMessages((prev) => mergeMessages(collected, prev.filter((m) => m.seq > lastFetched)));
+        lastSeq.current = lastFetched;
+        return collected.filter((m) => m.seq > previousLast).length;
       }
       let added = 0;
       for (;;) {
         const page = await owner.messages(token, lastSeq.current, 200);
         if (!alive.current) return added;
         if (page.messages.length) {
-          const fresh = page.messages.filter((m) => m.seq > previousLast);
-          added += fresh.length;
+          added += page.messages.filter((m) => m.seq > previousLast).length;
           lastSeq.current = page.messages[page.messages.length - 1].seq;
           setMessages((prev) => mergeMessages(prev, page.messages));
         }
@@ -128,9 +141,10 @@ export function useOwnerRoom(token: string, onUnauthorized: () => void): RoomSto
             }
           }
           tick.current += 1;
-          // 10번째 폴링은 전체를 다시 읽어, 지정 수신 메시지의 전달 상태 변화와
+          // 30번째 폴링은 전체를 다시 읽어, 지정 수신 메시지의 전달 상태 변화와
           // 다른 탭에서 지운 메시지도 화면에 반영한다(증분 API는 커서 이후만 준다).
-          const added = await pullMessages(!!opts.full || tick.current % 10 === 0);
+          // 기록이 긴 방의 요청 비용을 아끼려고 초대(10번째)보다 드물게 돈다.
+          const added = await pullMessages(!!opts.full || tick.current % 30 === 0);
           if (!alive.current) return 0;
           setReady(true);
           setSyncedAt(Date.now());

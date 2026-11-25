@@ -100,6 +100,7 @@ export function ThreadPanel({ store, rootSeq, agents, onClose, onJump, onQuoteRe
           agents={agents}
           recipient=""
           onRecipient={() => {}}
+          allowRecipientMention={false}
           compact
           placeholder="스레드에 답글 남기기 (방 전체에 공개)"
           onSend={async (input) => {

@@ -22,12 +22,14 @@ interface Props {
   onSend: (input: SendInput) => Promise<void>;
   seed?: { text: string; nonce: number } | null;
   focusNonce?: number;
+  /** false면 @ 수신자 자동완성을 끈다(방 전체 공개 전용인 스레드 입력창). */
+  allowRecipientMention?: boolean;
   placeholder?: string;
   compact?: boolean;
   autoFocus?: boolean;
 }
 
-export function Composer({ agents, recipient, onRecipient, replyTo, onCancelReply, onSend, seed, focusNonce, placeholder, compact, autoFocus }: Props) {
+export function Composer({ agents, recipient, onRecipient, replyTo, onCancelReply, onSend, seed, focusNonce, allowRecipientMention = true, placeholder, compact, autoFocus }: Props) {
   const [text, setText] = useState("");
   const [kind, setKind] = useState("message");
   const [sending, setSending] = useState(false);
@@ -64,6 +66,10 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
   const selected = mention && candidates.length ? Math.min(mention.index, candidates.length - 1) : 0;
 
   function updateMention(el: HTMLTextAreaElement) {
+    if (!allowRecipientMention) {
+      setMention(null);
+      return;
+    }
     const caret = el.selectionStart ?? el.value.length;
     const upto = el.value.slice(0, caret);
     const m = /(?:^|\s)@([\p{L}\p{N}_.-]{0,30})$/u.exec(upto);
