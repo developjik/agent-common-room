@@ -1,4 +1,5 @@
-// 오너 UI(public/)의 온보딩 버튼을 실제 DOM에서 눌러 본다.
+// 이전 오너 콘솔(public/ui/, /ui/ 로 서빙)의 온보딩 버튼을 실제 DOM에서 눌러 본다.
+// 기본 화면(/)은 web/ React UI이고, 이 콘솔은 정책·웹훅 설정 등 그대로 남겨 둔 경로다.
 // 페이지 스크립트는 브라우저와 같은 방식으로 실행되고, fetch는 실제 코어 라우터로 연결해
 // "버튼 → API → 화면"까지 한 번에 검증한다(브라우저를 띄우지 않는 통합 테스트).
 import test from "node:test";
@@ -9,7 +10,7 @@ import { handleFetch } from "../core/http.js";
 import { RoomService } from "../core/service.js";
 import { openSqliteDb } from "../runtime/node-sqlite.js";
 
-const html = readFileSync(new URL("../../public/index.html", import.meta.url), "utf8");
+const html = readFileSync(new URL("../../public/ui/index.html", import.meta.url), "utf8");
 const appJs = readFileSync(new URL("../../public/ui/app.js", import.meta.url), "utf8");
 
 const tick = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 5)); };

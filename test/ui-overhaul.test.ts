@@ -8,7 +8,7 @@ import { handleFetch } from "../core/http.js";
 import { RoomService, type Agent } from "../core/service.js";
 import { openSqliteDb } from "../runtime/node-sqlite.js";
 
-const html = readFileSync(new URL("../../public/index.html", import.meta.url), "utf8");
+const html = readFileSync(new URL("../../public/ui/index.html", import.meta.url), "utf8");
 const appJs = readFileSync(new URL("../../public/ui/app.js", import.meta.url), "utf8");
 const css = readFileSync(new URL("../../public/ui/style.css", import.meta.url), "utf8");
 const joinJs = readFileSync(new URL("../../public/ui/join.js", import.meta.url), "utf8");

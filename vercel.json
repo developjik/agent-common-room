@@ -8,6 +8,7 @@
   },
   "rewrites": [
     { "source": "/", "destination": "/api/index" },
+    { "source": "/app/(.*)", "destination": "/api/index" },
     { "source": "/ui/(.*)", "destination": "/api/index" },
     { "source": "/healthz", "destination": "/api/index" },
     { "source": "/mcp", "destination": "/api/index" },
