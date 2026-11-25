@@ -122,6 +122,15 @@ test("기울임 후보가 주소·인라인 코드의 밑줄을 닫는 기호로
   );
   assert.equal(render("_private https://x/_/y 더"), "_private [https://x/_/y](https://x/_/y) 더");
 
+  // 주소를 통째로 감싼 기울임은 닫는 기호를 주소로 넘기지 않고 그대로 기울임으로 그린다.
+  assert.equal(render("문서는 _https://example.com/download_ 참고"), "문서는 <em>https://example.com/download</em> 참고");
+  assert.equal(render("문서는 *https://example.com/download* 참고"), "문서는 <em>https://example.com/download</em> 참고");
+  assert.equal(
+    render("https://hub.docker.com/_/node"),
+    "[https://hub.docker.com/_/node](https://hub.docker.com/_/node)",
+    "주소 경로 안의 _는 링크 대상에서 빠지지 않는다",
+  );
+
   // 주소를 품은 진짜 기울임은 닫는 기호가 주소 밖이므로 그대로 적용된다.
   assert.equal(render("_자세한 건 https://x.y/a 참고_ 끝"), "<em>자세한 건 https://x.y/a 참고</em> 끝");
 });

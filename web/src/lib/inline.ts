@@ -32,13 +32,28 @@ const WORD = /[\p{L}\p{N}_]/u;
 // 코드 스팬과 주소는 나중에 그 자체로 해석된다. 그 안의 `_`·`*`는 강조의 짝이 아니다.
 const PROTECTED = /`[^`\n]+`|https?:\/\/[^\s<>"']+/g;
 
-/** 코드·주소로 해석될 구간들. 이 안쪽의 기호로는 기울임을 열거나 닫지 않는다. */
+/**
+ * 코드·주소로 해석될 구간들. 이 안쪽의 기호로는 기울임을 열거나 닫지 않는다.
+ * 주소 끝의 `_`·`*`는 기울임의 닫는 기호일 수 있으므로(`_https://x.y/z_`) 여기서는
+ * 링크로 넘어갈 몸통까지만 잡고, 끝 문장부호와 끝의 `_`·`*`는 안쪽으로 보지 않는다.
+ */
 function protectedSpans(line: string): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
   PROTECTED.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = PROTECTED.exec(line))) spans.push([m.index, m.index + m[0].length]);
+  while ((m = PROTECTED.exec(line))) {
+    const raw = m[0];
+    const length = raw.startsWith("`") ? raw.length : urlBodyLength(raw);
+    spans.push([m.index, m.index + length]);
+  }
   return spans;
+}
+
+/** 주소 몸통의 길이. 끝 문장부호와, 기울임 닫는 기호일 수 있는 맨 끝의 `_`·`*`는 뺀다. */
+function urlBodyLength(raw: string): number {
+  const body = trimUrlTail(raw).url;
+  const last = body[body.length - 1];
+  return last === "_" || last === "*" ? body.length - 1 : body.length;
 }
 
 function insideProtected(spans: Array<[number, number]>, position: number): boolean {
