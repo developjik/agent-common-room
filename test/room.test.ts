@@ -47,7 +47,7 @@ test("토큰은 발급 시 한 번만 평문, DB에는 해시만", async () => {
   if (!EXTERNAL) {
     for (const secret of [token, r.ownerCode, r.sess, r.invite, jr.claim_secret, ADMIN_KEY]) {
       for (const tbl of ["agents", "rooms", "sessions", "invites", "join_requests", "meta", "audit", "messages"]) {
-        const rows = t.svc.db.prepare(`SELECT * FROM ${tbl}`).all();
+        const rows = t.sqlite.raw.prepare(`SELECT * FROM ${tbl}`).all();
         assert.ok(!JSON.stringify(rows).includes(secret), `${tbl}에 평문 비밀이 있음`);
       }
     }
@@ -84,7 +84,7 @@ test("멱등 재시도: 같은 id 같은 내용은 중복 없음, 다른 내용�
   assert.equal((await t.call("POST", "/api/messages", a.token, msg("dup", "내용", { kind: "question" }))).status, 409);
   const b = await t.join(r, "beta");
   assert.equal((await t.call("POST", "/api/messages", b.token, msg("dup", "다른 내용"))).status, 201, "client_id는 발신자별");
-  if (!EXTERNAL) assert.equal(t.svc.db.prepare("SELECT count(*) c FROM messages WHERE room_id=?").get(r.roomId)!.c, 2);
+  if (!EXTERNAL) assert.equal((t.sqlite.raw.prepare("SELECT count(*) c FROM messages WHERE room_id=?").get(r.roomId) as any).c, 2);
 });
 
 test("동시 전송에서도 seq가 중복/누락 없이 할당된다", async () => {
@@ -193,10 +193,10 @@ test("삭제는 tombstone, 재시도 멱등 유지; 보존기간은 내용을 �
   if (!EXTERNAL) {
     await t.call("PATCH", "/api/owner/room", r.sess, { retention_days: 1 });
     t.clock.advance(2 * 86400_000);
-    assert.ok(t.svc.purgeExpired() >= 1);
+    assert.ok((await t.svc.purgeExpired()) >= 1);
     const all = (await t.call("GET", "/api/messages?after=0", b.token)).json.messages;
     assert.ok(all.every((m: any) => m.deleted && m.content === null));
-    assert.equal(t.svc.db.prepare("SELECT count(*) c FROM messages WHERE room_id=? AND content<>''").get(r.roomId)!.c, 0);
+    assert.equal((t.sqlite.raw.prepare("SELECT count(*) c FROM messages WHERE room_id=? AND content<>''").get(r.roomId) as any).c, 0);
   }
 });
 
@@ -348,8 +348,7 @@ test("오너 웹 UI 정적 파일은 엄격한 CSP로 제공된다", async () =>
 });
 
 
-test("지정 수신 메시지의 전달 상태(보냄→전달됨→처리 확인→답장함)가 보인다", async (ctx) => {
-  if (!EXTERNAL) return ctx.skip("전달 상태는 Workers 구현에만 있다");
+test("지정 수신 메시지의 전달 상태(보냄→전달됨→처리 확인→답장함)가 보인다", async () => {
   const r = await t.setupRoom();
   const a = await t.join(r, "상태봇");
   await t.call("POST", "/api/owner/messages", r.sess, { client_id: "ds-1", content: "상태 확인용", recipient: a.id });
@@ -370,8 +369,7 @@ test("지정 수신 메시지의 전달 상태(보냄→전달됨→처리 확�
   assert.equal(msgs.find((m: any) => m.content === "전체 공지").delivery, null);
 });
 
-test("오너 웹훅: URL 검증, 등록/삭제, 지정 수신 메시지 전달 파이프라인", async (ctx) => {
-  if (!EXTERNAL) return ctx.skip("웹훅은 Workers 구현에만 있다");
+test("오너 웹훅: URL 검증, 등록/삭제, 지정 수신 메시지 전달 파이프라인", async () => {
   const r = await t.setupRoom();
   const a = await t.join(r, "훅봇");
   // SSRF/프로토콜 가드
@@ -387,6 +385,8 @@ test("오너 웹훅: URL 검증, 등록/삭제, 지정 수신 메시지 전달 �
   assert.equal(ping2.kind, "ping");
   assert.equal(ping2.attempts, 1);
   assert.ok(ping2.status === "ok" || ping2.status === "pending" || ping2.status === "failed");
+  // 가짜 시계에서는 핑과 메시지 전달이 같은 ms에 만들어져 "최신 전달" 순서가 갈린다. 실제 시간 흐름을 흉내 낸다.
+  if (!EXTERNAL) t.clock.advance(1_000);
   // 지정 수신 메시지 → 핑과 구분되는 새 전달이 시도되어야 한다. 전송 직후 목록의 최신 전달은
   // 방금 만들어진 메시지 전달(attempts=0)이므로, attempts>=1이 되면 핑이 아니라 이 메시지의 시도다.
   await t.call("POST", "/api/owner/messages", r.sess, { client_id: "wh-1", content: "웹훅 알림 대상", recipient: a.id });
@@ -410,8 +410,7 @@ test("오너 웹훅: URL 검증, 등록/삭제, 지정 수신 메시지 전달 �
   assert.equal((await t.call("GET", "/api/owner/webhooks", r.sess)).json.webhooks.find((x: any) => x.id === w.id).active, false);
 });
 
-test("inbox 롱폴링: wait 동안 새 메시지를 기다렸다가 즉시 반환한다", async (ctx) => {
-  if (!EXTERNAL) return ctx.skip("롱폴링은 Workers 구현에만 있다");
+test("inbox 롱폴링: wait 동안 새 메시지를 기다렸다가 즉시 반환한다", async () => {
   const r = await t.setupRoom();
   const a = await t.join(r, "폴봇");
   // 잘못된 wait
@@ -434,8 +433,7 @@ test("inbox 롱폴링: wait 동안 새 메시지를 기다렸다가 즉시 반�
   assert.ok(dt2 < 5000, "조기 반환 " + dt2 + "ms");
 });
 
-test("롱폴링 대기 중 토큰이 폐기되면 대기가 끊긴다", async (ctx) => {
-  if (!EXTERNAL) return ctx.skip("롱폴링은 Workers 구현에만 있다");
+test("롱폴링 대기 중 토큰이 폐기되면 대기가 끊긴다", async () => {
   const r = await t.setupRoom();
   const a = await t.join(r, "폐기봇");
   const pending = t.call("GET", "/api/inbox?wait=15", a.token);

@@ -1,29 +1,29 @@
-import { openDb } from "./db.js";
-import { RoomService } from "./service.js";
-import { createApp } from "./http.js";
-import { hashToken, newToken } from "./crypto.js";
+// 로컬 Node·Render·Railway(장수 프로세스) 진입점.
+// 저장소는 환경변수로 자동 선택한다: DATABASE_URL/POSTGRES_URL(Postgres) → 없으면 ACR_DB 파일(SQLite).
+import { startNodeServer } from "../runtime/node.js";
 
-const dbPath = process.env.ACR_DB ?? "./data/room.db";
-const host = process.env.ACR_HOST ?? "127.0.0.1";
-const port = Number(process.env.ACR_PORT ?? 8787);
+const { server, runtime, url } = await startNodeServer({ purgeIntervalMs: 3600_000 });
+console.log(`agent-common-room listening on ${url} (storage: ${runtime.storage})`);
 
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-mkdirSync(dirname(dbPath), { recursive: true });
-
-const svc = new RoomService(openDb(dbPath));
-const envKey = process.env.ACR_ADMIN_KEY;
-if (envKey) {
-  if (envKey.length < 24) { console.error("ACR_ADMIN_KEY는 24자 이상이어야 합니다."); process.exit(1); }
-  svc.setAdminKeyHash(hashToken(envKey));
-} else if (!svc.hasAdminKey()) {
-  const key = newToken("acr_adm");
-  svc.setAdminKeyHash(hashToken(key));
-  console.error("\n=== 관리자 키(처음 한 번만 표시됩니다. 안전한 곳에 저장하세요) ===\n" + key + "\n");
+const envKey = runtime.env.ACR_ADMIN_KEY;
+if (envKey && envKey.length < 24) {
+  console.error("ACR_ADMIN_KEY는 24자 이상이어야 합니다. 이 값은 무시됩니다.");
+} else if (!envKey && !(await runtime.svc.adminKeyConfigured())) {
+  console.log(
+    [
+      "",
+      "관리자 키가 아직 없습니다. 브라우저로 이 주소를 열고 '첫 방 만들기'에서 관리자 키를 발급하세요.",
+      `  ${url}/`,
+      "또는 ACR_ADMIN_KEY 환경변수를 직접 설정해도 됩니다(웹 최초 발급은 ACR_BOOTSTRAP=off 로 끌 수 있습니다).",
+      "",
+    ].join("\n"),
+  );
 }
 
-svc.purgeExpired();
-setInterval(() => svc.purgeExpired(), 3600_000).unref();
-
-const app = createApp(svc, { publicUrl: process.env.ACR_PUBLIC_URL });
-app.listen(port, host, () => console.log(`agent-common-room listening on http://${host}:${port}`));
+const shutdown = async () => {
+  server.close();
+  await runtime.close();
+  process.exit(0);
+};
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

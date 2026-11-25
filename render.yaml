@@ -1,0 +1,28 @@
+# Render Blueprint. 저장소를 Render에 연결하면 웹 서비스 + Postgres가 함께 만들어진다.
+# 무료 플랜 주의: Free Postgres는 생성 30일 뒤 만료되고, Free 웹 서비스는 15분 유휴 시 잠들어 첫 요청이 ~1분 걸린다.
+# 오래 쓰려면 Postgres를 유료 플랜으로 두거나(디스크를 붙여 SQLite로도 가능) 다른 플랫폼을 쓰세요.
+databases:
+  - name: agent-common-room-db
+    databaseName: acr
+    user: acr
+    plan: free
+
+services:
+  - type: web
+    name: agent-common-room
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/src/server.js
+    healthCheckPath: /healthz
+    envVars:
+      # 최초 관리자 키. Render가 무작위 값을 만들어 넣고 대시보드에서 확인할 수 있다.
+      - key: ACR_ADMIN_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: agent-common-room-db
+          property: connectionString
+      # 이 배포는 키를 자동 생성하므로 웹 최초 발급은 닫는다.
+      - key: ACR_BOOTSTRAP
+        value: "off"
