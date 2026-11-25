@@ -35,23 +35,50 @@ jobs:
         run: |
           # 탐색 동안만 외부 80/443/DNS를 끊는다 (loopback만 허용). OUTPUT 체인은 러너 전체에 적용되므로
           # Chrome뿐 아니라 웹훅 발신을 담당하는 wrangler/workerd 프로세스의 외부 fetch도 차단된다.
-          sudo iptables -A OUTPUT -o lo -j ACCEPT
-          sudo iptables -A OUTPUT -p tcp --dport 80 -j REJECT
-          sudo iptables -A OUTPUT -p tcp --dport 443 -j REJECT
-          sudo iptables -A OUTPUT -p udp --dport 53 -j REJECT
-          sudo iptables -A OUTPUT -p tcp --dport 53 -j REJECT
-          # 차단 검증: 외부 HTTPS가 닿으면 이 단계를 실패시킨다.
-          if curl -sf --max-time 8 https://example.com >/dev/null; then echo '외부 차단 실패'; exit 1; else echo '외부 차단 확인'; fi
+          set -uo pipefail
+          RC=0
+          RESTORED=0
+          restore() {
+            # 모든 종료 경로에서 실행된다. 개별 삭제 실패는 허용하되(규칙이 이미 없는 경우),
+            # 마지막에 REJECT 규칙이 하나도 남지 않았는지 검증해 복구 실패를 단계 실패로 드러낸다.
+            if [ "$RESTORED" = "1" ]; then return 0; fi
+            RESTORED=1
+            sudo iptables -D OUTPUT -p tcp --dport 80 -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -p tcp --dport 443 -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -p udp --dport 53 -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -p tcp --dport 53 -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+            bad=0
+            for p in "tcp 80" "tcp 443" "tcp 53" "udp 53"; do
+              set -- $p
+              if sudo iptables -C OUTPUT -p "$1" --dport "$2" -j REJECT 2>/dev/null; then
+                echo "방화벽 복구 실패: $1/$2 REJECT 규칙 잔존" >&2
+                bad=1
+              fi
+            done
+            if sudo iptables -C OUTPUT -o lo -j ACCEPT 2>/dev/null; then
+              echo "방화벽 복구 실패: loopback ACCEPT 규칙 잔존" >&2
+              bad=1
+            fi
+            if [ "$bad" = "1" ]; then exit 3; fi
+            echo '방화벽 복구 확인'
+          }
+          trap restore EXIT
+          # 규칙 추가: 하나라도 실패하면 격리를 보장할 수 없으므로 탐색 없이 실패한다(trap이 부분 적용분을 정리).
+          sudo iptables -A OUTPUT -o lo -j ACCEPT || exit 2
+          sudo iptables -A OUTPUT -p tcp --dport 80 -j REJECT || exit 2
+          sudo iptables -A OUTPUT -p tcp --dport 443 -j REJECT || exit 2
+          sudo iptables -A OUTPUT -p udp --dport 53 -j REJECT || exit 2
+          sudo iptables -A OUTPUT -p tcp --dport 53 -j REJECT || exit 2
+          # 차단 검증: 외부 HTTPS가 닿으면 격리 없는 탐색을 막기 위해 이 단계를 실패시킨다(trap이 규칙을 정리).
+          if curl -sf --max-time 8 https://example.com >/dev/null; then
+            echo '외부 차단 실패: egress가 열려 있어 탐색을 중단한다' >&2
+            exit 1
+          fi
+          echo '외부 차단 확인'
           # test:ui와 같은 명령이지만 --output-path를 고정해 실패 시 trace를 아티팩트로 보존한다.
-          set +e
-          npx bombadil browser test --headless --time-limit 2m --exit-on-violation --output-path bombadil-trace.bin --output-path-overwrite http://127.0.0.1:8787 test/bombadil/spec.js
-          RC=$?
-          # 아티팩트 업로드 등 뒤 단계의 정상 CI 통신을 위해 규칙을 되돌린다.
-          sudo iptables -D OUTPUT -p tcp --dport 80 -j REJECT
-          sudo iptables -D OUTPUT -p tcp --dport 443 -j REJECT
-          sudo iptables -D OUTPUT -p udp --dport 53 -j REJECT
-          sudo iptables -D OUTPUT -p tcp --dport 53 -j REJECT
-          sudo iptables -D OUTPUT -o lo -j ACCEPT
+          npx bombadil browser test --headless --time-limit 2m --exit-on-violation --output-path bombadil-trace.bin --output-path-overwrite http://127.0.0.1:8787 test/bombadil/spec.js || RC=$?
+          restore
           exit $RC
       - name: Bombadil trace 보존 (실패 시)
         if: failure()
@@ -61,4 +88,3 @@ jobs:
           path: bombadil-trace.bin
           if-no-files-found: ignore
           retention-days: 7
-
