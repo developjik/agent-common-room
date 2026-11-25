@@ -31,3 +31,6 @@ jobs:
           npx wrangler dev --port 8787 &
           for i in $(seq 1 90); do curl -sf http://127.0.0.1:8787/healthz && break; sleep 1; done
           ACR_EXTERNAL_BASE=http://127.0.0.1:8787 npm run test:worker
+      - name: Bombadil UI 프로퍼티 탐색 (로컬)
+        run: npm run test:ui
+
