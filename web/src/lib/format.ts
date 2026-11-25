@@ -166,6 +166,14 @@ export function repliesOf(rootSeq: number, messages: Message[], bySeq: Map<numbe
   return messages.filter((m) => m.seq !== rootSeq && threadRootOf(m, bySeq).seq === rootSeq);
 }
 
+// 식별자·수식 안쪽 기호는 강조가 아니므로 지우지 않는다(markdown의 강조 경계와 같은 규칙).
+// 예: acr_agt_abcd, room_50795a11, 2*3*4 는 그대로 두고 _기울임_ / *기울임* 만 표시자를 걷어낸다.
+function stripEmphasis(text: string, mark: "*" | "_"): string {
+  const m = mark === "*" ? "\\*" : "_";
+  const re = new RegExp(`(^|[^\\p{L}\\p{N}_])${m}([^${mark === "*" ? "\\*" : "_"}\\n]+?)${m}(?=$|[^\\p{L}\\p{N}_])`, "gu");
+  return text.replace(re, "$1$2");
+}
+
 /** 인용 미리보기: 마크다운 표시자를 걷어내고 한 줄로. */
 export function plainPreview(text: string | null, max = 80): string {
   const flat = String(text ?? "")
@@ -173,11 +181,10 @@ export function plainPreview(text: string | null, max = 80): string {
     .replace(/`([^`]*)`/g, "$1")
     .replace(/\*\*([^*]*)\*\*/g, "$1")
     .replace(/~~([^~]*)~~/g, "$1")
-    .replace(/\*([^*]*)\*/g, "$1")
-    .replace(/_([^_]*)_/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
-  return flat.length > max ? flat.slice(0, max).trimEnd() + "…" : flat;
+  const emphasized = stripEmphasis(stripEmphasis(flat, "*"), "_");
+  return emphasized.length > max ? emphasized.slice(0, max).trimEnd() + "…" : emphasized;
 }
 
 export function inviteMessage(roomName: string, link: string): string {

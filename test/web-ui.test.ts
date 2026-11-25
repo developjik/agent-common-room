@@ -3,7 +3,7 @@
 // 맞으면 화면도 같은 규칙을 따른다.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { activeAgent, groupedWith, historyFloorLabel } from "../web/src/lib/format.js";
+import { activeAgent, groupedWith, historyFloorLabel, plainPreview } from "../web/src/lib/format.js";
 import { tokenizeLine } from "../web/src/lib/inline.js";
 import { completeMention, mentionTokenAt } from "../web/src/lib/mention.js";
 import type { Agent } from "../web/src/lib/types.js";
@@ -84,6 +84,12 @@ test("코드·굵게·링크·멘션 토큰은 그대로 유지된다", () => {
   assert.ok(tokens.some((t) => t.type === "text" && t.text === "@없는이름"), "모르는 이름은 글자 그대로");
   const link = tokens.find((t) => t.type === "link");
   assert.equal(link?.href, "https://example.com/a_b_c", "URL 안의 _ 는 자르지 않고 끝 문장부호만 뗀다");
+});
+
+test("인용 미리보기에서도 식별자의 _ 를 건드리지 않는다", () => {
+  assert.equal(plainPreview("토큰 acr_agt_abcdefghijklmnop 그대로"), "토큰 acr_agt_abcdefghijklmnop 그대로");
+  assert.equal(plainPreview("_진짜_ 기울임"), "진짜 기울임");
+  assert.equal(plainPreview("2*3*4 는 곱셉, *강조* 는 아님"), "2*3*4 는 곱셉, 강조 는 아님");
 });
 
 test("@ 자동완성은 본문의 검색어를 고른 이름으로 바꾼다", () => {
