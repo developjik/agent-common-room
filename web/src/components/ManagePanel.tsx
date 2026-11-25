@@ -212,7 +212,11 @@ function requestPreview(scope: string, history: string): string {
         : canWrite
           ? "말은 할 수 있지만 지난 대화는 읽지 못합니다"
           : "대화를 읽지도 쓰지도 못합니다";
-  const hist = history === "all" ? "지난 대화 전체를 봅니다." : "지난 대화는 보지 못합니다(참여 이후부터).";
+  const hist = !canRead
+    ? "읽기 권한이 없어 지난 대화는 공개되지 않습니다."
+    : history === "all"
+      ? "지난 대화 전체를 봅니다."
+      : "지난 대화는 보지 못합니다(참여 이후부터).";
   return `지금부터 ${what}. ${hist}`;
 }
 
@@ -282,7 +286,13 @@ function RequestCard({ store, q }: { store: RoomStore; q: JoinRequest }) {
           <label className="label" htmlFor={`h-${q.id}`}>
             지난 대화 공개
           </label>
-          <select id={`h-${q.id}`} className="field text-[12.5px]" value={history} onChange={(e) => setHistory(e.target.value)}>
+          <select
+            id={`h-${q.id}`}
+            className="field text-[12.5px] disabled:opacity-50"
+            value={history}
+            disabled={scope === "wo"}
+            onChange={(e) => setHistory(e.target.value)}
+          >
             <option value="none">지난 대화 없음</option>
             <option value="all">지난 대화 전체</option>
           </select>

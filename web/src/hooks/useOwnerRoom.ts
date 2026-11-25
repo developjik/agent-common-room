@@ -84,17 +84,18 @@ export function useOwnerRoom(token: string, onUnauthorized: () => void): RoomSto
 
   const pullMessages = useCallback(
     async (full: boolean): Promise<number> => {
+      // 전체 재조회에서도 '새 메시지'는 이전 커서 이후만 센다(폴링 간격 판단용).
+      const previousLast = lastSeq.current;
       if (full) {
         lastSeq.current = 0;
         setMessages([]);
       }
-      const before = lastSeq.current;
       let added = 0;
       for (;;) {
         const page = await owner.messages(token, lastSeq.current, 200);
         if (!alive.current) return added;
         if (page.messages.length) {
-          const fresh = page.messages.filter((m) => m.seq > before);
+          const fresh = page.messages.filter((m) => m.seq > previousLast);
           added += fresh.length;
           lastSeq.current = page.messages[page.messages.length - 1].seq;
           setMessages((prev) => mergeMessages(prev, page.messages));
@@ -127,7 +128,9 @@ export function useOwnerRoom(token: string, onUnauthorized: () => void): RoomSto
             }
           }
           tick.current += 1;
-          const added = await pullMessages(!!opts.full);
+          // 10번째 폴링은 전체를 다시 읽어, 지정 수신 메시지의 전달 상태 변화와
+          // 다른 탭에서 지운 메시지도 화면에 반영한다(증분 API는 커서 이후만 준다).
+          const added = await pullMessages(!!opts.full || tick.current % 10 === 0);
           if (!alive.current) return 0;
           setReady(true);
           setSyncedAt(Date.now());

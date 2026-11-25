@@ -105,6 +105,9 @@ export const KIND_LABEL: Record<string, string> = {
 export function groupedWith(prev: Message | undefined, m: Message): boolean {
   if (!prev) return false;
   if (prev.sender.type !== m.sender.type || prev.sender.id !== m.sender.id) return false;
+  // 받는 사람이나 메시지 종류가 바뀌면 헤더(수신자 칩·종류)를 다시 보여야 한다.
+  if ((prev.recipient?.id ?? "") !== (m.recipient?.id ?? "")) return false;
+  if (prev.kind !== m.kind) return false;
   if (dayKey(prev.created_at) !== dayKey(m.created_at)) return false;
   return new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60_000;
 }

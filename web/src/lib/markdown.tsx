@@ -13,10 +13,21 @@ interface Part {
 
 const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(~~[^~\n]+~~)|(\*[^*\n]+\*)|(_[^_\n]+_)|(https?:\/\/[^\s<>"']+)|(@[\p{L}\p{N}_.-]{1,40})/gu;
 
+/** 끝 문장부호를 떼되, 괄호는 짝이 맞으면 주소의 일부로 남긴다(위키백과 링크 등). */
 function trimUrlTail(url: string): { url: string; tail: string } {
-  const m = /[.,!?;:)\]}]+$/.exec(url);
-  if (!m) return { url, tail: "" };
-  return { url: url.slice(0, -m[0].length), tail: m[0] };
+  let kept = url;
+  for (;;) {
+    const last = kept[kept.length - 1];
+    if (!last || !/[.,!?;:)\]}'"]/.test(last)) break;
+    if (last === ")" || last === "]") {
+      const open = last === ")" ? "(" : "[";
+      const opens = kept.split(open).length - 1;
+      const closes = kept.split(last).length - 1;
+      if (opens >= closes) break;
+    }
+    kept = kept.slice(0, -1);
+  }
+  return { url: kept, tail: url.slice(kept.length) };
 }
 
 function tokenizeLine(line: string, agents: Agent[]): Part[] {
@@ -104,16 +115,17 @@ function parseBlocks(content: string): Block[] {
   const blocks: Block[] = [];
   let i = 0;
   while (i < lines.length) {
-    const fence = /^\s*```(\S*)\s*$/.exec(lines[i]);
+    // 언어 뒤에 파일명 등 부가 정보가 붙은 펜스도 받는다: "```ts src/app.ts"
+    const fence = /^\s*```(.*)$/.exec(lines[i]);
     if (fence) {
-      const lang = fence[1] ?? "";
+      const lang = fence[1].trim().split(/\s+/)[0] ?? "";
       const body: string[] = [];
       i += 1;
       while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
         body.push(lines[i]);
         i += 1;
       }
-      i += 1; // 닫는 펜스(없으면 끝)
+      if (i < lines.length) i += 1; // 닫는 펜스(없으면 끝)
       blocks.push({ kind: "code", lang, text: body.join("\n") });
       continue;
     }
@@ -128,6 +140,11 @@ function parseBlocks(content: string): Block[] {
     }
     const body: string[] = [];
     while (i < lines.length && !/^\s*```/.test(lines[i]) && !/^\s*>\s?/.test(lines[i])) {
+      body.push(lines[i]);
+      i += 1;
+    }
+    // 어떤 경우에도 줄을 하나는 소비해 무한 루프를 막는다.
+    if (body.length === 0) {
       body.push(lines[i]);
       i += 1;
     }

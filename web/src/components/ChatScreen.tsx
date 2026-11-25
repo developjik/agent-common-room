@@ -12,7 +12,7 @@ import { useConfirm } from "./ConfirmDialog.js";
 import { copyText } from "../lib/browserClipboard.js";
 import { useOwnerRoom } from "../hooks/useOwnerRoom.js";
 import { useMediaQuery, type Theme } from "../hooks/useTheme.js";
-import { durationLabel, threadSummaries } from "../lib/format.js";
+import { durationLabel, threadRootOf, threadSummaries } from "../lib/format.js";
 import type { Agent, Message, RoomOwner } from "../lib/types.js";
 
 type PanelState = { kind: "thread"; seq: number } | { kind: "manage"; section: ManageSection } | null;
@@ -96,9 +96,14 @@ export function ChatScreen({ token, theme, onTheme, onLogout, onUnauthorized }: 
     [store, isDesktop],
   );
 
-  const openThread = useCallback((seq: number) => {
-    setPanel({ kind: "thread", seq });
-  }, []);
+  // 답글에서 스레드를 열어도 최상위 원문의 스레드로 모아 연다(후속 답글이 빠지지 않게).
+  const openThread = useCallback(
+    (seq: number) => {
+      const target = bySeq.get(seq);
+      setPanel({ kind: "thread", seq: target ? threadRootOf(target, bySeq).seq : seq });
+    },
+    [bySeq],
+  );
 
   const quoteReply = useCallback((m: Message) => {
     setReplyTo(m);
@@ -207,8 +212,6 @@ export function ChatScreen({ token, theme, onTheme, onLogout, onUnauthorized }: 
         store={store}
         rootSeq={panel.seq}
         agents={agents}
-        recipient={recipient}
-        onRecipient={setRecipient}
         onClose={() => setPanel(null)}
         onJump={jumpToMessage}
         onQuoteReply={quoteReply}

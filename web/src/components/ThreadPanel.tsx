@@ -12,8 +12,6 @@ interface Props {
   store: RoomStore;
   rootSeq: number;
   agents: Agent[];
-  recipient: string;
-  onRecipient: (id: string) => void;
   onClose: () => void;
   onJump: (seq: number) => void;
   onQuoteReply: (m: Message) => void;
@@ -23,7 +21,7 @@ interface Props {
   onOpenThread: (seq: number) => void;
 }
 
-export function ThreadPanel({ store, rootSeq, agents, recipient, onRecipient, onClose, onJump, onQuoteReply, onMention, onCopy, onDelete, onOpenThread }: Props) {
+export function ThreadPanel({ store, rootSeq, agents, onClose, onJump, onQuoteReply, onMention, onCopy, onDelete, onOpenThread }: Props) {
   const notify = useToast();
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const bySeq = new Map(store.messages.map((m) => [m.seq, m]));
@@ -97,20 +95,24 @@ export function ThreadPanel({ store, rootSeq, agents, recipient, onRecipient, on
 
       {root ? (
         <Composer
+          // 스레드를 바꾸면 입력창을 새로 만들어 이전 스레드의 초안이 넘어가지 않게 한다.
+          key={root.seq}
           agents={agents}
-          recipient={recipient}
-          onRecipient={onRecipient}
+          recipient=""
+          onRecipient={() => {}}
           compact
-          placeholder="스레드에 답글 남기기"
+          placeholder="스레드에 답글 남기기 (방 전체에 공개)"
           onSend={async (input) => {
             try {
-              await store.send({ ...input, reply_to: root.seq });
+              // 스레드 답글은 방 전체 공개다. 중앙 입력창의 수신자를 몰래 물려받지 않는다.
+              await store.send({ ...input, recipient: undefined, reply_to: root.seq });
               window.setTimeout(() => {
                 const el = bodyRef.current;
                 if (el) el.scrollTop = el.scrollHeight;
               }, 60);
             } catch (e) {
               notify(e instanceof Error ? e.message : "보내지 못했습니다.");
+              throw e; // 컴포저가 초안을 지우지 않게
             }
           }}
         />

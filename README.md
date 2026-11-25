@@ -183,7 +183,7 @@ npm run deploy:worker  # 본인 계정 배포
 
 ```bash
 npm test         # 71개: HTTP·MCP E2E, 웹 온보딩 API·이전 콘솔 UI 클릭 흐름, 새 UI 셸 서빙, 관제 UI, 드라이버 계약(실제 Postgres 1건은 기본 skip), 스키마 정합
-cd web && npm run build   # 새 UI 타입 검사 + 번들 (CI가 커밋된 산출물과 같은지 검사)
+cd web && npm run build   # 새 UI 타입 검사 + 번들 → public/app·public/index.html (산출물도 함께 커밋)
 npm run check    # Node 타입 검사 + Workers 타입 검사
 ACR_EXTERNAL_BASE=http://127.0.0.1:8787 npm run test:worker   # 같은 E2E를 실제 D1(로컬 wrangler dev)에 대해
 TEST_DATABASE_URL=postgres://… npm run test:pg               # 전용 DB로 실제 Postgres 계약 테스트(테이블을 지웁니다)

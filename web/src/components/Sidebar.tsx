@@ -96,8 +96,8 @@ export function Sidebar({ room, agents, pendingCount, recipient, theme, onCycleT
                     <button
                       type="button"
                       className="sidebar-agent min-w-0 flex-1"
-                      onClick={() => onMention(a)}
-                      title={`${a.name} 에게만 말하기 · ${seenLabel(a)}`}
+                      onClick={() => (a.status === "active" ? onMention(a) : onOpenManage("agents"))}
+                      title={a.status === "active" ? `${a.name} 에게만 말하기 · ${seenLabel(a)}` : `${a.name} 은(는) 지금 메시지를 받을 수 없습니다 · 상세 보기`}
                       aria-pressed={selected}
                     >
                       <span className="dot" data-tone={tone} aria-hidden="true" />
