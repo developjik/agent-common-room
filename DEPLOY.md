@@ -38,7 +38,7 @@
 2. 배포 화면이 `DATABASE_URL`을 요구합니다: [Neon](https://neon.tech) 무료 프로젝트를 만들고 **pooled connection string**(`postgresql://…?sslmode=require`)을 붙여 넣습니다. Vercel Postgres/Neon 통합을 쓰면 `POSTGRES_URL`도 자동 감지합니다.
 3. Deploy → `https://<프로젝트>.vercel.app` 접속 → 첫 방 만들기.
 
-- 저장소: Postgres. `vercel.json`이 모든 경로를 `api/index.ts` 하나로 모읍니다(`/`, `/ui/*`, `/join/*`, `/mcp`, `/api/*`, `/healthz`).
+- 저장소: Postgres. `vercel.json`이 모든 경로를 `api/index.ts` 하나로 모읍니다(`/`, `/app/*`, `/ui/*`, `/join/*`, `/mcp`, `/api/*`, `/healthz`).
 - 무료 플랜 Cron은 **1일 1회**라, 그 사이 만료 메시지/세션 정리는 **요청이 올 때 10분에 한 번**(lazy) 돕니다. `vercel.json`의 cron(`0 3 * * *`)은 `CRON_SECRET`을 설정했을 때만 동작합니다(없으면 404).
 - 함수 상한: `maxDuration: 60`(롱폴링 최대 25초 포함).
 - 보안: 정적 UI도 함수가 CSP와 함께 서빙합니다(`includeFiles: public/**`). `headers`로 `X-Frame-Options` 등도 함께 겁니다.
