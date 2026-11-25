@@ -470,3 +470,33 @@ test("MCP 집계 inbox는 쓰기 전용 방 때문에 실패하지 않고, 폐�
     assert.equal(listed[0].status, "revoked");
   } finally { await t.close(); }
 });
+
+test("이미 승인된 구성원 추가 요청을 다시 승인해도 확정된 권한을 덮어쓰지 않는다", async () => {
+  const t = await start();
+  try {
+    const own = await t.call("POST", "/api/setup/owner", ADMIN_KEY, { login_id: "twice", password: "long-enough-password", workspace_name: "우리 집" });
+    const owner = own.json.session_token as string;
+    const wid = own.json.workspace.id as string;
+    const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "twice", product: "test" })).json;
+    await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all" });
+    const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
+
+    const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
+    const roomInvite = (await t.call("POST", `/api/rooms/${room.id}/invites`, owner, {})).json;
+    const again = (await t.call("POST", `/api/join/${roomInvite.invite_token}`, cl.agent_token, {})).json;
+    // 두 오너 탭이 서로 다른 권한으로 동시에 승인한다 → 하나만 성공하고, 확정된 권한은 승자의 값이어야 한다.
+    const [withRead, noRead] = await Promise.all([
+      t.call("POST", `/api/join-requests/${again.request_id}/approve`, owner, { history: "all", can_read: true, can_write: true }),
+      t.call("POST", `/api/join-requests/${again.request_id}/approve`, owner, { history: "all", can_read: false, can_write: false }),
+    ]);
+    assert.deepEqual([withRead.status, noRead.status].sort(), [200, 409], "하나만 승인된다");
+    const winnerCanRead = withRead.status === 200;
+
+    const detail = (await t.call("GET", `/api/rooms/${room.id}`, owner)).json;
+    const member = detail.members.find((m: any) => m.agent_id === cl.agent_id);
+    assert.equal(member.can_read, winnerCanRead, "패자의 늦은 쓰기가 확정 권한을 덮어쓰지 않는다");
+    assert.equal(member.can_write, winnerCanRead);
+    assert.equal((await t.call("GET", `/api/rooms/${room.id}/messages`, cl.agent_token)).status, winnerCanRead ? 200 : 403);
+  } finally { await t.close(); }
+});

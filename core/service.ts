@@ -777,6 +777,16 @@ export class RoomService {
    * 구성원 자격을 만든다/갱신한다. 승인·배치는 "여러 방 + 상태 저장"을 한 트랜잭션에 넣어야 하므로
    * 문장 배열로 돌려주고, 단독 호출은 얇은 래퍼(upsertMembership)가 batch로 실행한다.
    */
+  /**
+   * 승인 경합 가드. 이미 처리된(pending 이 아닌) 요청이면 같은 PK를 다시 넣으려다 제약 위반이 나
+   * batch 전체가 롤백된다(늦게 도착한 승인이 확정된 권한을 덮어쓰지 않게). SQLite·D1·Postgres 공통 문법.
+   */
+  private joinPendingGuard(jrId: string): DbStatement {
+    return this.db.prep(
+      `INSERT INTO join_requests(id,room_id,invite_id,display_name,product,note,status,claim_hash,created_at)
+       SELECT id,room_id,invite_id,display_name,product,note,status,claim_hash,created_at FROM join_requests WHERE id=? AND status<>'pending'`,
+      jrId);
+  }
   private async membershipStatements(roomId: string, agentId: string, opts: { status: string; can_read: boolean; can_write: boolean; history_floor: number }): Promise<DbStatement[]> {
     const now = this.clock.now();
     const existing = await this.db.one("SELECT * FROM room_members WHERE room_id=? AND agent_id=?", roomId, agentId);
@@ -1072,10 +1082,16 @@ export class RoomService {
       const floor = history === "all" ? 0 : Number(room.next_seq) - 1;
       // 멤버십 추가와 승인 상태 저장을 한 batch(=트랜잭션)로 묶는다. 다른 요청이 먼저 승인했다면
       // 상태 UPDATE가 0행이라 batch 전체가 롤백되고, 구성원만 남는 반쪽 상태가 생기지 않는다.
-      const stmts = await this.membershipStatements(String(room.id), String(agent.id), { status: "active", can_read: opts.can_read !== false, can_write: opts.can_write !== false, history_floor: floor });
-      stmts.push(this.db.prep("UPDATE join_requests SET status='approved', agent_id=?, decided_at=? WHERE id=? AND status='pending'", agent.id, now, jr.id));
-      const decided = await this.db.batch(stmts);
-      if (batchChanges(decided[decided.length - 1]) !== 1) throw err(409, "not_pending", "이미 처리된 참여 요청입니다.");
+      const stmts = [this.joinPendingGuard(String(jr.id)),
+        ...await this.membershipStatements(String(room.id), String(agent.id), { status: "active", can_read: opts.can_read !== false, can_write: opts.can_write !== false, history_floor: floor }),
+        this.db.prep("UPDATE join_requests SET status='approved', agent_id=?, decided_at=? WHERE id=? AND status='pending'", agent.id, now, jr.id)];
+      try {
+        const decided = await this.db.batch(stmts);
+        if (batchChanges(decided[decided.length - 1]) !== 1) throw err(409, "not_pending", "이미 처리된 참여 요청입니다.");
+      } catch (e) {
+        if (isConstraintError(e)) throw err(409, "not_pending", "이미 처리된 참여 요청입니다.");
+        throw e;
+      }
       await this.audit(String(room.id), "owner", "join.approve", `${jr.id} existing=${agent.id} history=${history}`);
       return { agent_id: agent.id, name: agent.name, history, history_floor_seq: floor, existing_agent: true, room_id: room.id };
     }
@@ -1109,7 +1125,7 @@ export class RoomService {
       throw e;
     }
     const floors: Record<string, number> = {};
-    const stmts: DbStatement[] = [];
+    const stmts: DbStatement[] = [this.joinPendingGuard(String(jr.id))];
     for (const rid of targets) {
       const target = rid === lobbyId ? lobby : roomRows.get(rid)!;
       const floor = history === "all" ? 0 : Number(target.next_seq) - 1;
@@ -1119,11 +1135,15 @@ export class RoomService {
     // 로비 멤버십의 커서는 v4 에이전트 행과 같아야 한다(롤백 미러 불변식).
     stmts.push(this.db.prep("UPDATE agents SET history_floor=? WHERE id=?", floors[lobbyId] ?? lobbyFloor, agentId));
     stmts.push(this.db.prep("UPDATE join_requests SET status='approved', agent_id=?, decided_at=? WHERE id=? AND status='pending'", agentId, now, jr.id));
-    const decided = await this.db.batch(stmts);
-    if (batchChanges(decided[decided.length - 1]) !== 1) {
-      // 승인 상태 저장이 경합에서 졌다 → batch가 롤백됐다. 새로 만든 신원만 지운다.
+    try {
+      const decided = await this.db.batch(stmts);
+      if (batchChanges(decided[decided.length - 1]) !== 1) throw err(409, "not_pending", "이미 처리된 참여 요청입니다.");
+    } catch (e) {
+      // 승인 경합에서 졌다 → batch는 롤백됐다. 미리 만든 신원만 지운다(구성원은 생기지 않았다).
       await this.db.run("DELETE FROM agents WHERE id=?", agentId);
-      throw err(409, "not_pending", "이미 처리된 참여 요청입니다.");
+      if (e instanceof ApiError) throw e;
+      if (isConstraintError(e)) throw err(409, "not_pending", "이미 처리된 참여 요청입니다.");
+      throw e;
     }
     await this.audit(String(room.id), "owner", "join.approve", `${jr.id} history=${history} rooms=${[...targets].join(",")}`);
     return { agent_id: agentId, name, history, history_floor_seq: floors[String(room.id)] ?? lobbyFloor, room_id: room.id, rooms: [...targets], lobby_room_id: lobbyId };
@@ -1449,7 +1469,8 @@ export class RoomService {
   /**
    * 여러 방의 inbox를 "한 번에" 읽는다(MCP read_inbox 의 방 생략 경로).
    * 방마다 inbox()를 부르면 방당 5~6쿼리라 D1 무료 플랜의 호출당 50쿼리를 금방 넘는다.
-   * 여기서는 구성원 1 + 메시지 1(방별 OR 조건) + 공개 변환 1~2 + 커서 batch 1 = 약 5쿼리로 끝낸다.
+   * 여기서는 구성원 1 + 메시지 1(방별 OR + ROW_NUMBER) + 커서 batch 1 + 공개 변환(방당 최대 2: 수신자·답장)
+   * 으로 줄인다. 방 15개 상한에서 최악 약 45쿼리로 50쿼리 안에 들어온다.
    * 한 번에 최대 AGGREGATE_ROOMS 개 방만 돌려주고 나머지는 omitted_rooms 로 알린다(바인드 상한 100 보호).
    */
   async inboxMany(agent: Agent, limit?: unknown) {
@@ -1467,16 +1488,23 @@ export class RoomService {
       params.push(rid, floor, agent.id, agent.id);
       return { rid, name: String(m.room_name), prevFetched: Number(m.fetched_seq), acked: Number(m.acked_seq) };
     });
-    params.push(agent.id);
+    params.push(agent.id, lim + 1);
+    // 방별로 lim+1 행만 가져온다(ROW_NUMBER). 미확인 메시지가 아무리 많아도 메모리·응답이 커지지 않는다.
     const rows = await this.db.all(
-      `SELECT * FROM messages WHERE (${conds.join(" OR ")}) AND sender_id<>? ORDER BY room_id, seq`, ...params);
+      `SELECT * FROM (
+         SELECT m.*, ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY seq) AS rn
+           FROM messages m
+          WHERE (${conds.join(" OR ")}) AND sender_id<>?
+       ) t WHERE t.rn <= ? ORDER BY t.room_id, t.seq`, ...params);
     const byRoom = new Map<string, Row[]>();
     for (const r of rows) {
       const list = byRoom.get(String(r.room_id)) ?? [];
-      if (list.length <= lim) list.push(r); // 방별 lim+1 까지(has_more 판정용)
+      list.push(r);
       byRoom.set(String(r.room_id), list);
     }
-    const pubs = await this.toPublicMany([...byRoom.values()].flat());
+    // meta(참여 순서) 순서로 평탄화해야 공개 변환 결과와 슬라이스가 어긋나지 않는다.
+    const flat = meta.flatMap(m => byRoom.get(m.rid) ?? []);
+    const pubs = await this.toPublicMany(flat);
     const out: any[] = [];
     const cursorStmts: DbStatement[] = [];
     let idx = 0;
