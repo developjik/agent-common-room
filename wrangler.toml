@@ -22,6 +22,14 @@ database_name = "agent-common-room"
 database_id = "788da9c8-58c0-484d-b805-18767a51377e"
 migrations_dir = "worker/migrations"
 
+# PR별 프리뷰(`wrangler preview`)가 쓰는 D1. 프로덕션 DB에 프리뷰 트래픽이 닿지 않도록
+# 같은 계정의 별도 DB를 바인딩한다(2026-11-25 대시보드에서 생성).
+# 스키마는 첫 요청 때 ensureSchema가 만들므로 빈 DB로 둔다.
+[[previews.d1_databases]]
+binding = "DB"
+database_name = "agent-common-room-preview"
+database_id = "8e58f928-7317-40c4-bc2e-cfdcd2308fae"
+
 # 보존기간(retention) 만료 메시지와 만료 세션 정리 + 웹훅 재시도 처리.
 [triggers]
 crons = ["* * * * *"]  # 매분: 방 정리 + 웹훅 재시도
