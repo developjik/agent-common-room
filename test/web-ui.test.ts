@@ -141,6 +141,11 @@ test("기울임 후보가 주소·인라인 코드의 밑줄을 닫는 기호로
     "* 목록 링크 [https://example.com/files/report_](https://example.com/files/report_)",
     "목록 기호가 주소 끝 글자를 먹지 않는다",
   );
+  assert.equal(
+    render("* 목록 링크 https://example.com/files/report*"),
+    "* 목록 링크 [https://example.com/files/report*](https://example.com/files/report*)",
+    "주소도 별표로 끝나면 목록 기호와 짝지어지지 않는다",
+  );
 
   // 주소를 품은 진짜 기울임은 닫는 기호가 주소 밖이므로 그대로 적용된다.
   assert.equal(render("_자세한 건 https://x.y/a 참고_ 끝"), "<em>자세한 건 https://x.y/a 참고</em> 끝");
