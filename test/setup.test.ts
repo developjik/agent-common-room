@@ -128,18 +128,41 @@ test("관리자 키 무차별 대입: 자격 증명을 계속 틀리면 429", as
   assert.equal((await s.call("POST", "/api/admin/rooms", adminKey, { name: "정상 키" })).status, 201);
 });
 
-test("오너 UI는 온보딩 화면을 포함하고 인라인 스크립트가 없다(CSP 유지)", async () => {
+test("기본 화면(/)은 새 React UI 셸을, /ui/는 이전 콘솔을 CSP와 함께 서빙한다", async () => {
   const s = await boot();
   const res = await fetch(s.base + "/");
   const html = await res.text();
   assert.equal(res.status, 200);
-  for (const id of ["onboardPane", "createRoomBtn", "adminKey", "bootstrapBtn", "createdPane", "copyInviteOnlyBtn"]) {
-    assert.ok(html.includes(`id="${id}"`), `${id} 누락`);
-  }
+  assert.match(res.headers.get("content-security-policy") ?? "", /script-src 'self'/);
+  assert.match(res.headers.get("content-security-policy") ?? "", /form-action 'none'/);
+  assert.equal(res.headers.get("x-frame-options"), "DENY");
+  assert.ok(html.includes('id="root"'), "React 마운트 지점");
+  const asset = /<script[^>]+src="(\/app\/assets\/[^"]+\.js)"/.exec(html);
+  assert.ok(asset, "web 빌드 번들이 /app/assets 아래에서 참조된다");
   assert.ok(!/<script(?![^>]*src=)/.test(html), "인라인 스크립트 없음");
   assert.ok(!/onclick=/i.test(html), "인라인 이벤트 핸들러 없음");
-  assert.match(res.headers.get("content-security-policy") ?? "", /form-action 'none'/);
-  const js = await (await fetch(s.base + "/ui/app.js")).text();
-  assert.ok(!/localStorage\.(setItem|getItem)/.test(js), "관리자 키를 localStorage에 남기지 않는다");
-  assert.ok(/sessionStorage\.setItem\("acr_session"/.test(js));
+
+  const js = await fetch(s.base + asset[1]);
+  assert.equal(js.status, 200);
+  assert.match(js.headers.get("content-type") ?? "", /text\/javascript/);
+  assert.match(js.headers.get("content-security-policy") ?? "", /default-src 'none'/);
+  assert.ok(!/(?:src|href)=["']https?:\/\//.test(await js.text()), "번들이 외부 스크립트를 부르지 않는다");
+
+  // 해시된 CSS도 같은 규칙으로 서빙되고, 경로 탈출은 막힌다.
+  const cssPath = /<link[^>]+href="(\/app\/assets\/[^"]+\.css)"/.exec(html)?.[1];
+  assert.ok(cssPath, "번들 CSS 참조");
+  assert.equal((await fetch(s.base + cssPath)).status, 200);
+  assert.equal((await fetch(s.base + "/app/../package.json")).status, 404);
+  assert.equal((await fetch(s.base + "/app/%2e%2e/package.json")).status, 404, "인코딩된 경로 탈출도 막힌다");
+
+  // 이전 콘솔은 /ui/에서 그대로: 온보딩 화면과 스크립트가 남아 있고 키를 저장소에 남기지 않는다.
+  const legacy = await fetch(s.base + "/ui/");
+  const legacyHtml = await legacy.text();
+  assert.equal(legacy.status, 200);
+  for (const id of ["onboardPane", "createRoomBtn", "adminKey", "bootstrapBtn", "createdPane", "copyInviteOnlyBtn"]) {
+    assert.ok(legacyHtml.includes(`id="${id}"`), `${id} 누락`);
+  }
+  const legacyJs = await (await fetch(s.base + "/ui/app.js")).text();
+  assert.ok(!/localStorage\.(setItem|getItem)/.test(legacyJs), "관리자 키를 localStorage에 남기지 않는다");
+  assert.ok(/sessionStorage\.setItem\("acr_session"/.test(legacyJs));
 });
