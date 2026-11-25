@@ -53,12 +53,19 @@ export function tokenizeLine(line: string, agents: Agent[]): Part[] {
     if (token.startsWith("`")) parts.push({ type: "code", text: token.slice(1, -1) });
     else if (token.startsWith("**")) parts.push({ type: "bold", text: token.slice(2, -2) });
     else if (token.startsWith("~~")) parts.push({ type: "strike", text: token.slice(2, -2) });
-    else if (token.startsWith("*")) {
-      if (emphasisBounded(line, m.index, token)) parts.push({ type: "italic", text: token.slice(1, -1) });
-      else parts.push({ type: "text", text: token });
-    } else if (token.startsWith("_")) {
-      if (emphasisBounded(line, m.index, token)) parts.push({ type: "italic", text: token.slice(1, -1) });
-      else parts.push({ type: "text", text: token });
+    else if (token.startsWith("*") || token.startsWith("_")) {
+      if (emphasisBounded(line, m.index, token)) {
+        parts.push({ type: "italic", text: token.slice(1, -1) });
+        last = m.index + token.length;
+      } else {
+        // 단어 경계가 아니면 여는 기호 하나만 글자로 남기고 한 칸 뒤부터 다시 찾는다.
+        // 후보를 통째로 글자로 삼키면, 식별자에 붙은 `_`가 문장 뒤쪽의 여는 `_`와 짝지어져
+        // `room_1a2b3c … agent_common_room, 강조는 _기울임_`의 기울임이 풀린다.
+        parts.push({ type: "text", text: token.slice(0, 1) });
+        last = m.index + 1;
+      }
+      INLINE.lastIndex = last;
+      continue;
     } else if (/^https?:/i.test(token)) {
       const { url, tail } = trimUrlTail(token);
       parts.push({ type: "link", text: url, href: url });

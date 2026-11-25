@@ -3,7 +3,7 @@
 // 맞으면 화면도 같은 규칙을 따른다.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { activeAgent, groupedWith, historyFloorLabel, plainPreview } from "../web/src/lib/format.js";
+import { activeAgent, groupedWith, historyFloorLabel, plainPreview, recipientReset } from "../web/src/lib/format.js";
 import { tokenizeLine } from "../web/src/lib/inline.js";
 import { completeMention, mentionTokenAt } from "../web/src/lib/mention.js";
 import type { Agent } from "../web/src/lib/types.js";
@@ -73,6 +73,52 @@ test("언더스코어/별표 강조는 단어 경계에서만 적용된다", () 
 
   const math = tokenizeLine("2*3*4 는 곱셈", []);
   assert.deepEqual(math.filter((t) => t.type === "italic"), [], "수식의 *는 강조가 아니다");
+});
+
+/** 기울임 토큰만 <em>으로 감싸 화면이 그릴 글자를 그대로 만든다. */
+function renderInline(line: string): string {
+  return tokenizeLine(line, [])
+    .map((t) => (t.type === "italic" ? `<em>${t.text}</em>` : t.text))
+    .join("");
+}
+
+test("식별자 바로 뒤의 밑줄 기울임은 식별자를 훼손하지 않고 적용된다", () => {
+  const line = "room_50795a119a4a4b48 와 agent_common_room, 강조는 _기울임_ 과 acr_agt_abcdef";
+  assert.equal(
+    renderInline(line),
+    "room_50795a119a4a4b48 와 agent_common_room, 강조는 <em>기울임</em> 과 acr_agt_abcdef",
+    "앞 식별자의 _가 뒤 문장의 여는 _를 삼키지 않는다",
+  );
+
+  // 여러 식별자가 앞에 있어도, 주소가 섞여 있어도 같다.
+  assert.equal(
+    renderInline("acr_agt_1 과 room_1a2b3c, inv_6e5a6940 그리고 _기울임_ 끝"),
+    "acr_agt_1 과 room_1a2b3c, inv_6e5a6940 그리고 <em>기울임</em> 끝",
+  );
+  const mixed = tokenizeLine("room_1a2b3c 보다 https://example.com/a_b_c 의 _draft_ 문서", []);
+  assert.equal(mixed.find((t) => t.type === "link")?.href, "https://example.com/a_b_c", "URL의 _는 주소의 일부");
+  assert.deepEqual(mixed.filter((t) => t.type === "italic").map((t) => t.text), ["draft"]);
+
+  // 강조로 보이지 않는 기호는 하나도 잃지 않는다.
+  assert.equal(renderInline("2*3*4 와 a_b_c_d, foo_bar and baz_qux"), "2*3*4 와 a_b_c_d, foo_bar and baz_qux");
+  assert.equal(renderInline("__굵게__ 와 _하나_"), "__굵게__ 와 <em>하나</em>");
+});
+
+test("폐기된 수신자는 조용히 지우지 않고 방 전체로 되돌리며 안내한다", () => {
+  assert.deepEqual(recipientReset([agent("agt_1", "피클", "active")], "agt_1"), { reset: false, notice: null }, "활성 수신자는 그대로 둔다");
+  assert.deepEqual(recipientReset([agent("agt_1", "피클", "active")], ""), { reset: false, notice: null }, "초기 마운트·전송 뒤 초기화는 조용하다");
+
+  const revoked = recipientReset([agent("agt_1", "피클", "revoked")], "agt_1");
+  assert.equal(revoked.reset, true, "폐기되면 방 전체로 되돌린다");
+  assert.match(revoked.notice ?? "", /피클/, "누가 사라졌는지 이름으로 알린다");
+  assert.match(revoked.notice ?? "", /폐기/);
+  assert.match(revoked.notice ?? "", /방 전체로 바뀌었습니다/);
+
+  const unclaimed = recipientReset([agent("agt_1", "피클", "unclaimed")], "agt_1");
+  assert.equal(unclaimed.reset, true);
+  assert.match(unclaimed.notice ?? "", /승인 전/);
+
+  assert.deepEqual(recipientReset([], "agt_1"), { reset: true, notice: null }, "목록을 받기 전에는 조용히 되돌린다");
 });
 
 test("코드·굵게·링크·멘션 토큰은 그대로 유지된다", () => {

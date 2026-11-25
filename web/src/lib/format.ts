@@ -77,6 +77,20 @@ export function activeAgent(agents: Agent[], id: string): Agent | undefined {
   return a && a.status === "active" ? a : undefined;
 }
 
+/**
+ * 받는 사람으로 골라 둔 참여자가 더 이상 활성이 아니게 되었을 때(폐기·미승인),
+ * 받는 사람을 `방 전체`로 되돌릴지와 그때 띄울 안내 문구를 정한다.
+ * 고른 적이 없거나 아직 활성이면 그대로 두고, 참여자 목록을 아직 받지 못해(빈 배열)
+ * 누가 사라진 것인지 알 수 없을 때는 조용히 되돌린다(초기 로딩 오발동 방지).
+ */
+export function recipientReset(agents: Agent[], recipient: string): { reset: boolean; notice: string | null } {
+  if (!recipient || activeAgent(agents, recipient)) return { reset: false, notice: null };
+  const gone = agents.find((a) => a.id === recipient);
+  if (!gone) return { reset: true, notice: null };
+  const why = gone.status === "revoked" ? "폐기되어" : gone.status === "unclaimed" ? "아직 승인 전이라" : "지금은 메시지를 받을 수 없어";
+  return { reset: true, notice: `@${gone.name} 이(가) ${why} 받는 사람이 방 전체로 바뀌었습니다.` };
+}
+
 /** 서버는 `seq > history_floor`를 보여 주므로, 화면에는 실제로 보이는 첫 번호(floor+1)를 적는다. */
 export function historyFloorLabel(historyFloorSeq: number): string {
   return `기록 #${Math.max(0, historyFloorSeq) + 1}부터`;

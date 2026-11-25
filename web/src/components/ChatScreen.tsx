@@ -12,7 +12,7 @@ import { useConfirm } from "./ConfirmDialog.js";
 import { copyText } from "../lib/browserClipboard.js";
 import { useOwnerRoom } from "../hooks/useOwnerRoom.js";
 import { useMediaQuery, type Theme } from "../hooks/useTheme.js";
-import { activeAgent, durationLabel, threadRootOf, threadSummaries } from "../lib/format.js";
+import { durationLabel, recipientReset, threadRootOf, threadSummaries } from "../lib/format.js";
 import type { Agent, Message, RoomOwner } from "../lib/types.js";
 
 type PanelState = { kind: "thread"; seq: number } | { kind: "manage"; section: ManageSection } | null;
@@ -82,11 +82,14 @@ export function ChatScreen({ token, theme, onTheme, onLogout, onUnauthorized }: 
   useEffect(() => () => window.clearTimeout(flashTimer.current), []);
 
   // 폐기·미승인 참여자가 수신자로 남아 있으면 select에는 '방 전체'로 보이면서
-  // 전송은 404로 깨진다. 상태가 바뀌면 수신자를 방 전체로 되돌린다.
+  // 전송은 404로 깨진다. 상태가 바뀌면 수신자를 방 전체로 되돌리고, 조용히 사라지지 않게 알린다.
+  // (고른 적이 없거나 전송 뒤 초기화된 상태·참여자 목록을 받기 전에는 아무것도 하지 않는다)
   useEffect(() => {
-    if (!recipient) return;
-    if (!activeAgent(agents, recipient)) setRecipient("");
-  }, [agents, recipient]);
+    const { reset, notice } = recipientReset(agents, recipient);
+    if (!reset) return;
+    setRecipient("");
+    if (notice) notify(notice);
+  }, [agents, recipient, notify]);
 
   const flash = useCallback((seq: number) => {
     setFlashSeq(seq);
