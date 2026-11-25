@@ -1,15 +1,19 @@
-// Cloudflare Workers + D1용 RoomService 비동기 포트.
-// 규칙·검증·오류 코드는 로컬 Node 구현(src/service.ts)과 동일하게 유지한다.
-// D1에는 BEGIN/COMMIT 대화형 트랜잭션이 없으므로, 동시성 불변조건은 다음으로 보존한다:
-//  - seq 할당/일시정지 가드: 조건부 UPDATE ... WHERE (paused=0) + D1 batch(=SQL 트랜잭션).
-//    INSERT는 같은 batch 안에서 SELECT r.next_seq-1로 방금 할당된 seq를 읽는다.
+// 런타임 공통 RoomService. 로컬 Node(node:sqlite)·Cloudflare Workers(D1)·Vercel/Render(Postgres)가
+// 같은 규칙·검증·오류 코드를 쓰도록 하나로 모은 구현이다. 저장소는 core/db.ts의 SqlDb 포트로만 접근한다.
+//
+// 트랜잭션은 대화형(BEGIN/COMMIT) 대신 "조건부 UPDATE + batch(=한 트랜잭션)"로 표현한다.
+// D1에는 대화형 트랜잭션이 없고, 같은 문법이 Postgres·SQLite에서도 그대로 원자적이기 때문이다.
+// 동시성 불변조건은 다음으로 보존한다:
+//  - seq 할당/일시정지 가드: 조건부 UPDATE ... WHERE (paused=0) + batch(=SQL 트랜잭션).
+//    INSERT는 같은 batch 안에서 SELECT r.next_seq - 1로 방금 할당된 seq를 읽는다.
 //    가드가 실패하면 next_seq가 증가하지 않아 INSERT의 seq가 이미 쓰인 값과 PK 충돌 → 전체 롤백.
 //    (빈 방의 첫 메시지는 INSERT ... SELECT ... WHERE r.next_seq>=2 가드가 막는다)
 //  - client_id 멱등: messages_idem 부분 고유 인덱스 + 충돌 후 재조회.
 //  - claim/approve 경합: 조건부 UPDATE의 changes 검사 + 보상(compensation) 쓰기.
 //  - login throttle: login_fails 테이블(격리(isolate) 간 공유를 위해 인메모리 Map 대신 DB 사용).
-import { hashToken, hmacSha256Hex, newId, newToken, safeEqualHex, sha256Hex } from "./crypto";
-import { batchChanges, isConstraintError, type Db, type Row } from "./db";
+import { hashToken, hmacSha256Hex, newId, newToken, safeEqualHex, sha256Hex } from "./crypto.js";
+import { batchChanges, isConstraintError, type SqlDb, type Row } from "./db.js";
+import { SCHEMA_VERSION } from "./schema.js";
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -59,8 +63,8 @@ const PII_PATTERNS: RegExp[] = [
 
 const MSG_COLS = "room_id,seq,id,client_id,sender_type,sender_id,sender_name,kind,recipient_id,reply_to_seq,content,content_hash,context_category,depth,created_at";
 
-export class RoomServiceD1 {
-  constructor(public db: Db, public clock: Clock = realClock) {}
+export class RoomService {
+  constructor(public db: SqlDb, public clock: Clock = realClock) {}
 
   audit(room: string | null, actor: string, action: string, detail = "") {
     return this.db.run("INSERT INTO audit(room_id, ts, actor, action, detail) VALUES (?,?,?,?,?)", room, this.clock.now(), actor, action, detail.slice(0, 500));
@@ -72,8 +76,61 @@ export class RoomServiceD1 {
   }
 
   // ---------- admin authority ----------
-  // 관리자 키는 Workers 시크릿(ACR_ADMIN_KEY)과의 비교로 처리한다 (worker/http.ts).
-  // meta.admin_key_hash 경로는 로컬 Node 구현 전용.
+  // 관리자 키는 (1) 환경변수 ACR_ADMIN_KEY, (2) 웹 온보딩에서 최초 1회 발급한 meta.admin_key_hash
+  // 둘 중 하나로 인증한다. 저장되는 값은 항상 SHA-256 해시이고, 평문은 발급 응답에서 한 번만 보인다.
+  async adminKeyConfigured(): Promise<boolean> {
+    return !!(await this.db.one("SELECT 1 x FROM meta WHERE key='admin_key_hash'"));
+  }
+  async setAdminKeyHash(hash: string) {
+    await this.db.run("INSERT INTO meta(key,value) VALUES ('admin_key_hash',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", hash);
+  }
+  /** 관리자 키 해시를 "아직 없을 때만" 저장한다. 경합에서 이긴 한 요청만 true. */
+  async claimAdminKey(hash: string): Promise<boolean> {
+    const r = await this.db.run("INSERT INTO meta(key,value) VALUES ('admin_key_hash',?) ON CONFLICT(key) DO NOTHING", hash);
+    return Number(r.changes) === 1;
+  }
+  async checkAdminKey(envKey: string | undefined, token: string): Promise<boolean> {
+    if (!token) return false;
+    const h = await hashToken(token);
+    if (envKey && envKey.length >= 24 && safeEqualHex(h, await hashToken(envKey))) return true;
+    const row = await this.db.one("SELECT value FROM meta WHERE key='admin_key_hash'");
+    return !!row && safeEqualHex(h, String(row.value));
+  }
+
+  // ---------- 최초 설정 (웹 온보딩) ----------
+  /** 공개 정보: 관리자 키가 이미 있는지, 웹에서 최초 키를 만들 수 있는지. 비밀은 담지 않는다. */
+  async setupState(opts: { envKeyConfigured?: boolean; bootstrapAllowed?: boolean } = {}) {
+    const configured = !!opts.envKeyConfigured || (await this.adminKeyConfigured());
+    return { admin_key_configured: configured, bootstrap_allowed: !!opts.bootstrapAllowed && !configured, schema_version: SCHEMA_VERSION };
+  }
+  /** 최초 1회 관리자 키 발급. 이미 설정돼 있으면 null(409). */
+  async bootstrapAdminKey(): Promise<{ admin_key: string } | null> {
+    const key = newToken("acr_adm");
+    if (!(await this.claimAdminKey(await hashToken(key)))) return null;
+    await this.audit(null, "admin", "admin.bootstrap");
+    return { admin_key: key };
+  }
+
+  // ---------- 시도 제한 (관리자 키·부트스트랩) ----------
+  // 로그인 시도 제한은 기존처럼 login_fails(방 단위). 관리자 키는 IP 단위 auth_fails로 제한한다.
+  async throttled(scope: string, limit = 30, windowMs = 15 * 60_000): Promise<boolean> {
+    const f = await this.db.one("SELECT n, first FROM auth_fails WHERE scope=?", scope);
+    if (!f) return false;
+    if (this.clock.now() - Number(f.first) >= windowMs) return false;
+    return Number(f.n) >= limit;
+  }
+  async recordFailure(scope: string, windowMs = 15 * 60_000): Promise<void> {
+    const now = this.clock.now();
+    await this.db.run(
+      `INSERT INTO auth_fails(scope,n,first) VALUES (?,1,?)
+       ON CONFLICT(scope) DO UPDATE SET
+         n = CASE WHEN ? - auth_fails.first < ? THEN auth_fails.n + 1 ELSE 1 END,
+         first = CASE WHEN ? - auth_fails.first < ? THEN auth_fails.first ELSE ? END`,
+      scope, now, now, windowMs, now, windowMs, now);
+  }
+  async clearFailures(scope: string): Promise<void> {
+    await this.db.run("DELETE FROM auth_fails WHERE scope=?", scope);
+  }
   createRoom(name: string, description = "") {
     return this.createRoomImpl(name, description);
   }
@@ -173,7 +230,7 @@ export class RoomServiceD1 {
   }
   async updateRoom(roomId: string, patch: Row) {
     await this.room(roomId);
-    const stmts: D1PreparedStatement[] = [];
+    const stmts: ReturnType<SqlDb["prep"]>[] = [];
     if (patch.paused !== undefined) {
       const p = !!patch.paused;
       stmts.push(this.db.prep("UPDATE rooms SET paused=?, pause_reason=? WHERE id=?", p ? 1 : 0, p ? "owner" : null, roomId));
@@ -390,7 +447,7 @@ export class RoomServiceD1 {
     const ids = [...new Set(rows.map(m => m.recipient_id).filter(Boolean))] as string[];
     const recs = new Map<string, Row>();
     const repliedSeqs = new Set<string>();
-    // D1 바인드 파라미터 상한(100) 때문에 90개씩 나눠 조회한다.
+    // 드라이버 바인드 파라미터 상한(D1=100) 때문에 90개씩 나눠 조회한다.
     for (let i = 0; i < ids.length; i += 90) {
       const slice = ids.slice(i, i + 90);
       const found = await this.db.all(`SELECT id, name, fetched_seq, acked_seq FROM agents WHERE id IN (${slice.map(() => "?").join(",")})`, ...slice);
@@ -545,7 +602,7 @@ export class RoomServiceD1 {
         const sysId = newId("msg");
         await this.db.batch([
           this.db.prep("UPDATE rooms SET next_seq=next_seq+1, paused=1, pause_reason='rate_cap' WHERE id=?", roomId),
-          this.db.prep(`INSERT INTO messages(${MSG_COLS}) SELECT ?, r.next_seq-1, ?, NULL, 'system', 'system', 'system', 'status', NULL, NULL, ?, ?, 'none', 0, ? FROM rooms r WHERE r.id=? AND r.next_seq>=2`,
+          this.db.prep(`INSERT INTO messages(${MSG_COLS}) SELECT ?, r.next_seq - 1, ?, NULL, 'system', 'system', 'system', 'status', NULL, NULL, ?, ?, 'none', 0, CAST(? AS BIGINT) FROM rooms r WHERE r.id=? AND r.next_seq>=2`,
             roomId, sysId, sysContent, await sha256Hex(sysContent), now, roomId),
           this.db.prep("INSERT INTO audit(room_id, ts, actor, action, detail) VALUES (?,?,?,?,?)", roomId, now, "system", "room.auto_pause", `agent=${sender.id}`),
         ]);
@@ -560,11 +617,11 @@ export class RoomServiceD1 {
     const guard = sender.type === "owner"
       ? "UPDATE rooms SET next_seq=next_seq+1 WHERE id=?"
       : "UPDATE rooms SET next_seq=next_seq+1 WHERE id=? AND paused=0";
-    let guardRes: D1Result[];
+    let guardRes: { changes: number }[];
     try {
       guardRes = await this.db.batch([
         this.db.prep(guard, roomId),
-        this.db.prep(`INSERT INTO messages(${MSG_COLS}) SELECT ?, r.next_seq-1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM rooms r WHERE r.id=? AND r.next_seq>=2`,
+        this.db.prep(`INSERT INTO messages(${MSG_COLS}) SELECT ?, r.next_seq - 1, ?, ?, ?, ?, ?, ?, ?, CAST(? AS INTEGER), ?, ?, ?, CAST(? AS INTEGER), CAST(? AS BIGINT) FROM rooms r WHERE r.id=? AND r.next_seq>=2`,
           roomId, id, clientId, sender.type, sender.id, sender.name, kind, recipientId, replySeq, content, hash, category, depth, now, roomId),
       ]);
     } catch (e) {
@@ -764,6 +821,7 @@ export class RoomServiceD1 {
     // 종결된 웹훅 전달은 7일 보관: 테이블이 무한히 자라지 않게 한다 (재시도 큐는 status 인덱스로 제한된다).
     await this.db.run("DELETE FROM webhook_deliveries WHERE status IN ('ok','failed') AND created_at<?", now - 7 * 86400_000);
     await this.db.run("DELETE FROM login_fails WHERE ? - first >= 900000", now);
+    await this.db.run("DELETE FROM auth_fails WHERE ? - first >= 900000", now);
     let n = 0;
     // 방 목록은 페이지로 읽고, 보존 기간 값은 삭제 문장 안에서 원자적으로 다시 읽는다
     // (읽은 뒤 오너가 기간을 바꿔도 낡은 값으로 지우지 않는다).

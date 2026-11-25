@@ -7,3 +7,6 @@ data/
 .env
 
 .dev.vars
+
+# wrangler dev 로컬 상태
+.wrangler/

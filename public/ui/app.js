@@ -379,6 +379,120 @@
     } catch (e) { toast(e.message); }
   });
 
+  // ---------- 첫 방 만들기(웹 온보딩) ----------
+  // 관리자 키는 이 스크립트의 변수에만 있고 sessionStorage·localStorage에 남기지 않는다.
+  var setupInfo = { bootstrap_allowed: false, admin_key_configured: false };
+  var fresh = null; // 방금 만든 방의 자격 증명(메모리 전용)
+
+  function showPane(name) {
+    $("loginPane").hidden = name !== "login";
+    $("onboardPane").hidden = name !== "onboard";
+    $("createdPane").hidden = name !== "created";
+    $("loginErr").textContent = "";
+    $("onboardErr").textContent = "";
+  }
+  async function copyText(text, okMsg) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); toast(okMsg); return true; }
+    } catch (e) { /* 아래 폴백 */ }
+    // 클립보드 API는 https(또는 localhost)에서만 동작한다. 아니면 임시 textarea로 복사한다.
+    var ta2 = document.createElement("textarea");
+    ta2.value = text; ta2.setAttribute("readonly", "readonly");
+    ta2.style.position = "fixed"; ta2.style.opacity = "0";
+    document.body.appendChild(ta2); ta2.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(ta2);
+    toast(ok ? okMsg : "복사에 실패했습니다. 값을 직접 선택해 복사하세요.");
+    return ok;
+  }
+  async function loadSetup() {
+    try {
+      var r = await fetch("/api/setup", { headers: { accept: "application/json" } });
+      if (r.ok) setupInfo = await r.json();
+    } catch (e) { /* 설정 조회 실패: 수동 입력만 허용 */ }
+    $("bootstrapWrap").hidden = !setupInfo.bootstrap_allowed;
+    if (setupInfo.admin_key_configured) $("newRoomName").setAttribute("placeholder", "예: 우리 에이전트 협업방");
+  }
+  $("goOnboard").addEventListener("click", function () { showPane("onboard"); $("adminKey").focus(); });
+  $("backToLogin").addEventListener("click", function () { showPane("login"); });
+  $("bootstrapBtn").addEventListener("click", async function () {
+    var b = $("bootstrapBtn"); b.disabled = true;
+    $("onboardErr").textContent = "";
+    try {
+      var r = await fetch("/api/setup/bootstrap", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      var j = await r.json().catch(function () { return {}; });
+      if (!r.ok) throw new Error((j.error && j.error.message) || ("오류 " + r.status));
+      $("bootstrapOut").textContent = j.admin_key;
+      $("bootstrapOutWrap").hidden = false;
+      $("adminKey").value = j.admin_key;   // 바로 방을 만들 수 있게 채워 둔다(저장하지 않음)
+      setupInfo.bootstrap_allowed = false;
+      toast("관리자 키를 만들었습니다. 꼭 복사해 두세요.");
+    } catch (e) { $("onboardErr").textContent = e.message; }
+    finally { b.disabled = false; }
+  });
+  $("copyKeyBtn").addEventListener("click", function () { copyText($("bootstrapOut").textContent, "관리자 키를 복사했습니다."); });
+
+  $("createRoomBtn").addEventListener("click", async function () {
+    var btn = $("createRoomBtn");
+    var adminKey = $("adminKey").value.trim();
+    var name = $("newRoomName").value.trim();
+    var desc = $("newRoomDesc").value.trim();
+    $("onboardErr").textContent = "";
+    if (!adminKey) { $("onboardErr").textContent = "관리자 키를 입력하세요."; return; }
+    if (!name) { $("onboardErr").textContent = "방 이름을 입력하세요."; return; }
+    btn.disabled = true;
+    try {
+      var r = await fetch("/api/admin/rooms", {
+        method: "POST",
+        headers: { authorization: "Bearer " + adminKey, "content-type": "application/json" },
+        body: JSON.stringify({ name: name, description: desc }),
+      });
+      var j = await r.json().catch(function () { return {}; });
+      if (!r.ok) throw new Error((j.error && j.error.message) || ("오류 " + r.status));
+      var room = j;
+      // 만든 방으로 바로 로그인해 세션을 받고, 첫 초대 링크(3일·10회)까지 이어서 만든다.
+      var lr = await fetch("/api/owner/login", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ room_id: room.room_id, owner_code: room.owner_code }) });
+      var lj = await lr.json().catch(function () { return {}; });
+      if (!lr.ok) throw new Error((lj.error && lj.error.message) || "방은 만들어졌지만 로그인에 실패했습니다. 오너 코드로 로그인하세요.");
+      var invite = "";
+      try {
+        var ir = await fetch("/api/owner/invites", { method: "POST", headers: { authorization: "Bearer " + lj.session_token, "content-type": "application/json" },
+          body: JSON.stringify({ ttl_hours: 72, max_uses: 10 }) });
+        var ij = await ir.json().catch(function () { return {}; });
+        if (ir.ok) invite = location.origin + "/join/" + ij.invite_token;
+      } catch (e) { /* 초대 생성 실패는 치명적이지 않다 */ }
+      fresh = { room_id: room.room_id, name: room.name || name, owner_code: room.owner_code, session: lj.session_token, invite: invite };
+      $("cRoomName").textContent = fresh.name;
+      $("cRoomId").textContent = fresh.room_id;
+      $("cOwnerCode").textContent = fresh.owner_code;
+      $("cInvite").textContent = fresh.invite || "(초대 링크 생성 실패 · 방 안 '참여자 → 초대'에서 다시 만들 수 있습니다)";
+      $("copyInviteOnlyBtn").disabled = !fresh.invite;
+      $("adminKey").value = "";  // 키를 화면에 남기지 않는다
+      showPane("created");
+      toast("방을 만들었습니다. 오너 코드를 꼭 복사해 두세요.");
+    } catch (e) { $("onboardErr").textContent = e.message; }
+    finally { btn.disabled = false; }
+  });
+  $("copyAllBtn").addEventListener("click", function () {
+    if (!fresh) return;
+    var text = "방 이름: " + fresh.name + "\n방 ID: " + fresh.room_id + "\n오너 코드: " + fresh.owner_code +
+      (fresh.invite ? "\n초대 링크: " + fresh.invite : "");
+    copyText(text, "방 정보를 복사했습니다.");
+  });
+  $("copyInviteOnlyBtn").addEventListener("click", function () {
+    if (fresh && fresh.invite) copyText(fresh.invite, "초대 링크를 복사했습니다.");
+  });
+  $("enterRoomBtn").addEventListener("click", function () {
+    if (!fresh) return;
+    token = fresh.session;
+    sessionStorage.setItem("acr_session", token);
+    $("whSecret").textContent = "";
+    start();
+  });
+
   $("panel").hidden = true;
+  loadSetup();
   if (token) start();
 })();

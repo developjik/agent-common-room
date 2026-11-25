@@ -1,12 +1,14 @@
+// 런타임 공통 MCP 어댑터: 공식 SDK의 Web Standard 전송(WebStandardStreamableHTTPServerTransport)을 쓴다.
+// 이 전송은 Request/Response 기반이라 Workers·Vercel(Node 브리지)·로컬 Node가 같은 코드를 공유한다.
+// stateless 모드(sessionIdGenerator: undefined) + JSON 응답 모드, 도구 5종, 에러 계약입니다.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
-import type { IncomingMessage, ServerResponse } from "node:http";
 import { ApiError, KINDS, type Agent, type RoomService } from "./service.js";
 
-function wrap(fn: () => unknown) {
+async function wrap(fn: () => Promise<unknown>) {
   try {
-    const data = fn();
+    const data = await fn();
     return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
   } catch (e) {
     if (e instanceof ApiError) {
@@ -48,10 +50,16 @@ export function buildMcpServer(svc: RoomService, agent: Agent): McpServer {
   return server;
 }
 
-export async function handleMcp(svc: RoomService, agent: Agent, req: IncomingMessage, res: ServerResponse, body: unknown) {
+// 요청당 stateless 서버+전송을 연다(원본 Node 서버와 동일한 수명 모델).
+// 요청마다 새 서버·전송을 열고 닫는다(서버리스에서도 요청 간 상태를 남기지 않는다).
+export async function handleMcp(svc: RoomService, agent: Agent, req: Request): Promise<Response> {
   const server = buildMcpServer(svc, agent);
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-  res.on("close", () => { void transport.close(); void server.close(); });
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   await server.connect(transport);
-  await transport.handleRequest(req, res, body);
+  try {
+    return await transport.handleRequest(req);
+  } finally {
+    await transport.close();
+    await server.close();
+  }
 }

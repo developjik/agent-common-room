@@ -1,4 +1,5 @@
-// Cloudflare Workers용 암호 유틸 (WebCrypto). 로컬 Node 구현은 src/crypto.ts.
+// 런타임 공통 암호 유틸 (WebCrypto). Node 22·Workers·Vercel 어디서나 같은 전역 crypto를 쓴다.
+// 토큰은 발급 시에만 평문으로 존재하고, 저장은 항상 SHA-256 해시다.
 
 function base64url(bytes: Uint8Array): string {
   let s = "";
