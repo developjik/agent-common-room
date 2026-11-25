@@ -68,7 +68,7 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
           <button type="button" className="msg-action" onClick={() => onQuoteReply(m)} aria-label="인용 답장" title="인용 답장">
             <Icon name="reply" size={14} />
           </button>
-          {agent ? (
+          {agent && agent.status === "active" ? (
             <button type="button" className="msg-action" onClick={() => onMention(agent)} aria-label={`${agent.name} 지목`} title={`@${agent.name} 지목`}>
               <Icon name="at" size={15} />
             </button>
@@ -76,7 +76,7 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
           <button type="button" className="msg-action" onClick={() => onCopy(m)} aria-label="본문 복사" title="본문 복사">
             <Icon name="copy" size={14} />
           </button>
-          {isOwner && !m.deleted ? (
+          {!m.deleted ? (
             <button type="button" className="msg-action is-danger" onClick={() => onDelete(m)} aria-label="메시지 삭제" title="메시지 삭제">
               <Icon name="trash" size={14} />
             </button>

@@ -170,11 +170,21 @@ test("폐기와 재가입: 토큰 즉시 무효, 이전 메시지 귀속 유지,
   assert.equal((await t.call("POST", "/api/messages", b.token, msg("z", "x", { recipient: a.id }))).status, 404);
 });
 
-test("같은 이름 중복 승인은 거부", async () => {
+test("같은 이름 중복 승인은 거부되지만, 이름을 바꾸면 승인된다", async () => {
   const r = await t.setupRoom();
   await t.join(r, "alpha");
   const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "Alpha" })).json;
-  assert.equal((await t.call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess, {})).status, 409);
+  const approve = (body: Record<string, unknown>) => t.call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess, body);
+  const conflict = await approve({});
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.json.error.code, "name_taken");
+  // UI가 보내는 이름 오버라이드로 같은 요청을 다시 승인할 수 있어야 한다(막다른 길 없음).
+  const renamed = await approve({ name: "Alpha 2", history: "all" });
+  assert.equal(renamed.status, 200);
+  assert.equal(renamed.json.name, "Alpha 2");
+  const claimed = await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret });
+  assert.equal(claimed.status, 200);
+  assert.equal(claimed.json.name, "Alpha 2");
 });
 
 test("삭제는 tombstone, 재시도 멱등 유지; 보존기간은 내용을 지운다", async () => {
@@ -332,7 +342,13 @@ test("오너 로그인 시도 제한과 코드 교체 시 세션 무효화", asy
   assert.equal((await t.call("POST", "/api/owner/login", undefined, { room_id: r.roomId, owner_code: r.ownerCode })).status, 401);
   assert.equal((await t.call("POST", "/api/owner/login", undefined, { room_id: r.roomId, owner_code: rot.owner_code })).status, 200);
   for (let i = 0; i < 10; i++) await t.call("POST", "/api/owner/login", undefined, { room_id: r.roomId, owner_code: "bad" });
-  assert.equal((await t.call("POST", "/api/owner/login", undefined, { room_id: r.roomId, owner_code: rot.owner_code })).status, 429);
+  // 제한은 '틀린 코드'에만 걸린다. 10회를 넘긴 뒤의 틀린 시도는 429로 막는다.
+  assert.equal((await t.call("POST", "/api/owner/login", undefined, { room_id: r.roomId, owner_code: "bad" })).status, 429);
+  // 올바른 코드는 막히지 않는다 — 방 ID를 아는 제3자가 오너를 15분씩 잠그는 DoS를 막는다.
+  // (README: "올바른 키는 제한에 걸리지 않습니다"와 같은 동작)
+  assert.equal((await t.call("POST", "/api/owner/login", undefined, { room_id: r.roomId, owner_code: rot.owner_code })).status, 200);
+  // 성공한 로그인이 실패 카운트를 지우므로 다음 틀린 시도는 다시 401이다.
+  assert.equal((await t.call("POST", "/api/owner/login", undefined, { room_id: r.roomId, owner_code: "bad" })).status, 401);
 });
 
 test("오너 웹 UI 정적 파일은 엄격한 CSP로 제공된다", async () => {

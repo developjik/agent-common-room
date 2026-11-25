@@ -6,7 +6,8 @@ import { Icon } from "./icons.js";
 import { useToast } from "./Toast.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { copyText } from "../lib/browserClipboard.js";
-import { agentTone, durationLabel, fmtFull, inviteMessage, remainLabel, seenLabel, TONE_LABEL } from "../lib/format.js";
+import { ApiError } from "../lib/api.js";
+import { agentTone, durationLabel, fmtFull, historyFloorLabel, inviteMessage, remainLabel, seenLabel, TONE_LABEL } from "../lib/format.js";
 import type { ManageSection } from "./Sidebar.js";
 import type { RoomStore } from "../hooks/useOwnerRoom.js";
 import type { Agent, Invite, JoinRequest, Message, RoomOwner } from "../lib/types.js";
@@ -225,25 +226,38 @@ function RequestCard({ store, q }: { store: RoomStore; q: JoinRequest }) {
   const confirm = useConfirm();
   const [history, setHistory] = useState("none");
   const [scope, setScope] = useState("rw");
+  // 요청한 이름 그대로 승인하다 동명 참여자와 부딪히면(409 name_taken) 막다른 길이 된다.
+  // 승인 전에 이름을 바꿀 수 있게 두고, 충돌하면 이 입력으로 다시 승인한다.
+  const [name, setName] = useState(q.display_name);
   const [busy, setBusy] = useState(false);
 
   const approve = async () => {
+    const wanted = name.trim();
+    if (!wanted) {
+      notify("참여자 이름을 입력하세요.");
+      return;
+    }
     const ok = await confirm({
       title: "참여를 승인할까요?",
-      text: `${q.display_name} — ${requestPreview(scope, history)}\n승인 뒤 권한을 바꾸려면 폐기하고 다시 초대해야 합니다.`,
+      text: `${wanted} — ${requestPreview(scope, history)}\n승인 뒤 권한을 바꾸려면 폐기하고 다시 초대해야 합니다.`,
       ok: "승인",
     });
     if (!ok) return;
     setBusy(true);
     try {
-      const name = await store.approve(q.id, {
+      const approved = await store.approve(q.id, {
         history: history as "all" | "none",
         can_read: scope !== "wo",
         can_write: scope !== "ro",
+        name: wanted === q.display_name.trim() ? undefined : wanted,
       });
-      notify(`${name} 님을 승인했습니다. 상대가 토큰을 한 번 받아 가면 대화할 수 있습니다.`);
+      notify(`${approved} 님을 승인했습니다. 상대가 토큰을 한 번 받아 가면 대화할 수 있습니다.`);
     } catch (e) {
-      notify(e instanceof Error ? e.message : "승인하지 못했습니다.");
+      if (e instanceof ApiError && e.code === "name_taken") {
+        notify(`'${wanted}' 이름은 이미 쓰고 있습니다. 이름을 바꿔 다시 승인하세요.`);
+      } else {
+        notify(e instanceof Error ? e.message : "승인하지 못했습니다.");
+      }
     } finally {
       setBusy(false);
     }
@@ -281,6 +295,22 @@ function RequestCard({ store, q }: { store: RoomStore; q: JoinRequest }) {
         </div>
       </div>
       {q.note ? <p className="text-[12px] leading-relaxed text-muted">{q.note}</p> : null}
+      <div className="w-full">
+        <label className="label" htmlFor={`n-${q.id}`}>
+          참여자 이름
+        </label>
+        <input
+          id={`n-${q.id}`}
+          className="field text-[12.5px]"
+          value={name}
+          maxLength={40}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={q.display_name}
+        />
+        <p className="mt-1 text-[11px] leading-relaxed text-faint">
+          같은 이름의 참여자가 이미 있으면 승인할 수 없습니다. 그때는 다른 이름으로 승인하세요.
+        </p>
+      </div>
       <div className="grid w-full grid-cols-2 gap-2">
         <div>
           <label className="label" htmlFor={`h-${q.id}`}>
@@ -383,7 +413,7 @@ function AgentSection({ store, onMention }: { store: RoomStore; onMention: (a: A
                     <p className="mt-1 flex flex-wrap gap-1.5">
                       <span className={"pill " + (a.can_read ? "pill-live" : "")}>{a.can_read ? "읽기" : "읽기 없음"}</span>
                       <span className={"pill " + (a.can_write ? "pill-live" : "")}>{a.can_write ? "쓰기" : "쓰기 없음"}</span>
-                      <span className="pill">기록 #{a.history_floor_seq}부터</span>
+                      <span className="pill">{historyFloorLabel(a.history_floor_seq)}</span>
                     </p>
                   </div>
                 </div>

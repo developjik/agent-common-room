@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Avatar } from "./Avatar.js";
 import { Icon } from "./icons.js";
-import { KIND_LABEL, plainPreview, senderName } from "../lib/format.js";
+import { completeMention, mentionTokenAt } from "../lib/mention.js";
+import { activeAgent, KIND_LABEL, plainPreview, senderName } from "../lib/format.js";
 import type { Agent, Message } from "../lib/types.js";
 
 export interface SendInput {
@@ -35,6 +36,18 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
   const [sending, setSending] = useState(false);
   const [mention, setMention] = useState<{ query: string; index: number } | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  // 본문 끝에 이름을 넣은 뒤 커서를 이름 뒤로 옮긴다(React 재렌더 후에 적용).
+  const pendingCaret = useRef<number | null>(null);
+
+  useEffect(() => {
+    const at = pendingCaret.current;
+    if (at === null) return;
+    pendingCaret.current = null;
+    const el = taRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(at, at);
+  }, [text]);
 
   useEffect(() => {
     if (seed) {
@@ -71,17 +84,20 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
       return;
     }
     const caret = el.selectionStart ?? el.value.length;
-    const upto = el.value.slice(0, caret);
-    const m = /(?:^|\s)@([\p{L}\p{N}_.-]{0,30})$/u.exec(upto);
-    if (!m) {
-      setMention(null);
-      return;
-    }
-    setMention({ query: m[1], index: 0 });
+    const token = mentionTokenAt(el.value, caret);
+    setMention(token ? { query: token.query, index: 0 } : null);
   }
 
   function choose(a: Agent) {
-    // 본문의 @이름은 지우지 않는다(칩과 받는 사람이 같은 사실을 가리키게).
+    // 칩(받는 사람)만 바꾸고 본문을 `@Ins`로 두면 상대는 자기 지목으로 읽지 못한다.
+    // 입력한 검색어 구간을 고른 이름으로 완성한다.
+    const el = taRef.current;
+    const caret = el?.selectionStart ?? text.length;
+    const done = completeMention(text, caret, a.name);
+    if (done.replaced) {
+      pendingCaret.current = done.caret;
+      setText(done.text);
+    }
     onRecipient(a.id);
     setMention(null);
     taRef.current?.focus();
@@ -133,6 +149,8 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
     }
   }
 
+  const recipientAgent = activeAgent(agents, recipient);
+
   return (
     <form
       className={compact ? "composer px-3 pb-3 pt-1" : "composer border-t border-line pt-2"}
@@ -141,6 +159,18 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
         void submit();
       }}
     >
+      {!compact && recipientAgent ? (
+        <div className="composer-chip is-dm">
+          <Icon name="at" size={14} />
+          <span className="min-w-0 flex-1 truncate">
+            <strong>@{recipientAgent.name}</strong> 에게만 보냅니다 · 다른 참여자는 이 메시지를 받지 못합니다
+          </span>
+          <button type="button" className="btn-icon h-6 w-6" onClick={() => onRecipient("")} aria-label="받는 사람 해제 (방 전체로)">
+            <Icon name="close" size={14} />
+          </button>
+        </div>
+      ) : null}
+
       {replyTo ? (
         <div className="composer-chip">
           <Icon name="reply" size={14} />
@@ -205,7 +235,7 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
             <select
               id="composer-recipient"
               className="field"
-              value={recipient}
+              value={recipientAgent ? recipient : ""}
               onChange={(e) => onRecipient(e.target.value)}
             >
               <option value="">방 전체</option>

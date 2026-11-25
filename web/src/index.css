@@ -739,6 +739,12 @@ button {
   font-size: 12.5px;
   color: var(--acr-muted);
 }
+/* DM 모드 칩: 방 전체로 보낸다고 착각하지 않도록 눈에 띄게 둔다. */
+.composer-chip.is-dm {
+  border-color: var(--acr-accent);
+  background: var(--acr-accent-soft);
+  color: var(--acr-accent-text);
+}
 .mention-popup {
   position: absolute;
   left: 8px;
@@ -850,6 +856,19 @@ button {
 .sidebar-agent:hover {
   background: var(--acr-sidebar-hover);
   color: var(--acr-sidebar-ink);
+}
+/* 지금 이 참여자에게만 보내는 중(DM 모드)임을 사이드바에서도 분명히 보여준다. */
+.sidebar-agent[aria-pressed="true"] {
+  background: rgb(255 255 255 / 0.16);
+  color: var(--acr-sidebar-ink);
+  box-shadow: inset 2px 0 0 var(--acr-sidebar-ink);
+}
+.sidebar-agent[aria-pressed="true"] .block {
+  color: var(--acr-sidebar-ink);
+}
+.sidebar-agent[aria-pressed="true"] .block + .block {
+  color: var(--acr-sidebar-ink);
+  opacity: 0.85;
 }
 .sidebar-agent .name {
   flex: 1;
@@ -1046,7 +1065,8 @@ button {
 .toast-wrap {
   position: fixed;
   left: 50%;
-  bottom: 22px;
+  /* 하단 컴포저(받는 사람·종류 select)를 가리지 않도록 헤더 바로 아래에 띄운다. */
+  top: 62px;
   transform: translateX(-50%);
   z-index: 60;
   display: flex;
