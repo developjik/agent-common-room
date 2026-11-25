@@ -42,6 +42,8 @@ export interface PublicMessage {
   sender: { type: string; id: string; name: string };
   recipient: { id: string; name: string } | null;
   reply_to: number | null; content: string | null; deleted: boolean;
+  // 답장 체인 깊이(오너 메시지는 0). 화면의 '체인 N/M' 미터가 이 값을 그대로 쓴다.
+  depth: number;
   context_category: string; created_at: string;
   // 지정 수신 메시지만: 받는 에이전트의 처리 단계 (보냄→전달됨→처리 확인→답장함).
   delivery: { state: "sent" | "fetched" | "acked" | "replied" } | null;
@@ -212,7 +214,22 @@ export class RoomService {
 
   // ---------- room settings (owner) ----------
   async getRoomOwner(roomId: string) {
-    return this.roomView(await this.room(roomId));
+    const r = await this.room(roomId);
+    return { ...this.roomView(r), pause_info: await this.pauseInfo(r) };
+  }
+  /**
+   * 일시정지의 '누가·언제'를 감사 로그에서 되읽는다.
+   * 스키마를 바꾸지 않고도 이미 기록된 사실(자동 정지/오너 정지)을 화면에 그대로 보여주기 위함이다.
+   */
+  private async pauseInfo(r: Row) {
+    if (!r.paused) return null;
+    if (r.pause_reason === "rate_cap") {
+      const a = await this.db.one("SELECT ts, detail FROM audit WHERE room_id=? AND action='room.auto_pause' ORDER BY id DESC LIMIT 1", r.id);
+      const m = a ? /agent=(\S+)/.exec(String(a.detail)) : null;
+      return { reason: "rate_cap", actor: "auto", actor_id: m ? m[1] : null, at: a ? iso(Number(a.ts)) : null };
+    }
+    const a = await this.db.one("SELECT ts FROM audit WHERE room_id=? AND action='room.update' AND detail LIKE '%paused%' ORDER BY id DESC LIMIT 1", r.id);
+    return { reason: r.pause_reason ?? "owner", actor: "owner", actor_id: null, at: a ? iso(Number(a.ts)) : null };
   }
   private roomView(r: Row) {
     return {
@@ -433,6 +450,7 @@ export class RoomService {
       recipient: rec ? { id: rec.id, name: rec.name } : null,
       reply_to: m.reply_to_seq ?? null,
       content: m.deleted_at ? null : m.content, deleted: !!m.deleted_at,
+      depth: Number(m.depth ?? 0),
       context_category: m.context_category, created_at: iso(m.created_at),
       delivery: rec
         ? { state: replied ? "replied" : Number(m.seq) <= Number(rec.acked_seq) ? "acked" : Number(m.seq) <= Number(rec.fetched_seq) ? "fetched" : "sent" }
@@ -593,7 +611,12 @@ export class RoomService {
       depth = sender.type === "owner" ? 0 : parent.depth + 1;
     }
     if (sender.type === "agent") {
-      if (depth > room.max_chain_depth) throw err(429, "loop_cap", `답장 체인이 최대 깊이(${room.max_chain_depth})를 넘었습니다. 오너(사람)의 메시지가 있어야 체인이 다시 시작됩니다.`);
+      if (depth > room.max_chain_depth) {
+        // 거부된 답장은 메시지로 남지 않으므로, 오너 화면에는 '갑자기 말을 멈춘' 것으로 보인다.
+        // 차단 사실을 시스템 메시지 한 줄로 남겨 이유와 복구 방법을 대화 안에서 보이게 한다.
+        await this.noteLoopBlocked(roomId, sender, Number(room.max_chain_depth), now);
+        throw err(429, "loop_cap", `답장 체인이 최대 깊이(${room.max_chain_depth})를 넘었습니다. 오너(사람)의 메시지가 있어야 체인이 다시 시작됩니다.`);
+      }
       const since = now - room.rate_limit_window_s * 1000;
       const recent = (await this.db.one("SELECT count(*) c FROM messages WHERE room_id=? AND sender_type='agent' AND created_at>=?", roomId, since))!;
       if (recent.c >= room.rate_limit_count) {
@@ -650,6 +673,20 @@ export class RoomService {
     }
     if (recipientId) await this.enqueueDeliveries(roomId, msg);
     return { duplicate: false, message: await this.toPublic(msg) };
+  }
+
+  /** 루프 상한 차단을 시스템 메시지로 남긴다. 같은 안내가 이미 마지막 메시지면 (재시도 폭주 시) 아무것도 쓰지 않는다. */
+  private async noteLoopBlocked(roomId: string, sender: { id: string; name: string }, maxDepth: number, now: number) {
+    const last = await this.db.one("SELECT sender_type, content FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1", roomId);
+    if (last && last.sender_type === "system" && String(last.content).startsWith("답장 체인이 최대 깊이")) return;
+    await this.audit(roomId, "system", "loop.blocked", `agent=${sender.id}`);
+    const content = `답장 체인이 최대 깊이(${maxDepth})에 닿아 ${sender.name}의 답장이 보내지지 않았습니다. 오너가 메시지를 보내면 체인이 다시 시작됩니다.`;
+    const id = newId("msg");
+    await this.db.batch([
+      this.db.prep("UPDATE rooms SET next_seq=next_seq+1 WHERE id=?", roomId),
+      this.db.prep(`INSERT INTO messages(${MSG_COLS}) SELECT ?, r.next_seq - 1, ?, NULL, 'system', 'system', 'system', 'status', NULL, NULL, ?, ?, 'none', 0, CAST(? AS BIGINT) FROM rooms r WHERE r.id=? AND r.next_seq>=2`,
+        roomId, id, content, await sha256Hex(content), now, roomId),
+    ]);
   }
 
   // ---------- webhooks (오너가 등록하는 지정 수신 알림) ----------

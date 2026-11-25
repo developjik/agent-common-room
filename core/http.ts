@@ -6,7 +6,7 @@
 //  - 오너 UI 정적 파일은 엄격한 CSP(script-src 'self', frame-ancestors 'none')로만 제공한다.
 //  - 토큰·관리자 키는 헤더(Bearer)로만 받고, 저장은 해시. 응답에 평문을 다시 담지 않는다.
 //  - 관리자 키·오너 로그인은 시도 횟수를 DB에 기록해 제한한다(서버리스 여러 인스턴스에서도 공유).
-import { joinInstructions } from "./instructions.js";
+import { joinInstructions, joinPageHtml } from "./instructions.js";
 import { handleMcp } from "./mcp.js";
 import { hashToken, safeEqualHex } from "./crypto.js";
 import { ApiError, RoomService, type Agent } from "./service.js";
@@ -39,6 +39,7 @@ const UI_FILES: Record<string, [string, string]> = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/ui/app.js": ["ui/app.js", "text/javascript; charset=utf-8"],
   "/ui/style.css": ["ui/style.css", "text/css; charset=utf-8"],
+  "/ui/join.js": ["ui/join.js", "text/javascript; charset=utf-8"],
 };
 const UI_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -198,11 +199,27 @@ export async function handleFetch(
     }
 
     // ----- public: invite link (join request only) -----
+    // 브라우저(Accept: text/html)에는 방 이름·규칙·복사 버튼이 있는 안내 페이지를,
+    // 에이전트·CLI(*/*, text/plain 등)에는 기존 마크다운 안내를 그대로 내려준다(양쪽 호환).
     if ((m = /^\/join\/([^/]+)$/.exec(path)) && method === "GET") {
       const info = await svc.inviteInfo(m[1]);
       const host = /^[A-Za-z0-9.:\-\[\]]+$/.test(url.host) ? url.host : "localhost";
       const base = env.ACR_PUBLIC_URL ?? `${url.protocol}//${host}`;
-      return json(200, joinInstructions(base, m[1], info));
+      if ((req.headers.get("accept") ?? "").toLowerCase().includes("text/html")) {
+        return new Response(joinPageHtml(base, m[1], info), {
+          status: 200,
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "content-security-policy": UI_CSP,
+            "vary": "accept",
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "no-referrer",
+            "x-frame-options": "DENY",
+            "cache-control": "no-store",
+          },
+        });
+      }
+      return json(200, joinInstructions(base, m[1], info), { vary: "accept" });
     }
     if ((m = /^\/api\/join\/([^/]+)$/.exec(path)) && method === "POST") {
       return json(201, await svc.requestJoin(m[1], obj(await readJson(req))));
