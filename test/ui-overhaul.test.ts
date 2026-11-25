@@ -43,7 +43,7 @@ async function openApp(opts: { width?: number; name?: string } = {}) {
     const jr = await svc.requestJoin(invite.invite_token, { display_name: name, product });
     await svc.approveJoin(room.room_id, jr.request_id, { history: "all" });
     const c = (await svc.claim(jr.request_id, jr.claim_secret)) as any;
-    const agent: Agent = { id: c.agent_id, room_id: room.room_id, name, product, status: "active", can_read: true, can_write: true, history_floor: 0 };
+    const agent: Agent = { id: c.agent_id, room_id: room.room_id, workspace_id: c.workspace_id ?? "", name, product, status: "active", can_read: true, can_write: true, history_floor: 0 };
     return { agent, token: c.agent_token as string };
   }
   /** 화면이 스스로 하는 폴링과 같은 경로(탭이 다시 보일 때)로 새로고침한다. */

@@ -9,6 +9,9 @@
 
 export type Row = Record<string, any>;
 
+/** SQL 방언. 마이그레이션의 컬럼 존재 확인·시각 타입처럼 방언별 문장이 필요한 곳에서 쓴다. */
+export type SqlDialect = "sqlite" | "postgres";
+
 /** 실행 전 문장 핸들. 드라이버마다 실제 타입이 다르므로 불투명하게 취급한다. */
 // eslint-disable-next-line @typescript-eslint/no-empty-interface
 export interface DbStatement {}
@@ -18,6 +21,7 @@ export interface ChangeResult {
 }
 
 export interface SqlDb {
+  readonly dialect: SqlDialect;
   prep(sql: string, ...params: any[]): DbStatement;
   one(sql: string, ...params: any[]): Promise<Row | undefined>;
   all(sql: string, ...params: any[]): Promise<Row[]>;

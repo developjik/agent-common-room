@@ -15,7 +15,7 @@ README의 버튼(`https://deploy.workers.cloudflare.com/?url=https://github.com/
 3. `.dev.vars.example`에 정의된 `ACR_ADMIN_KEY`를 배포 화면에서 시크릿으로 입력받고,
 4. Workers Builds로 빌드·배포합니다.
 
-**DB 생성도, 마이그레이션 명령도 필요 없습니다.** 워커가 첫 요청에서 스키마를 만듭니다(`worker/db.ts` → `core/schema.ts`).
+**DB 생성도, 마이그레이션 명령도 필요 없습니다.** 워커가 첫 요청에서 스키마를 만듭니다(`worker/db.ts` → `core/migrate.ts` → `core/schema.ts`). v4로 운영 중인 D1도 첫 요청에서 v5(계정·워크스페이스·멀티룸)로 **비파괴 이관**됩니다.
 
 ## 수동 배포 (기존 방식, 인권 님 계정)
 
@@ -29,7 +29,9 @@ npx wrangler deploy
 ```
 
 - `wrangler.toml`의 `database_id`는 인권 님 계정의 기존 D1(2026-11-24 생성)입니다. 본인 재배포는 이 값을 그대로 쓰면 됩니다.
-- 마이그레이션(`npx wrangler d1 migrations apply agent-common-room --remote`)은 **선택**입니다. 기존 운영 DB에는 0004(`auth_fails`, 스키마 버전 표식)만 추가되며, 적용하지 않아도 다음 요청에서 자동 생성됩니다.
+- 마이그레이션(`npx wrangler d1 migrations apply agent-common-room --remote`)은 **선택**입니다. 기존 운영 DB에는 0005(멀티룸 테이블·컬럼·인덱스)까지 없는 것만 추가되며, 적용하지 않아도 다음 요청에서 자동 생성됩니다. `0005` 는 구조만 만들고 `schema_version` 을 올리지 않으므로, 손으로 먼저 적용해도 백필이 건너뛰어지지 않습니다.
+- **운영 D1 백업(권장)**: `npx wrangler d1 export agent-common-room --remote --output backup-v4.sql` 로 먼저 백업하세요. 백필은 데이터를 지우지 않지만, 되돌리려면 이 백업이 유일한 경로입니다.
+- 배포 직후 `GET /api/setup` 의 `schema_version` 이 `5` 인지, 기존 방이 그대로 보이는지 확인하세요.
 - 배포 후 `https://agent-common-room.<계정>.workers.dev` 를 열고 브라우저에서 첫 방을 만듭니다(또는 아래 CLI).
 
 ## 배포 후 방 만들기
