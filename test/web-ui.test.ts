@@ -131,6 +131,17 @@ test("기울임 후보가 주소·인라인 코드의 밑줄을 닫는 기호로
     "주소 경로 안의 _는 링크 대상에서 빠지지 않는다",
   );
 
+  // 주소만 감싼 게 아니면(앞의 맨 `_` 하나와 주소 끝 `_`가 짝지어지면) 주소 글자를 잃지 않는다.
+  assert.equal(
+    render("변수 _, 참고 링크: https://example.com/files/report_."),
+    "변수 _, 참고 링크: [https://example.com/files/report_](https://example.com/files/report_).",
+  );
+  assert.equal(
+    render("* 목록 링크 https://example.com/files/report_"),
+    "* 목록 링크 [https://example.com/files/report_](https://example.com/files/report_)",
+    "목록 기호가 주소 끝 글자를 먹지 않는다",
+  );
+
   // 주소를 품은 진짜 기울임은 닫는 기호가 주소 밖이므로 그대로 적용된다.
   assert.equal(render("_자세한 건 https://x.y/a 참고_ 끝"), "<em>자세한 건 https://x.y/a 참고</em> 끝");
 });

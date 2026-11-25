@@ -34,8 +34,7 @@ const PROTECTED = /`[^`\n]+`|https?:\/\/[^\s<>"']+/g;
 
 /**
  * 코드·주소로 해석될 구간들. 이 안쪽의 기호로는 기울임을 열거나 닫지 않는다.
- * 주소 끝의 `_`·`*`는 기울임의 닫는 기호일 수 있으므로(`_https://x.y/z_`) 여기서는
- * 링크로 넘어갈 몸통까지만 잡고, 끝 문장부호와 끝의 `_`·`*`는 안쪽으로 보지 않는다.
+ * 주소는 링크로 넘어갈 몸통(끝 문장부호 제외)이며, 끝의 `_`·`*`도 주소의 일부다.
  */
 function protectedSpans(line: string): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
@@ -43,21 +42,19 @@ function protectedSpans(line: string): Array<[number, number]> {
   let m: RegExpExecArray | null;
   while ((m = PROTECTED.exec(line))) {
     const raw = m[0];
-    const length = raw.startsWith("`") ? raw.length : urlBodyLength(raw);
+    const length = raw.startsWith("`") ? raw.length : trimUrlTail(raw).url.length;
     spans.push([m.index, m.index + length]);
   }
   return spans;
 }
 
-/** 주소 몸통의 길이. 끝 문장부호와, 기울임 닫는 기호일 수 있는 맨 끝의 `_`·`*`는 뺀다. */
-function urlBodyLength(raw: string): number {
-  const body = trimUrlTail(raw).url;
-  const last = body[body.length - 1];
-  return last === "_" || last === "*" ? body.length - 1 : body.length;
-}
-
-function insideProtected(spans: Array<[number, number]>, position: number): boolean {
-  return spans.some(([start, end]) => start < position && position < end);
+/**
+ * 닫는 기호가 코드·주소 안쪽에 있으면 그 글자가 사라져 링크·코드가 깨진다.
+ * 다만 여는 기호가 주소 바로 앞에 붙어 주소를 통째로 감싼 경우(`_https://x.y/z_`)에는
+ * 주소 끝의 `_`·`*`를 닫는 기호로 본다(링크로 넘기면 엉뚱한 주소가 열린다).
+ */
+function closesOutsideProtected(spans: Array<[number, number]>, open: number, close: number): boolean {
+  return !spans.some(([start, end]) => start < close && close < end && !(open + 1 === start && close === end - 1));
 }
 
 /**
@@ -87,7 +84,7 @@ export function tokenizeLine(line: string, agents: Agent[]): Part[] {
     else if (token.startsWith("*") || token.startsWith("_")) {
       const bounded = emphasisBounded(line, m.index, token);
       // 닫는 기호가 코드·주소 안에 있으면 그 글자가 사라져 링크·코드가 깨진다.
-      const closesOutside = !insideProtected(protected_, m.index + token.length - 1);
+      const closesOutside = closesOutsideProtected(protected_, m.index, m.index + token.length - 1);
       if (bounded && closesOutside) {
         parts.push({ type: "italic", text: token.slice(1, -1) });
         last = m.index + token.length;
