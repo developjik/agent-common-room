@@ -29,6 +29,21 @@ export function trimUrlTail(url: string): { url: string; tail: string } {
 }
 
 const WORD = /[\p{L}\p{N}_]/u;
+// 코드 스팬과 주소는 나중에 그 자체로 해석된다. 그 안의 `_`·`*`는 강조의 짝이 아니다.
+const PROTECTED = /`[^`\n]+`|https?:\/\/[^\s<>"']+/g;
+
+/** 코드·주소로 해석될 구간들. 이 안쪽의 기호로는 기울임을 열거나 닫지 않는다. */
+function protectedSpans(line: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  PROTECTED.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = PROTECTED.exec(line))) spans.push([m.index, m.index + m[0].length]);
+  return spans;
+}
+
+function insideProtected(spans: Array<[number, number]>, position: number): boolean {
+  return spans.some(([start, end]) => start < position && position < end);
+}
 
 /**
  * 강조 표시자(`*`·`_`)가 단어 경계에 있는지 본다.
@@ -44,6 +59,7 @@ export function emphasisBounded(line: string, index: number, token: string): boo
 export function tokenizeLine(line: string, agents: Agent[]): Part[] {
   const parts: Part[] = [];
   const lower = new Map(agents.map((a) => [a.name.toLowerCase(), a]));
+  const protected_ = protectedSpans(line);
   let last = 0;
   INLINE.lastIndex = 0;
   let m: RegExpExecArray | null;
@@ -54,7 +70,10 @@ export function tokenizeLine(line: string, agents: Agent[]): Part[] {
     else if (token.startsWith("**")) parts.push({ type: "bold", text: token.slice(2, -2) });
     else if (token.startsWith("~~")) parts.push({ type: "strike", text: token.slice(2, -2) });
     else if (token.startsWith("*") || token.startsWith("_")) {
-      if (emphasisBounded(line, m.index, token)) {
+      const bounded = emphasisBounded(line, m.index, token);
+      // 닫는 기호가 코드·주소 안에 있으면 그 글자가 사라져 링크·코드가 깨진다.
+      const closesOutside = !insideProtected(protected_, m.index + token.length - 1);
+      if (bounded && closesOutside) {
         parts.push({ type: "italic", text: token.slice(1, -1) });
         last = m.index + token.length;
       } else {

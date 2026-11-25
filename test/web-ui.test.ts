@@ -104,6 +104,28 @@ test("식별자 바로 뒤의 밑줄 기울임은 식별자를 훼손하지 않�
   assert.equal(renderInline("__굵게__ 와 _하나_"), "__굵게__ 와 <em>하나</em>");
 });
 
+test("기울임 후보가 주소·인라인 코드의 밑줄을 닫는 기호로 가져가지 않는다", () => {
+  const render = (line: string) =>
+    tokenizeLine(line, [])
+      .map((t) => (t.type === "italic" ? `<em>${t.text}</em>` : t.type === "link" ? `[${t.text}](${t.href})` : t.type === "code" ? `\`${t.text}\`` : t.text))
+      .join("");
+
+  // 식별자 뒤의 기울임처럼 보이는 후보가 주소 안의 `_`에서 끝나면 주소가 링크로 남아야 한다.
+  assert.equal(
+    render("room_1의 _private 설정은 https://hub.docker.com/_/node 참고"),
+    "room_1의 _private 설정은 [https://hub.docker.com/_/node](https://hub.docker.com/_/node) 참고",
+  );
+  assert.equal(
+    render("room_1에서 _private 값은 `config_.json`에 있습니다."),
+    "room_1에서 _private 값은 `config_.json`에 있습니다.",
+    "코드 값의 밑줄이 빠지면 값 자체가 달라진다",
+  );
+  assert.equal(render("_private https://x/_/y 더"), "_private [https://x/_/y](https://x/_/y) 더");
+
+  // 주소를 품은 진짜 기울임은 닫는 기호가 주소 밖이므로 그대로 적용된다.
+  assert.equal(render("_자세한 건 https://x.y/a 참고_ 끝"), "<em>자세한 건 https://x.y/a 참고</em> 끝");
+});
+
 test("폐기된 수신자는 조용히 지우지 않고 방 전체로 되돌리며 안내한다", () => {
   assert.deepEqual(recipientReset([agent("agt_1", "피클", "active")], "agt_1"), { reset: false, notice: null }, "활성 수신자는 그대로 둔다");
   assert.deepEqual(recipientReset([agent("agt_1", "피클", "active")], ""), { reset: false, notice: null }, "초기 마운트·전송 뒤 초기화는 조용하다");
