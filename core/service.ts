@@ -20,7 +20,7 @@
 //  - 레거시(방 1개 = 워크스페이스 1개)는 그 방이 곧 로비다. 기존 /api/owner/*·/api/inbox 경로는
 //    구성원이 정확히 1개일 때 그 방으로 해석되어, 구 클라이언트가 코드 변경 없이 동작한다.
 import { hashToken, hmacSha256Hex, newId, newPassword, newSaltHex, newToken, passwordHash, safeEqualHex, sha256Hex, PBKDF2_ITERATIONS } from "./crypto.js";
-import { batchChanges, isConstraintError, type SqlDb, type Row } from "./db.js";
+import { batchChanges, isConstraintError, type DbStatement, type SqlDb, type Row } from "./db.js";
 import { SCHEMA_VERSION } from "./schema.js";
 
 export class ApiError extends Error {
@@ -47,6 +47,8 @@ export const PASSWORD_MIN = 12;
 const PASSWORD_MAX = 200;
 const LOGIN_ID_RE = /^[\p{L}\p{N}][\p{L}\p{N}._-]{2,39}$/u;
 const MAX_ROOMS_PER_WORKSPACE = 50;
+/** MCP 집계 inbox가 한 번에 도는 방 수 상한(방당 4 바인드 + D1 100 상한·쿼리 예산). */
+const AGGREGATE_ROOMS = 15;
 const MAX_PENDING_JOIN_REQUESTS = 50;
 
 export interface Clock { now(): number }
@@ -212,6 +214,8 @@ export class RoomService {
       this.db.prep("UPDATE rooms SET owner_code_hash=? WHERE id=?", hash, roomId),
       this.db.prep("UPDATE workspaces SET legacy_owner_code_hash=? WHERE lobby_room_id=?", hash, roomId),
       this.db.prep("DELETE FROM sessions WHERE room_id=?", roomId),
+      // 예전 코드로 발급된 승격 티켓도 함께 무효화한다(코드 교체 = 접근 회수).
+      this.db.prep("DELETE FROM upgrade_tickets WHERE workspace_id=(SELECT id FROM workspaces WHERE lobby_room_id=?)", roomId),
     ]);
     await this.audit(roomId, "admin", "owner_code.rotate");
     return { room_id: roomId, owner_code: code };
@@ -440,6 +444,11 @@ export class RoomService {
   async legacyOwnerLogin(roomId: string, ownerCode: string) {
     const room = await this.verifyRoomOwnerCode(roomId, ownerCode);
     const ws = await this.workspaceOfRoom(roomId);
+    // 레거시 경로는 "그 방 = 워크스페이스"인 v1 로비에서만 열린다. 워크스페이스 안에 나중에 만든
+    // 일반 방의 복구 코드를 알아낸 사람이 오너 계정 세션을 받아 다른 방을 읽는 것을 막는다.
+    if (String(room.kind ?? "room") !== "lobby" || String(ws.legacy_room_id ?? "") !== String(room.id)) {
+      throw err(403, "legacy_scope", "레거시 로그인은 워크스페이스의 로비(기존 방) 코드로만 가능합니다. 오너 계정으로 로그인하세요.");
+    }
     if (ws.owner_id) {
       const session = await this.createOwnerSession(String(ws.owner_id), "legacy");
       return { upgraded: true, room_id: roomId, workspace: this.workspaceView(ws), owner: await this.ownerView(String(ws.owner_id)), ...session };
@@ -511,8 +520,14 @@ export class RoomService {
   async assertOwnerWorkspace(scope: OwnerScope, workspaceId: string): Promise<Row> {
     const ws = await this.workspace(workspaceId);
     if (scope.legacyRoomId) {
+      // 레거시 방 세션은 "그 방 하나짜리 워크스페이스"에서만 유효하다. 방 코드만 가진 사람이
+      // 같은 워크스페이스의 다른 방 활동을 읽거나 비서를 폐기하지 못하게 한다.
       const room = await this.room(scope.legacyRoomId);
       if (String(room.workspace_id ?? "") !== ws.id) throw err(403, "forbidden", "이 워크스페이스에 접근할 수 없습니다.");
+      const others = await this.db.one("SELECT count(*) c FROM rooms WHERE workspace_id=? AND id<>?", ws.id, room.id);
+      if (Number(others?.c ?? 0) > 0) {
+        throw err(403, "legacy_scope", "방 전용 세션은 여러 방이 있는 워크스페이스의 API를 쓸 수 없습니다. 오너 계정으로 로그인하세요.");
+      }
       return ws;
     }
     if (!scope.ownerId || String(ws.owner_id ?? "") !== scope.ownerId) throw err(403, "forbidden", "이 워크스페이스에 접근할 수 없습니다.");
@@ -739,44 +754,54 @@ export class RoomService {
     const ids = Array.isArray(raw) ? raw.map(String) : raw ? [String(raw)] : [];
     if (!ids.length) throw err(400, "bad_room", "room_id 또는 room_ids 가 필요합니다.");
     if (isNonEmptyString(input.history) && input.history !== "all" && input.history !== "none") throw err(400, "bad_history", "history는 'all' 또는 'none'이어야 합니다.");
+    // 방을 모두 검증한 뒤 한 번에 반영한다(중간 방이 잘못돼도 앞 방만 배치되는 일이 없다).
     const placed: string[] = [];
+    const stmts: DbStatement[] = [];
     for (const rid of ids) {
       const room = await this.db.one("SELECT * FROM rooms WHERE id=?", rid);
       if (!room || String(room.workspace_id ?? "") !== String(ws.id)) throw err(404, "room_not_found", `방을 찾을 수 없습니다: ${rid}`);
       const floor = input.history === "all" ? 0 : Number(room.next_seq) - 1;
-      await this.upsertMembership(String(room.id), String(agent.id), {
+      stmts.push(...await this.membershipStatements(String(room.id), String(agent.id), {
         status: agent.status === "active" ? "active" : "invited",
         can_read: input.can_read !== false,
         can_write: input.can_write !== false,
         history_floor: floor,
-      });
+      }));
       placed.push(String(room.id));
     }
+    if (stmts.length) await this.db.batch(stmts);
     await this.audit(placed[0] ?? String(ws.lobby_room_id ?? ""), `owner:${scope.ownerId ?? "legacy"}`, "member.place", `agent=${agentId} rooms=${placed.join(",")}`);
     return { agent_id: agentId, rooms: placed };
   }
-  private async upsertMembership(roomId: string, agentId: string, opts: { status: string; can_read: boolean; can_write: boolean; history_floor: number }) {
+  /**
+   * 구성원 자격을 만든다/갱신한다. 승인·배치는 "여러 방 + 상태 저장"을 한 트랜잭션에 넣어야 하므로
+   * 문장 배열로 돌려주고, 단독 호출은 얇은 래퍼(upsertMembership)가 batch로 실행한다.
+   */
+  private async membershipStatements(roomId: string, agentId: string, opts: { status: string; can_read: boolean; can_write: boolean; history_floor: number }): Promise<DbStatement[]> {
     const now = this.clock.now();
     const existing = await this.db.one("SELECT * FROM room_members WHERE room_id=? AND agent_id=?", roomId, agentId);
     if (existing) {
       if (existing.status === "removed") {
         // 다시 배치하면 그때의 정책으로 새로 시작한다(읽던 위치를 되살리지 않는다).
-        await this.db.run(
-          "UPDATE room_members SET status=?, can_read=?, can_write=?, history_floor=?, fetched_seq=0, acked_seq=0, removed_at=NULL, joined_at=? WHERE room_id=? AND agent_id=?",
-          opts.status, opts.can_read ? 1 : 0, opts.can_write ? 1 : 0, opts.history_floor, now, roomId, agentId);
-        // 대표 방이면 v4 롤백 미러도 같이 맞춘다(불변식: 대표 방 멤버십 커서 = agents 커서).
-        await this.db.run("UPDATE agents SET fetched_seq=0, acked_seq=0 WHERE id=? AND room_id=?", agentId, roomId);
-        return;
+        return [
+          this.db.prep(
+            "UPDATE room_members SET status=?, can_read=?, can_write=?, history_floor=?, fetched_seq=0, acked_seq=0, removed_at=NULL, joined_at=? WHERE room_id=? AND agent_id=?",
+            opts.status, opts.can_read ? 1 : 0, opts.can_write ? 1 : 0, opts.history_floor, now, roomId, agentId),
+          // 대표 방이면 v4 롤백 미러도 같이 맞춘다(불변식: 대표 방 멤버십 커서 = agents 커서).
+          this.db.prep("UPDATE agents SET fetched_seq=0, acked_seq=0 WHERE id=? AND room_id=?", agentId, roomId),
+        ];
       }
       // 이미 활성인 구성원을 다시 배치해도 권한만 갱신하고 커서·하한은 보존한다.
       const status = opts.status === "active" ? "active" : existing.status;
-      await this.db.run("UPDATE room_members SET status=?, can_read=?, can_write=? WHERE room_id=? AND agent_id=?",
-        status, opts.can_read ? 1 : 0, opts.can_write ? 1 : 0, roomId, agentId);
-      return;
+      return [this.db.prep("UPDATE room_members SET status=?, can_read=?, can_write=? WHERE room_id=? AND agent_id=?",
+        status, opts.can_read ? 1 : 0, opts.can_write ? 1 : 0, roomId, agentId)];
     }
-    await this.db.run(
+    return [this.db.prep(
       "INSERT INTO room_members(room_id,agent_id,status,can_read,can_write,history_floor,fetched_seq,acked_seq,invited_at,joined_at) VALUES (?,?,?,?,?,?,0,0,?,?)",
-      roomId, agentId, opts.status, opts.can_read ? 1 : 0, opts.can_write ? 1 : 0, opts.history_floor, now, opts.status === "active" ? now : null);
+      roomId, agentId, opts.status, opts.can_read ? 1 : 0, opts.can_write ? 1 : 0, opts.history_floor, now, opts.status === "active" ? now : null)];
+  }
+  private async upsertMembership(roomId: string, agentId: string, opts: { status: string; can_read: boolean; can_write: boolean; history_floor: number }) {
+    await this.db.batch(await this.membershipStatements(roomId, agentId, opts));
   }
   async updateMembership(scope: OwnerScope, roomId: string, agentId: string, patch: Row) {
     await this.assertOwnerRoom(scope, roomId);
@@ -1044,10 +1069,13 @@ export class RoomService {
     if (jr.existing_agent) {
       const agent = await this.db.one("SELECT * FROM agents WHERE id=?", jr.agent_id);
       if (!agent || agent.status !== "active") throw err(409, "agent_unavailable", "이 비서는 더 이상 사용할 수 없는 상태입니다.");
-      const decided = await this.db.run("UPDATE join_requests SET status='approved', agent_id=?, decided_at=? WHERE id=? AND status='pending'", agent.id, now, jr.id);
-      if (decided.changes !== 1) throw err(409, "not_pending", "이미 처리된 참여 요청입니다.");
       const floor = history === "all" ? 0 : Number(room.next_seq) - 1;
-      await this.upsertMembership(String(room.id), String(agent.id), { status: "active", can_read: opts.can_read !== false, can_write: opts.can_write !== false, history_floor: floor });
+      // 멤버십 추가와 승인 상태 저장을 한 batch(=트랜잭션)로 묶는다. 다른 요청이 먼저 승인했다면
+      // 상태 UPDATE가 0행이라 batch 전체가 롤백되고, 구성원만 남는 반쪽 상태가 생기지 않는다.
+      const stmts = await this.membershipStatements(String(room.id), String(agent.id), { status: "active", can_read: opts.can_read !== false, can_write: opts.can_write !== false, history_floor: floor });
+      stmts.push(this.db.prep("UPDATE join_requests SET status='approved', agent_id=?, decided_at=? WHERE id=? AND status='pending'", agent.id, now, jr.id));
+      const decided = await this.db.batch(stmts);
+      if (batchChanges(decided[decided.length - 1]) !== 1) throw err(409, "not_pending", "이미 처리된 참여 요청입니다.");
       await this.audit(String(room.id), "owner", "join.approve", `${jr.id} existing=${agent.id} history=${history}`);
       return { agent_id: agent.id, name: agent.name, history, history_floor_seq: floor, existing_agent: true, room_id: room.id };
     }
@@ -1060,6 +1088,16 @@ export class RoomService {
     if (await this.db.one("SELECT 1 x FROM agents WHERE workspace_id=? AND name_key=? AND status IN ('unclaimed','active')", ws.id, name.toLowerCase())) {
       throw err(409, "name_taken", "같은 이름의 참여자가 이미 있습니다. name으로 다른 이름을 지정하세요.");
     }
+    // 방 목록을 "쓰기 전에" 모두 검증한다. 잘못된 방 ID 하나 때문에 신원만 생기거나 앞선 배정만 남는 일을 막는다.
+    const targets = new Set<string>([lobbyId, String(room.id), ...(Array.isArray(opts.room_ids) ? opts.room_ids.map(String) : [])]);
+    const roomRows = new Map<string, Row>([[lobbyId, lobby]]);
+    for (const rid of targets) {
+      if (rid === lobbyId) continue;
+      const target = await this.db.one("SELECT * FROM rooms WHERE id=?", rid);
+      if (!target) throw err(404, "room_not_found", `방을 찾을 수 없습니다: ${rid}`);
+      if (String(target.workspace_id ?? "") !== String(ws.id)) throw err(403, "forbidden", "다른 워크스페이스의 방에는 배치할 수 없습니다.");
+      roomRows.set(rid, target);
+    }
     const agentId = newId("agt");
     const lobbyFloor = history === "all" ? 0 : Number(lobby.next_seq) - 1;
     try {
@@ -1070,22 +1108,23 @@ export class RoomService {
       if (isConstraintError(e)) throw err(409, "name_taken", "같은 이름의 참여자가 이미 있습니다. name으로 다른 이름을 지정하세요.");
       throw e;
     }
-    const decided = await this.db.run("UPDATE join_requests SET status='approved', agent_id=?, decided_at=? WHERE id=? AND status='pending'", agentId, now, jr.id);
-    if (decided.changes !== 1) {
-      await this.db.run("DELETE FROM agents WHERE id=?", agentId);
-      throw err(409, "not_pending", "이미 처리된 참여 요청입니다.");
-    }
-    const targets = new Set<string>([lobbyId, String(room.id), ...(Array.isArray(opts.room_ids) ? opts.room_ids.map(String) : [])]);
     const floors: Record<string, number> = {};
+    const stmts: DbStatement[] = [];
     for (const rid of targets) {
-      const target = rid === lobbyId ? lobby : await this.room(rid);
-      if (String(target.workspace_id ?? "") !== String(ws.id)) continue;
+      const target = rid === lobbyId ? lobby : roomRows.get(rid)!;
       const floor = history === "all" ? 0 : Number(target.next_seq) - 1;
-      await this.upsertMembership(rid, agentId, { status: "invited", can_read: opts.can_read !== false, can_write: opts.can_write !== false, history_floor: floor });
+      stmts.push(...await this.membershipStatements(rid, agentId, { status: "invited", can_read: opts.can_read !== false, can_write: opts.can_write !== false, history_floor: floor }));
       floors[rid] = floor;
     }
     // 로비 멤버십의 커서는 v4 에이전트 행과 같아야 한다(롤백 미러 불변식).
-    await this.db.run("UPDATE agents SET history_floor=? WHERE id=?", floors[lobbyId] ?? lobbyFloor, agentId);
+    stmts.push(this.db.prep("UPDATE agents SET history_floor=? WHERE id=?", floors[lobbyId] ?? lobbyFloor, agentId));
+    stmts.push(this.db.prep("UPDATE join_requests SET status='approved', agent_id=?, decided_at=? WHERE id=? AND status='pending'", agentId, now, jr.id));
+    const decided = await this.db.batch(stmts);
+    if (batchChanges(decided[decided.length - 1]) !== 1) {
+      // 승인 상태 저장이 경합에서 졌다 → batch가 롤백됐다. 새로 만든 신원만 지운다.
+      await this.db.run("DELETE FROM agents WHERE id=?", agentId);
+      throw err(409, "not_pending", "이미 처리된 참여 요청입니다.");
+    }
     await this.audit(String(room.id), "owner", "join.approve", `${jr.id} history=${history} rooms=${[...targets].join(",")}`);
     return { agent_id: agentId, name, history, history_floor_seq: floors[String(room.id)] ?? lobbyFloor, room_id: room.id, rooms: [...targets], lobby_room_id: lobbyId };
   }
@@ -1167,7 +1206,7 @@ export class RoomService {
     const rows = await this.membershipsOf(agentId);
     return rows.map(m => ({
       id: m.room_id, name: m.room_name, kind: m.room_kind ?? "room", paused: !!m.paused,
-      unread: Math.max(0, Number(m.next_seq) - 1 - Number(m.acked_seq)),
+      unread: Math.max(0, Number(m.next_seq) - 1 - Math.max(Number(m.acked_seq), Number(m.history_floor))),
       you: {
         status: m.status, can_read: !!m.can_read, can_write: !!m.can_write,
         history_floor_seq: m.history_floor, fetched_seq: m.fetched_seq, acked_seq: m.acked_seq,
@@ -1219,11 +1258,13 @@ export class RoomService {
     if (!m.can_write) throw err(403, "no_write_scope", "이 방에 쓰기 권한이 없습니다.");
   }
   async listAgents(roomId: string) {
+    // v1 관리 화면(웹 콘솔·CLI)은 폐기된 참여자도 목록에 남겨 상태를 보여줬다. removed 구성원이라도
+    // 에이전트 자체가 폐기(revoked)된 행은 계속 보여 주고, 이 방에서만 제거된 활성 비서는 뺀다.
     const rows = await this.db.all(
       `SELECT a.*, m.status AS member_status, m.can_read AS m_can_read, m.can_write AS m_can_write,
               m.history_floor AS m_floor, m.fetched_seq AS m_fetched, m.acked_seq AS m_acked
          FROM room_members m JOIN agents a ON a.id=m.agent_id
-        WHERE m.room_id=? AND m.status<>'removed' ORDER BY m.invited_at, a.created_at`, roomId);
+        WHERE m.room_id=? AND (m.status<>'removed' OR a.status='revoked') ORDER BY m.invited_at, a.created_at`, roomId);
     return rows.map(a => ({
       id: a.id, name: a.name, product_self_declared: a.product, status: a.status,
       can_read: !!a.m_can_read, can_write: !!a.m_can_write,
@@ -1404,6 +1445,56 @@ export class RoomService {
       acked_seq: st.acked_seq,
       notice: UNTRUSTED_NOTICE,
     };
+  }
+  /**
+   * 여러 방의 inbox를 "한 번에" 읽는다(MCP read_inbox 의 방 생략 경로).
+   * 방마다 inbox()를 부르면 방당 5~6쿼리라 D1 무료 플랜의 호출당 50쿼리를 금방 넘는다.
+   * 여기서는 구성원 1 + 메시지 1(방별 OR 조건) + 공개 변환 1~2 + 커서 batch 1 = 약 5쿼리로 끝낸다.
+   * 한 번에 최대 AGGREGATE_ROOMS 개 방만 돌려주고 나머지는 omitted_rooms 로 알린다(바인드 상한 100 보호).
+   */
+  async inboxMany(agent: Agent, limit?: unknown) {
+    const lim = this.clampLimit(limit);
+    const all = await this.membershipsOf(agent.id);
+    const members = all.filter(m => !!m.can_read);
+    if (!members.length) throw err(403, "no_read_scope", "읽을 수 있는 방이 없습니다.");
+    const slice = members.slice(0, AGGREGATE_ROOMS);
+    const conds: string[] = [];
+    const params: any[] = [];
+    const meta = slice.map((m) => {
+      const rid = String(m.room_id);
+      const floor = Math.max(Number(m.acked_seq), Number(m.history_floor), 0);
+      conds.push("(room_id=? AND seq>? AND (recipient_id IS NULL OR recipient_id=? OR sender_id=?))");
+      params.push(rid, floor, agent.id, agent.id);
+      return { rid, name: String(m.room_name), prevFetched: Number(m.fetched_seq), acked: Number(m.acked_seq) };
+    });
+    params.push(agent.id);
+    const rows = await this.db.all(
+      `SELECT * FROM messages WHERE (${conds.join(" OR ")}) AND sender_id<>? ORDER BY room_id, seq`, ...params);
+    const byRoom = new Map<string, Row[]>();
+    for (const r of rows) {
+      const list = byRoom.get(String(r.room_id)) ?? [];
+      if (list.length <= lim) list.push(r); // 방별 lim+1 까지(has_more 판정용)
+      byRoom.set(String(r.room_id), list);
+    }
+    const pubs = await this.toPublicMany([...byRoom.values()].flat());
+    const out: any[] = [];
+    const cursorStmts: DbStatement[] = [];
+    let idx = 0;
+    for (const m of meta) {
+      const list = byRoom.get(m.rid) ?? [];
+      const n = Math.min(list.length, lim);
+      const messages = pubs.slice(idx, idx + n).map((p, i) => ({ ...p, room_id: m.rid, redelivered: Number(list[i].seq) <= m.prevFetched }));
+      idx += list.length;
+      const last = n ? Number(list[n - 1].seq) : 0;
+      if (last > m.prevFetched) {
+        // 단조 증가 가드. 대표 방이면 agents.* 도 함께(롤백 미러).
+        cursorStmts.push(this.db.prep("UPDATE room_members SET fetched_seq=? WHERE room_id=? AND agent_id=? AND fetched_seq<?", last, m.rid, agent.id, last));
+        if (m.rid === agent.room_id) cursorStmts.push(this.db.prep("UPDATE agents SET fetched_seq=? WHERE id=? AND fetched_seq<?", last, agent.id, last));
+      }
+      out.push({ room_id: m.rid, room_name: m.name, messages, fetched_seq: Math.max(m.prevFetched, last), acked_seq: m.acked, has_more: list.length > lim });
+    }
+    if (cursorStmts.length) await this.db.batch(cursorStmts);
+    return { rooms: out, omitted_rooms: members.length - slice.length, notice: UNTRUSTED_NOTICE };
   }
   /** 멤버십 커서를 전진시킨다. 대표 방(agents.room_id)이면 agents.* 도 함께(롤백 미러). */
   private async setMemberCursor(agent: Agent, roomId: string, field: "fetched_seq" | "acked_seq", value: number) {

@@ -29,7 +29,9 @@ npx wrangler deploy
 ```
 
 - `wrangler.toml`의 `database_id`는 인권 님 계정의 기존 D1(2026-11-24 생성)입니다. 본인 재배포는 이 값을 그대로 쓰면 됩니다.
-- 마이그레이션(`npx wrangler d1 migrations apply agent-common-room --remote`)은 **선택**입니다. 기존 운영 DB에는 0005(멀티룸 테이블·컬럼·인덱스)까지 없는 것만 추가되며, 적용하지 않아도 다음 요청에서 자동 생성됩니다. `0005` 는 구조만 만들고 `schema_version` 을 올리지 않으므로, 손으로 먼저 적용해도 백필이 건너뛰어지지 않습니다.
+- 마이그레이션(`npx wrangler d1 migrations apply agent-common-room --remote`)은 **선택**입니다. 적용하지 않아도 다음 요청에서 스키마가 자동으로 준비됩니다.
+- **둘 중 하나만** 고르세요. 워커가 먼저 첫 요청으로 v5까지 올린 DB(`GET /api/setup` → `schema_version: 5`)에 0005를 손으로 적용하면 `duplicate column name` 으로 실패합니다(SQLite에 `ADD COLUMN IF NOT EXISTS` 가 없습니다). 이미 자동 이관이 끝났다면 마이그레이션 명령을 실행하지 마세요.
+- 손으로 먼저 적용하려면 배포 **전에** `0005_multi_room.sql` 까지 적용해 두세요. `0005` 는 구조만 만들고 `schema_version` 을 올리지 않으므로, 이후 첫 요청이 백필·불변식 검증을 그대로 수행합니다.
 - **운영 D1 백업(권장)**: `npx wrangler d1 export agent-common-room --remote --output backup-v4.sql` 로 먼저 백업하세요. 백필은 데이터를 지우지 않지만, 되돌리려면 이 백업이 유일한 경로입니다.
 - 배포 직후 `GET /api/setup` 의 `schema_version` 이 `5` 인지, 기존 방이 그대로 보이는지 확인하세요.
 - 배포 후 `https://agent-common-room.<계정>.workers.dev` 를 열고 브라우저에서 첫 방을 만듭니다(또는 아래 CLI).

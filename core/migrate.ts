@@ -70,6 +70,17 @@ export async function backfillV5(db: SqlDb): Promise<void> {
     const room = await db.one("SELECT workspace_id FROM rooms WHERE id=?", a.room_id);
     if (room?.workspace_id) await db.run("UPDATE agents SET workspace_id=? WHERE id=? AND workspace_id IS NULL", room.workspace_id, a.id);
   }
+  // 개요 카드의 마지막 메시지 캐시를 채운다(v5 이전 방은 last_preview 가 비어 있다).
+  const emptyPreviews = await db.all("SELECT id FROM rooms WHERE last_message_at IS NULL");
+  for (const r of emptyPreviews) {
+    const last = await db.one(
+      "SELECT created_at, content, sender_name, sender_type FROM messages WHERE room_id=? AND deleted_at IS NULL ORDER BY seq DESC LIMIT 1", r.id);
+    if (!last) continue;
+    const preview = String(last.content ?? "").replace(/\s+/g, " ").slice(0, 120) || null;
+    await db.run("UPDATE rooms SET last_message_at=?, last_preview=?, last_sender_name=?, last_sender_type=? WHERE id=? AND last_message_at IS NULL",
+      last.created_at, preview, last.sender_name, last.sender_type, r.id);
+  }
+
   // 읽기 커서 이사: agents → room_members(대표 방). 이미 있으면 건너뛴다(멱등).
   // pg-mem 이 INSERT ... SELECT 의 상관 NOT EXISTS 를 지원하지 않으므로 대상 행을 읽어 한 건씩 넣는다.
   const needMembers = await db.all(

@@ -2,6 +2,8 @@
 -- 기존 테이블은 재작성하지 않고, v4 데이터는 워커 첫 요청에서 core/migrate.ts 의 백필이 채운다.
 --
 -- 적용 순서 주의: 이 파일은 "구조"만 만든다. schema_version 은 여기서 올리지 않는다.
+-- 또 이 파일은 ALTER TABLE 을 포함하므로 **한 번만** 적용된다(재실행하면 duplicate column). 그래서
+-- 워커가 먼저 자동 이관한 DB(schema_version=5)에는 이 명령을 다시 적용하지 않는다(DEPLOY-CLOUDFLARE.md 참고).
 -- 워커는 meta.schema_version < 5 이면 (1) DDL 재실행(IF NOT EXISTS, 무시됨) (2) 없는 컬럼 ALTER
 -- (3) 백필(레거시 방 하나 = 워크스페이스 하나, 그 방이 로비) (4) 불변식 4종 검증 을 마친 뒤에만
 -- version=5 를 쓴다. 그래서 이 SQL 을 먼저 손으로 돌려도 백필이 건너뛰어지지 않는다.

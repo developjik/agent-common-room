@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { start, ADMIN_KEY } from "./helpers.js";
 import { openSqliteDb } from "../runtime/node-sqlite.js";
 import { backfillV5, checkInvariants } from "../core/migrate.js";
+import { hashToken } from "../core/crypto.js";
 
 const MIGRATIONS_DIR = new URL("../../worker/migrations/", import.meta.url);
 
@@ -64,6 +65,10 @@ test("v5 마이그레이션: v4 데이터를 지우지 않고 워크스페이스
     assert.deepEqual(members.map((m) => [m.agent_id, m.status]), [["agt_gone", "removed"], ["agt_live", "active"], ["agt_wait", "invited"]]);
     assert.equal(members[1].fetched_seq, 1, "읽기 커서가 room_members 로 이사한다");
     assert.equal((db.raw.prepare("SELECT count(*) c FROM messages").get() as any).c, 2, "메시지는 그대로");
+    // 이관 직후 개요 카드가 빈 미리보기를 보이지 않도록 마지막 메시지 캐시도 채운다.
+    assert.equal(room.last_preview, "네");
+    assert.equal(Number(room.last_message_at), 1600);
+    assert.equal(room.last_sender_name, "피클");
 
     assert.deepEqual(await checkInvariants(db), [], "불변식 5종 위반 0");
 
@@ -373,5 +378,95 @@ test("워크스페이스 경계: 다른 워크스페이스의 방은 오너·에
     assert.equal((await t.call("GET", `/api/rooms/${a.json.room_id}/messages`, owner)).status, 403);
     assert.equal((await t.call("GET", `/api/workspaces/${b.json.workspace_id}/overview`, owner)).status, 403);
     assert.equal((await t.call("PATCH", `/api/rooms/${a.json.room_id}`, owner, { name: "가로채기" })).status, 403);
+  } finally { await t.close(); }
+});
+
+test("승인 원자성: 잘못된 방 ID로 실패하면 신원·구성원이 남지 않고, 요청은 다시 승인할 수 있다", async () => {
+  const t = await start();
+  try {
+    const r = await t.setupRoom();
+    const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "atomic", product: "test" })).json;
+    const bad = await t.call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess, { room_ids: ["room_missing"] });
+    assert.equal(bad.status, 404);
+    assert.equal((t.sqlite.raw.prepare("SELECT count(*) c FROM agents WHERE name='atomic'").get() as any).c, 0, "신원이 남지 않는다");
+    const pending = (await t.call("GET", "/api/owner/join-requests?status=pending", r.sess)).json.requests;
+    assert.equal(pending.length, 1, "요청은 대기 상태 그대로");
+
+    const ok = await t.call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess, { history: "all" });
+    assert.equal(ok.status, 200);
+    const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
+    assert.ok(cl.agent_token);
+    const me = await t.call("GET", "/api/me", cl.agent_token);
+    assert.equal(me.json.participants.length, 1, "로비 구성원으로 활성화된다");
+  } finally { await t.close(); }
+});
+
+test("레거시 로그인은 로비(기존 방) 코드로만 열리고, 코드 교체는 남은 승격 티켓도 무효화한다", async () => {
+  const t = await start();
+  try {
+    // 계정이 연결된 워크스페이스에 일반 방을 하나 더 만든다
+    const own = await t.call("POST", "/api/setup/owner", ADMIN_KEY, { login_id: "legacy2", password: "long-enough-password", workspace_name: "우리 집" });
+    const owner = own.json.session_token as string;
+    const wid = own.json.workspace.id as string;
+    const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
+
+    // 일반 방의 복구 코드(설령 유출돼도)로는 레거시 로그인(→ 계정 세션)이 열리지 않는다
+    const leaked = "acr_own_leaked_room_code_0000000000";
+    t.sqlite.raw.prepare("UPDATE rooms SET owner_code_hash=? WHERE id=?").run(await hashToken(leaked), room.id);
+    const direct = await t.call("POST", "/api/auth/legacy", undefined, { room_id: room.id, owner_code: leaked });
+    assert.equal(direct.status, 403);
+    assert.equal(direct.json.error.code, "legacy_scope");
+
+    // 로비 세션(레거시)은 여러 방이 된 워크스페이스의 v2 API를 쓸 수 없다
+    const r = await t.setupRoom();
+    const legacySess = (await t.call("POST", "/api/owner/login", undefined, { room_id: r.roomId, owner_code: r.ownerCode })).json.session_token as string;
+    const ticket = (await t.call("POST", "/api/auth/legacy", undefined, { room_id: r.roomId, owner_code: r.ownerCode })).json.upgrade_ticket as string;
+    const up = await t.call("POST", "/api/auth/upgrade", undefined, { upgrade_ticket: ticket, login_id: "legacy3", password: "long-enough-password" });
+    const wid2 = up.json.workspace.id as string;
+    await t.call("POST", `/api/workspaces/${wid2}/rooms`, up.json.session_token, { name: "두 번째 방" });
+    const denied = await t.call("GET", `/api/workspaces/${wid2}/activity`, legacySess);
+    assert.equal(denied.status, 403, "방 전용 세션은 워크스페이스 단위 API를 쓸 수 없다");
+    assert.equal((await t.call("GET", "/api/owner/room", legacySess)).status, 200, "v1 호환 경로는 그대로");
+
+    // 오너 코드를 교체하면 그 전에 발급된 승격 티켓은 무효
+    const r2 = await t.setupRoom();
+    const t2 = (await t.call("POST", "/api/auth/legacy", undefined, { room_id: r2.roomId, owner_code: r2.ownerCode })).json.upgrade_ticket as string;
+    assert.ok(t2);
+    await t.call("POST", `/api/admin/rooms/${r2.roomId}/rotate-owner-code`, ADMIN_KEY);
+    const stale = await t.call("POST", "/api/auth/upgrade", undefined, { upgrade_ticket: t2, login_id: "legacy4", password: "long-enough-password" });
+    assert.equal(stale.status, 401, "교체 전 티켓은 만료 처리된다");
+  } finally { await t.close(); }
+});
+
+test("MCP 집계 inbox는 쓰기 전용 방 때문에 실패하지 않고, 폐기된 비서는 v1 목록에 남는다", async () => {
+  const t = await start();
+  try {
+    const own = await t.call("POST", "/api/setup/owner", ADMIN_KEY, { login_id: "mcpagg", password: "long-enough-password", workspace_name: "우리 집" });
+    const owner = own.json.session_token as string;
+    const wid = own.json.workspace.id as string;
+    const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
+    const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "agg", product: "test" })).json;
+    await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all" });
+    const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
+    const aid = cl.agent_id as string;
+    await t.call("POST", `/api/workspaces/${wid}/agents/${aid}/rooms`, owner, { room_ids: [room.id], history: "all" });
+    await t.call("PATCH", `/api/rooms/${room.id}/members/${aid}`, owner, { can_read: false, can_write: true });
+    await t.call("POST", `/api/rooms/${room.id}/messages`, owner, { client_id: "wo-1", content: "쓰기만 가능한 방" });
+
+    const me = (await t.call("GET", "/api/me", cl.agent_token)).json;
+    const writeOnly = me.rooms.find((x: any) => x.id === room.id);
+    assert.equal(writeOnly.you.can_read, false);
+
+    const agent = (await t.svc.authAgent(cl.agent_token as string))!;
+    const agg = await t.svc.inboxMany(agent, 50);
+    assert.deepEqual(agg.rooms.map((x: any) => x.room_id), [me.workspace.lobby_room_id], "읽을 수 있는 방만 돌려준다");
+    assert.equal(agg.omitted_rooms, 0);
+
+    // v1 관리 목록은 폐기된 비서를 계속 보여 준다(폐기 상태 확인 경로 보존)
+    await t.call("POST", `/api/owner/agents/${aid}/revoke`, owner);
+    const listed = (await t.call("GET", "/api/owner/agents", owner)).json.agents;
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].status, "revoked");
   } finally { await t.close(); }
 });

@@ -252,6 +252,13 @@ async function requireOwner(svc: RoomService, req: Request): Promise<OwnerAuth> 
   return auth;
 }
 
+/**
+ * 쿠키로 인증한 오너 요청에 세션 쿠키를 다시 실어 준다. 서버 세션은 슬라이딩으로 연장되는데
+ * 브라우저 쿠키는 발급 시점에 만료되므로, 앱이 시작할 때 부르는 /api/me·개요에서 함께 갱신한다.
+ */
+const ownerCookieRefresh = (auth: OwnerAuth, secure: boolean): Record<string, string> =>
+  auth.viaCookie ? { "set-cookie": ownerCookieHeader(auth.token, secure) } : {};
+
 /** 에이전트 토큰이면 Agent, 아니면 null. */
 async function agentOrNull(svc: RoomService, req: Request): Promise<Agent | null> {
   const t = bearer(req);
@@ -449,7 +456,7 @@ export async function handleFetch(
       if (agent) return json(200, await svc.agentMe(agent));
       const auth = await requireOwner(svc, req);
       if (!auth.scope.ownerId) throw new ApiError(403, "legacy_session", "레거시 방 세션입니다. /api/auth/legacy 로 계정 로그인으로 옮기세요.");
-      return json(200, await svc.ownerMe(auth.scope.ownerId));
+      return json(200, await svc.ownerMe(auth.scope.ownerId), ownerCookieRefresh(auth, secure));
     }
 
     // ----- 오너 v2: 워크스페이스 -----
@@ -457,7 +464,7 @@ export async function handleFetch(
       const wid = m[1];
       const rest = m[2] ?? "";
       const auth = await requireOwner(svc, req);
-      if (rest === "/overview" && method === "GET") return json(200, await svc.workspaceOverview(auth.scope, wid));
+      if (rest === "/overview" && method === "GET") return json(200, await svc.workspaceOverview(auth.scope, wid), ownerCookieRefresh(auth, secure));
       if (rest === "/rooms" && method === "POST") return json(201, await svc.createRoomForWorkspace(auth.scope, wid, obj(await readJson(req))));
       if (rest === "/agents" && method === "GET") return json(200, { agents: await svc.workspaceAgents(auth.scope, wid) });
       if ((m = /^\/agents\/([^/]+)\/rooms$/.exec(rest)) && method === "POST") return json(200, await svc.placeAgent(auth.scope, wid, m[1], obj(await readJson(req))));
