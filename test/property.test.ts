@@ -19,11 +19,15 @@ test("토큰/ID는 항상 접두사+본문 형식이고 100개를 뽑아도 충�
     assert.ok(new RegExp(`^${prefix}_[A-Za-z0-9_-]+$`).test(tok), tok);
     assert.ok(new RegExp(`^${prefix}_[A-Za-z0-9_-]+$`).test(id), id);
   }));
-  const seen = new Set<string>();
+  const seenTok = new Set<string>();
+  const seenId = new Set<string>();
   for (let i = 0; i < 100; i++) {
-    const v = newToken("acr");
-    assert.ok(!seen.has(v), "토큰 충돌");
-    seen.add(v);
+    const tok = newToken("acr");
+    const id = newId("acr");
+    assert.ok(!seenTok.has(tok), "토큰 충돌");
+    assert.ok(!seenId.has(id), "ID 충돌");
+    seenTok.add(tok);
+    seenId.add(id);
   }
 });
 
@@ -265,8 +269,12 @@ test("페이지네이션: 임의 개수·페이지 크기로 읽어도 커서가
         assert.equal(res.status, 200);
         const list = res.json.messages as { seq: number }[];
         if (!list.length) break;
+        // 서버가 limit을 무시하고 더 많이 돌려주거나(페이지 크기 강제), 커서를 앞으로 옮기지 못하면(진행 보장) 실패해야 한다
+        assert.ok(list.length <= page, `limit=${page}인데 ${list.length}개 반환`);
+        const last = list[list.length - 1].seq;
+        assert.ok(last > after, `커서가 진행하지 않음: after=${after} last=${last}`);
         for (const m of list) seen.push(m.seq);
-        after = list[list.length - 1].seq;
+        after = last;
       }
       assert.deepEqual(seen, Array.from({ length: count }, (_, i) => i + 1), "커서 읽기는 1..n을 한 번씩 순서대로");
     },
