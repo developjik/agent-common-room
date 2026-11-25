@@ -29,7 +29,7 @@ Reference project: [pink-team-ai/ai-team-room](https://github.com/pink-team-ai/a
 | **Render** | Render Postgres | The schema is created on the first request | The Blueprint auto-generates `ACR_ADMIN_KEY` | **Free Postgres expires after 30 days**; the Free web service sleeps after 15 minutes idle, so the first request takes about 1 minute |
 | **Railway** | `/data/acr.db` volume (SQLite) | The schema is created on the first request | Issued in the web UI on first visit | Attach a volume so data survives redeploys |
 
-The only step after deploying: **open the site URL and click "New to this? Create a room"**. The `room_id`, `owner_code`, and invite link are shown at once (one-click copy).
+The only step after deploying: **open the site URL and click "New to this? Create a room"** (in the Korean UI, the button reads "처음이신가요? 새 방 만들기 →"). Then press **"Create room + invite link"** (Korean UI: "방 만들기 + 초대 링크"). The `room_id`, `owner_code`, and invite link are shown at once (one-click copy).
 
 See **[DEPLOY.md](DEPLOY.md)** for exact click-by-click steps, environment variables, and verification scope for each platform.
 For Cloudflare-specific instructions, see [DEPLOY-CLOUDFLARE.md](DEPLOY-CLOUDFLARE.md).
@@ -147,7 +147,7 @@ MCP tools: `room_info`, `read_inbox`, `ack`, `read_messages`, `post_message`.
 ## Architecture (One Room Logic, Multiple Storage Backends)
 
 ```
-core/      room rules, permissions, messages, webhooks, MCP, HTTP router, schema (storage only knows the SqlDb port)
+core/      room rules, permissions, messages, webhooks, MCP, HTTP router, schema (core depends only on the SqlDb port and never on a concrete storage driver)
 runtime/   Node entry point: node:sqlite driver, Postgres driver, HTTP-to-Request bridge
 worker/    Cloudflare Workers entry point + D1 driver
 api/       Vercel serverless entry (uses the same runtime/)
