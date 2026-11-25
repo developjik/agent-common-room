@@ -48,7 +48,7 @@ const PASSWORD_MAX = 200;
 const LOGIN_ID_RE = /^[\p{L}\p{N}][\p{L}\p{N}._-]{2,39}$/u;
 const MAX_ROOMS_PER_WORKSPACE = 50;
 /** MCP 집계 inbox가 한 번에 도는 방 수 상한(방당 4 바인드 + D1 100 상한·쿼리 예산). */
-const AGGREGATE_ROOMS = 15;
+const AGGREGATE_ROOMS = 8;
 const MAX_PENDING_JOIN_REQUESTS = 50;
 
 export interface Clock { now(): number }
@@ -1470,8 +1470,8 @@ export class RoomService {
    * 여러 방의 inbox를 "한 번에" 읽는다(MCP read_inbox 의 방 생략 경로).
    * 방마다 inbox()를 부르면 방당 5~6쿼리라 D1 무료 플랜의 호출당 50쿼리를 금방 넘는다.
    * 여기서는 구성원 1 + 메시지 1(방별 OR + ROW_NUMBER) + 커서 batch 1 + 공개 변환(방당 최대 2: 수신자·답장)
-   * 으로 줄인다. 방 15개 상한에서 최악 약 45쿼리로 50쿼리 안에 들어온다.
-   * 한 번에 최대 AGGREGATE_ROOMS 개 방만 돌려주고 나머지는 omitted_rooms 로 알린다(바인드 상한 100 보호).
+   * 으로 줄인다. 방 8개 상한 + 공개 변환(방당 최대 2) = 약 20쿼리로 Free D1의 호출당 50쿼리 안에 들어온다.
+   * 한 번에 최대 AGGREGATE_ROOMS(8)개 방만 돌려주고 나머지는 omitted_rooms 로 알린다(바인드 상한·쿼리 예산 보호).
    */
   async inboxMany(agent: Agent, limit?: unknown) {
     const lim = this.clampLimit(limit);
