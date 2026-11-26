@@ -1629,7 +1629,10 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 7px 14px 0;
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 7px 18px 0 46px;
 }
 .pin {
   display: inline-flex;
@@ -1662,7 +1665,10 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 14px;
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 5px 18px 5px 46px;
   border-bottom: 1px solid var(--acr-line);
   background: var(--acr-surface-2);
   font-size: 12px;
@@ -1850,6 +1856,9 @@ button {
 
 /* ---------- 메시지 피드 ---------- */
 .feed {
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
   padding-bottom: 18px;
 }
 .msg {
@@ -2044,6 +2053,48 @@ button {
   color: var(--acr-danger);
   background: var(--acr-danger-soft);
 }
+.msg-more {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 28px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--acr-faint);
+  cursor: pointer;
+}
+.msg-more:hover {
+  background: var(--acr-surface-2);
+  color: var(--acr-ink);
+}
+@media (max-width: 1023px) {
+  .msg-more {
+    display: inline-flex;
+  }
+  .msg-actions {
+    display: none;
+  }
+  .msg-actions.is-open {
+    position: static;
+    display: flex;
+    width: max-content;
+    margin-top: 4px;
+    opacity: 1;
+    pointer-events: auto;
+    box-shadow: none;
+  }
+  .msg-action {
+    width: 40px;
+    height: 40px;
+  }
+  .msg-action-label {
+    width: auto;
+    padding: 0 10px;
+  }
+}
 .msg-action-label {
   width: auto;
   gap: 5px;
@@ -2144,7 +2195,9 @@ button {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 10px 14px 4px;
+  width: calc(100% - 36px);
+  max-width: 1040px;
+  margin: 10px auto 4px;
   padding: 10px 12px;
   border: 1px solid color-mix(in oklab, var(--acr-wait) 45%, var(--acr-line));
   border-left: 4px solid var(--acr-wait);
@@ -2169,7 +2222,8 @@ button {
 
 /* ---------- 컴포저 ---------- */
 .composer {
-  padding: 0 14px 13px;
+  /* 대화와 입력창은 같은 읽기 폭(1040px)을 중앙에 둔다. 넓은 화면에서 줄이 너무 길어지지 않는다. */
+  padding: 0 max(14px, calc((100% - 1040px) / 2)) 13px;
   background: var(--acr-canvas);
 }
 .composer-box {

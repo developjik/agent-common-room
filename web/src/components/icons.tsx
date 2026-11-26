@@ -32,7 +32,8 @@ export type IconName =
   | "gauge"
   | "rooms"
   | "bot"
-  | "search";
+  | "search"
+  | "more";
 
 const PATHS: Record<IconName, JSX.Element> = {
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
@@ -153,6 +154,13 @@ const PATHS: Record<IconName, JSX.Element> = {
     <>
       <circle cx="11" cy="11" r="7" />
       <path d="M20 20l-3.6-3.6" />
+    </>
+  ),
+  more: (
+    <>
+      <circle cx="5" cy="12" r="1.3" />
+      <circle cx="12" cy="12" r="1.3" />
+      <circle cx="19" cy="12" r="1.3" />
     </>
   ),
 };
