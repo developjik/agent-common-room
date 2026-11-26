@@ -122,19 +122,6 @@ export function senderName(m: Message): string {
   return m.sender.name || "?";
 }
 
-/** 방 카드 미리보기의 발신자 이름. 서버는 오너를 'owner' 로 적는다. */
-export function senderLabel(name: string | null | undefined): string {
-  if (!name) return "";
-  return name === "owner" ? "나" : name;
-}
-
-export const KIND_LABEL: Record<string, string> = {
-  message: "메시지",
-  question: "질문",
-  answer: "답변",
-  status: "상태",
-};
-
 /** 전달 상태는 예외만 말한다: 아직 받지 않은(sent) 30초 경과만 화면에 남긴다. */
 export function deliveryNotice(m: Message, now = Date.now()): { label: string; title: string } | null {
   if (!m.recipient || !m.delivery || m.deleted) return null;
@@ -164,46 +151,6 @@ export function groupedWith(prev: Message | undefined, m: Message): boolean {
   if (prev.kind !== m.kind) return false;
   if (dayKey(prev.created_at) !== dayKey(m.created_at)) return false;
   return new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60_000;
-}
-
-export interface ThreadSummary {
-  count: number;
-  lastAt: string;
-}
-
-/** reply_to 사슬을 따라 스레드 루트를 찾는다. 루트가 없으면(안 보이는 메시지) 자기 자신. */
-export function threadRootOf(m: Message, bySeq: Map<number, Message>): Message {
-  let cur = m;
-  const seen = new Set<number>();
-  while (cur.reply_to && !seen.has(cur.seq)) {
-    seen.add(cur.seq);
-    const parent = bySeq.get(cur.reply_to);
-    if (!parent) return cur;
-    cur = parent;
-  }
-  return cur;
-}
-
-/** 루트별 답글 수와 마지막 답글 시각 (하위 답글 전부 포함). */
-export function threadSummaries(messages: Message[], bySeq: Map<number, Message>): Map<number, ThreadSummary> {
-  const out = new Map<number, ThreadSummary>();
-  for (const m of messages) {
-    if (!m.reply_to) continue;
-    const root = threadRootOf(m, bySeq);
-    if (root.seq === m.seq) continue;
-    const cur = out.get(root.seq);
-    if (!cur) out.set(root.seq, { count: 1, lastAt: m.created_at });
-    else {
-      cur.count += 1;
-      if (new Date(m.created_at) >= new Date(cur.lastAt)) cur.lastAt = m.created_at;
-    }
-  }
-  return out;
-}
-
-/** 루트 아래의 답글을 시간순으로. */
-export function repliesOf(rootSeq: number, messages: Message[], bySeq: Map<number, Message>): Message[] {
-  return messages.filter((m) => m.seq !== rootSeq && threadRootOf(m, bySeq).seq === rootSeq);
 }
 
 // 식별자·수식 안쪽 기호는 강조가 아니므로 지우지 않는다(markdown의 강조 경계와 같은 규칙).
