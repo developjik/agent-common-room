@@ -26,6 +26,7 @@ import {
   setupLandingMode,
   sortRoomCards,
   unreadActivityCount,
+  needsAttentionRoomIds,
   unreadRoomCount,
 } from "../web/src/lib/views.js";
 import type { ActivityItem, Message, RoomCard, RoomMember } from "../web/src/lib/types.js";
@@ -110,17 +111,26 @@ test("서버 health 를 상태 라벨로만 번역한다(정상은 침묵)", () 
   assert.equal(roomStateText("ok", true), "정지", "일시정지가 방 상태보다 먼저다");
 });
 
-test("`답변 필요` 수는 화면 어디서나 방 기준 한 값이다", () => {
+test("`답변 필요` 수는 화면 어디서나 같은 술어(방별 답할 것 유무)를 쓴다", () => {
   const rooms = [
-    card({ id: "a", health: "needs_input" }),
-    card({ id: "b", health: "needs_input", unread: 4 }),
-    card({ id: "c", unread: 2 }),
+    card({ id: "a", health: "needs_input", needs_attention: true }),
+    card({ id: "b", health: "needs_input", unread: 4, needs_attention: false }),
+    card({ id: "c", unread: 2, needs_attention: true }),
   ];
-  assert.equal(answerNeededRooms(rooms), 2);
+  assert.equal(answerNeededRooms(rooms), 2, "health 기반 대체값(레거시 응답)");
   assert.equal(needsYouRooms(rooms), 2, "예전 이름도 같은 값을 센다");
   assert.equal(unreadRoomCount(rooms), 2);
-  assert.equal(roomSummaryLine(rooms), "답변 필요 2곳 · 안 읽은 방 2");
-  assert.equal(roomSummaryLine([card({ id: "d" })]), "", "0 은 쓰지 않는다");
+  assert.deepEqual([...needsAttentionRoomIds(rooms)].sort(), ["a", "c"], "서버가 준 방별 플래그를 그대로 쓴다(대기 요청만 있는 방은 제외)");
+  assert.deepEqual(
+    [...needsAttentionRoomIds([card({ id: "d", health: "needs_input" })])],
+    ["d"],
+    "플래그가 없는 응답은 health 로 대체한다",
+  );
+  assert.equal(
+    roomSummaryLine({ need: 2, unread: 2, paused: 1 }),
+    "답변 필요 2곳 · 안 읽은 방 2 · 정지 1",
+  );
+  assert.equal(roomSummaryLine({ need: 0, unread: 0, paused: 0 }), "", "0 은 쓰지 않는다");
 });
 
 test("관제실 정렬: 답변 필요 → 정지 → 안 읽음 → 진행 중 → 조용함, 같은 순위는 최근 활동", () => {
@@ -212,24 +222,14 @@ test("초대 전달 문장은 워크스페이스·방·링크를 구분해 담�
   assert.ok(!/로비/.test(room), "방 초대에 로비 문구를 섞지 않는다");
 });
 
-test("P0-1: 계정이 없고 관리자 키를 모르면 기존 방 코드 탭으로 열고, 방이 없으면 계정 만들기로 연다", () => {
+test("P0-1: 오너가 없으면 계정 만들기로 열고, 이미 있으면 로그인으로 연다(방 코드 탭 없음)", () => {
   assert.equal(setupLandingMode(null), "login");
   assert.equal(setupLandingMode({ needs_owner: false }), "login");
-  assert.equal(setupLandingMode({ needs_owner: true, bootstrap_allowed: true, legacy_rooms: 0 }), "onboard");
+  assert.equal(setupLandingMode({ needs_owner: true }), "onboard", "오너가 없으면 계정 만들기가 첫 화면");
   assert.equal(
-    setupLandingMode({ needs_owner: true, bootstrap_allowed: false, legacy_rooms: 2 }),
-    "legacy",
-    "관리자 키를 모르는 상태에서 기존 방이 있으면 방 코드 경로가 막다른 길을 피한다",
-  );
-  assert.equal(
-    setupLandingMode({ needs_owner: true, bootstrap_allowed: true, legacy_rooms: 1 }),
+    setupLandingMode({ needs_owner: true, bootstrap_allowed: false, legacy_rooms: 2 } as { needs_owner?: boolean }),
     "onboard",
-    "웹에서 키를 만들 수 있으면 계정 만들기가 첫 화면이다",
-  );
-  assert.equal(
-    setupLandingMode({ needs_owner: true, bootstrap_allowed: false, legacy_rooms: 0 }),
-    "onboard",
-    "기존 방이 없으면 안내만 하고 계정 만들기 탭에 둔다",
+    "기존 방이 있어도 방 코드 탭을 열지 않는다",
   );
 });
 

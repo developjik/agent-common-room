@@ -83,9 +83,16 @@ export function roomStateText(health: RoomHealth | string, paused = false): stri
   return paused || health === "paused" ? "정지" : health === "needs_input" ? "답변 필요" : "";
 }
 
-/** 인박스·상단바가 함께 쓰는 "답변 필요" 기준: 답을 기다리는 방 수. */
+/** 방 health 기준으로 답을 기다리는 방 수(서버 needs_attention 이 없는 레거시 응답용 대체값). */
 export function answerNeededRooms(rooms: RoomCard[]): number {
   return rooms.filter((r) => r.health === "needs_input").length;
+}
+
+/** "답변 필요" 행 표시: 서버가 준 방별 답할 것(없으면 health 로 대체). */
+export function needsAttentionRoomIds(rooms: RoomCard[]): Set<string> {
+  const out = new Set<string>();
+  for (const r of rooms) if (r.needs_attention ?? r.health === "needs_input") out.add(r.id);
+  return out;
 }
 
 /** 안 읽은 글이 있는 방 수. */
@@ -95,13 +102,14 @@ export function unreadRoomCount(rooms: RoomCard[]): number {
 
 /**
  * 관제실 상태 한 줄. 0 은 쓰지 않고, 할 일이 없으면 빈 문자열이다(정상은 침묵).
- * 모든 화면이 같은 숫자를 쓰도록 방 기준(answerNeededRooms)만 센다.
+ * need 는 인박스와 같은 기준의 고유 방 수(서버 counts.needs_you_rooms).
  */
-export function roomSummaryLine(rooms: RoomCard[]): string {
-  const need = answerNeededRooms(rooms);
-  const unread = unreadRoomCount(rooms);
-  const paused = rooms.filter((r) => r.paused || r.health === "paused").length;
-  return [need ? `답변 필요 ${need}곳` : "", unread ? `안 읽은 방 ${unread}` : "", paused ? `정지 ${paused}` : ""]
+export function roomSummaryLine(counts: { need: number; unread: number; paused: number }): string {
+  return [
+    counts.need ? `답변 필요 ${counts.need}곳` : "",
+    counts.unread ? `안 읽은 방 ${counts.unread}` : "",
+    counts.paused ? `정지 ${counts.paused}` : "",
+  ]
     .filter(Boolean)
     .join(" · ");
 }
@@ -297,16 +305,15 @@ export function pollDelay(quiet: number, waiting: boolean, steps: number[] = POL
 
 // ---------- 최초 화면(로그인/계정 만들기) ----------
 
-export type LandingMode = "login" | "legacy" | "onboard";
+export type LandingMode = "login" | "onboard";
 
 /**
  * 계정이 하나도 없을 때 어느 탭으로 열지 정한다.
- * 관리자 키를 모르면 '계정 만들기'는 막다른 길이라(웹 부트스트랩이 꺼져 있으면 키 입력창만 보인다),
- * 아직 계정에 연결되지 않은 기존 방이 있으면 '기존 방 코드'로 열어 준다.
+ * 로그인 화면만 보이는 것은 막다른 길이라, 오너가 없으면 '계정 만들기'로 연다.
+ * (v1 방 코드 로그인은 화면에서 걷어냈다 — 백엔드 /api/auth/legacy 는 기존 클라이언트용으로 남긴다.)
  */
-export function setupLandingMode(setup: { needs_owner?: boolean; bootstrap_allowed?: boolean; legacy_rooms?: number } | null): LandingMode {
+export function setupLandingMode(setup: { needs_owner?: boolean } | null): LandingMode {
   if (!setup?.needs_owner) return "login";
-  if (setup.legacy_rooms && setup.legacy_rooms > 0 && !setup.bootstrap_allowed) return "legacy";
   return "onboard";
 }
 

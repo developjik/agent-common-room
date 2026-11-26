@@ -33,23 +33,17 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
   const parent = m.reply_to ? bySeq.get(m.reply_to) : undefined;
   const name = senderName(m);
   const notice = deliveryNotice(m);
-  const dm = m.recipient && m.recipient.id !== "owner" ? m.recipient.name : null;
+  // 받는 사람 표시: 다른 비서에게만 → `@이름에게만`, 나에게만 → `나에게만`(서버는 오너를 'owner'로 적는다).
+  const dm = m.recipient ? (m.recipient.id === "owner" ? "나" : m.recipient.name) : null;
 
-  // 바깥을 누르면 메뉴를 닫는다(Esc 도).
+  // Esc: 열린 메뉴만 닫고 이벤트를 소비한다(방 화면·스레드 패널의 문서 핸들러가 함께 닫히면 초안이 사라진다).
   useEffect(() => {
     if (!menuOpen) return;
     const onDown = (e: MouseEvent) => {
       if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenuOpen(false);
-    };
     document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => document.removeEventListener("mousedown", onDown);
   }, [menuOpen]);
 
   return (
@@ -84,7 +78,7 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
           )}
           {dm ? (
             <span className="msg-dm" title={`${dm}에게만`}>
-              @{dm}에게만
+              {dm === "나" ? "나에게만" : `@${dm}에게만`}
             </span>
           ) : null}
           {m.kind !== "message" ? <span className="msg-kind">{KIND_LABEL[m.kind] ?? m.kind}</span> : null}
@@ -98,7 +92,17 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
                 <Icon name="at" size={15} />
               </button>
             ) : null}
-            <div className="msg-menu-wrap" ref={menuRef}>
+            <div
+              className="msg-menu-wrap"
+              ref={menuRef}
+              onKeyDown={(e) => {
+                if (e.key !== "Escape" || !menuOpen) return;
+                e.preventDefault();
+                e.stopPropagation();
+                setMenuOpen(false);
+                menuRef.current?.querySelector<HTMLButtonElement>("[aria-expanded]")?.focus();
+              }}
+            >
               <button
                 type="button"
                 className="msg-action"

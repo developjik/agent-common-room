@@ -5,13 +5,15 @@ import { Avatar } from "./Avatar.js";
 import { Icon } from "./icons.js";
 import { EmptyState } from "./ui.js";
 import { fmtFull, plainPreview, relTime } from "../lib/format.js";
-import { ACTIVITY_KINDS, ACTIVITY_LABEL, activityKind, answerNeededRooms, filterActivity, type ActivityKind } from "../lib/views.js";
+import { ACTIVITY_KINDS, ACTIVITY_LABEL, activityKind, filterActivity, type ActivityKind } from "../lib/views.js";
 import type { ActivityItem, RoomCard } from "../lib/types.js";
 
 interface Props {
   items: ActivityItem[];
   rooms: RoomCard[];
   ready: boolean;
+  /** 안 읽은 답할 것이 있는 방 수(상단바·레일 배지와 같은 값). */
+  needCount: number;
   /** 승인 대기 참여 요청 수(인박스 목록에는 넣지 않고 비서실로 보낸다). */
   pendingCount: number;
   onOpenRoom: (roomId: string, seq?: number) => void;
@@ -19,13 +21,11 @@ interface Props {
   onGoDesk: () => void;
 }
 
-export function InboxView({ items, rooms, ready, pendingCount, onOpenRoom, onGoRooms, onGoDesk }: Props) {
+export function InboxView({ items, rooms, ready, needCount, pendingCount, onOpenRoom, onGoRooms, onGoDesk }: Props) {
   const [kind, setKind] = useState<ActivityKind>("all");
   const [roomId, setRoomId] = useState("");
 
   const filtered = useMemo(() => filterActivity(items, { roomId, kind }), [items, roomId, kind]);
-  // 배지·상단바와 같은 기준(방 기준)으로 센다. 목록 건수는 별도로 적는다.
-  const need = useMemo(() => answerNeededRooms(rooms), [rooms]);
   const counts = useMemo(() => {
     const byKind: Record<string, number> = { all: items.length, question: 0, directed: 0, system: 0 };
     for (const it of items) byKind[activityKind(it)] = (byKind[activityKind(it)] ?? 0) + 1;
@@ -36,7 +36,7 @@ export function InboxView({ items, rooms, ready, pendingCount, onOpenRoom, onGoR
     <div className="page page-narrow">
       <div className="page-tools">
         <p className="page-summary">
-          {need ? `답변 필요 ${need}곳` : "답변 필요 없음"}
+          {needCount ? `답변 필요 ${needCount}곳` : "답변 필요 없음"}
           {items.length ? ` · ${items.length}건` : ""}
         </p>
         <button type="button" className="btn btn-sm" onClick={onGoRooms}>
@@ -116,6 +116,7 @@ export function InboxView({ items, rooms, ready, pendingCount, onOpenRoom, onGoR
                   data-unread={it.unread ? "true" : undefined}
                   onClick={() => onOpenRoom(it.room_id, m.seq)}
                 >
+                  {it.unread ? <span className="sr-only">안 읽음</span> : null}
                   <span className="inbox-kind" data-kind={k}>
                     <Icon name={k === "system" ? "alert" : k === "directed" ? "at" : "bolt"} size={15} />
                   </span>

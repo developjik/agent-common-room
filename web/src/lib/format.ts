@@ -216,10 +216,10 @@ export function plainPreview(text: string | null, max = 80): string {
   const urls: string[] = [];
   const flat = String(text ?? "")
     .replace(/```[\s\S]*?```/g, " [코드] ")
-    .replace(/`([^`]*)`/g, "$1")
-    // 머리표(#)·목록 기호는 한 줄 미리보기에서 읽기만 방해한다.
+    // 머리표(#)·목록 기호는 백틱을 걷기 전에 줄 첫머리에서만 지운다(인라인 코드 `- 3` 은 그대로 둔다).
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")
     .replace(/^\s{0,3}[-*+]\s+/gm, "")
+    .replace(/`([^`]*)`/g, "$1")
     // 주소 안의 `_`는 강조가 아니라 주소의 일부다(미리보기에서도 그대로 둔다).
     .replace(/https?:\/\/[^\s<>"']+/g, (u) => {
       urls.push(u);

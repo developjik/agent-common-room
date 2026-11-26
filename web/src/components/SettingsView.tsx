@@ -88,12 +88,7 @@ export function SettingsView({ owner, workspace, theme, onTheme, onLogout, synce
             <dd className="mono select-all">{workspace.lobby_room_id ?? "-"}</dd>
           </div>
         </dl>
-        {workspace.legacy ? (
-          <p className="notice-box mt-3">
-            <span className="notice-title">v1 방에서 옮겨 온 워크스페이스</span>
-            <span className="notice-text">기존 방 코드 로그인도 계속 동작합니다. 계정 로그인으로 옮겨 두면 새 기기에서도 편합니다.</span>
-          </p>
-        ) : null}
+        {workspace.legacy ? <p className="panel-note mt-2">v1 방에서 옮겨 온 워크스페이스입니다</p> : null}
       </section>
 
       <section className="settings-card">
