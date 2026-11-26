@@ -52,8 +52,6 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
   const [sending, setSending] = useState(false);
   const [mention, setMention] = useState<{ query: string; index: number } | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
-  // `@` 버튼이 넣은 `@`의 위치. 이 자리에서 시작한 멘션은 커서 뒤 본문을 삼키지 않는다.
-  const buttonMark = useRef<number | null>(null);
   // 본문에 이름을 넣은 뒤 커서를 그 뒤로 옮긴다(React 재렌더 후에 적용).
   const pendingCaret = useRef<number | null>(null);
   // 불러오기 지연 시간: 입력창을 떠난 뒤에만 자동완성을 닫는다(다시 들어와 연 목록을 지우지 않게).
@@ -101,7 +99,6 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
       // 다른 곳(구성원 목록 등)에서 지목해 포커스를 돌려받으면 열려 있던 자동완성은 닫는다.
       // 그대로 두면 Enter가 메시지 전송 대신 낡은 후보 선택이 되어 방금 지목한 수신자를 덮어쓴다.
       setMention(null);
-      buttonMark.current = null;
       taRef.current?.focus();
     }
   }, [focusNonce]);
@@ -137,12 +134,7 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
     // 입력한 검색어 구간을 고른 이름으로 완성한다.
     const el = taRef.current;
     const caret = el?.selectionStart ?? text.length;
-    // 컴포저의 `@` 버튼이 넣은 `@`에서 시작한 멘션이면 커서 뒤는 사용자가 쓰던 본문이다.
-    const mark = buttonMark.current;
-    const token = mentionTokenAt(text, caret);
-    const fromButton = mark !== null && token !== null && token.start === mark;
-    const done = completeMention(text, caret, a.name, fromButton ? { rightBoundary: caret } : undefined);
-    buttonMark.current = null;
+    const done = completeMention(text, caret, a.name);
     if (done.replaced) {
       pendingCaret.current = done.caret;
       setText(done.text);
@@ -159,7 +151,6 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
     const end = el?.selectionEnd ?? start;
     const lead = start > 0 && !/\s/.test(text[start - 1]) ? " @" : "@";
     const next = text.slice(0, start) + lead + text.slice(end);
-    buttonMark.current = start + lead.length - 1;
     pendingCaret.current = start + lead.length;
     setText(next);
     setMention(allowRecipientMention && live.length ? { query: "", index: 0 } : null);
@@ -174,7 +165,6 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
       await onSend({ content, kind: SEND_KIND, recipient, reply_to: replyTo?.seq });
       setText("");
       setMention(null);
-      buttonMark.current = null;
     } catch {
       // 호출부가 오류를 알린다. 입력 내용은 남겨 두어 다시 보낼 수 있게 한다.
     } finally {
