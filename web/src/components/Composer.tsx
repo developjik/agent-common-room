@@ -48,6 +48,8 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
   const [sending, setSending] = useState(false);
   const [mention, setMention] = useState<{ query: string; index: number } | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  // 보조 옵션(종류) 칩 묶음. 키보드로 열었을 때는 칩으로 바로 들어갈 수 있게 포커스를 옮긴다.
+  const extrasRef = useRef<HTMLDivElement | null>(null);
   // 본문 끝에 이름을 넣은 뒤 커서를 이름 뒤로 옮긴다(React 재렌더 후에 적용).
   const pendingCaret = useRef<number | null>(null);
 
@@ -226,7 +228,7 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
         />
 
         {!compact && kindOpen ? (
-          <div className="composer-extras" id="composer-extras" role="group" aria-label="보내는 종류">
+          <div className="composer-extras" id="composer-extras" ref={extrasRef} role="group" aria-label="보내는 종류">
             {KIND_CHOICES.map((k) => (
               <button
                 key={k.value}
@@ -273,7 +275,15 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
               aria-controls="composer-extras"
               aria-label="보내기 옵션 (메시지 종류)"
               title="보내기 옵션 (메시지 종류)"
-              onClick={() => setKindOpen((v) => !v)}
+              onClick={(e) => {
+                const opening = !kindOpen;
+                setKindOpen(opening);
+                // e.detail === 0 은 키보드(Enter/Space) 활성화다. 칩은 이 버튼보다 DOM 앞이라
+                // Tab으로는 지나쳐 버리므로, 열자마자 지금 종류로 포커스를 옮긴다.
+                if (opening && e.detail === 0) {
+                  window.setTimeout(() => extrasRef.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus(), 0);
+                }
+              }}
             >
               <Icon name="plus" size={15} />
               {kind !== "message" ? <span className="composer-opt-text">{kindLabel(kind)}</span> : null}

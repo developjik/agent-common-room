@@ -81,6 +81,7 @@ test("남은 기간은 올림해서 센다(72시간 초대는 3일 남음)", () 
   const now = Date.now();
   const hours = (h: number) => new Date(now + h * 3_600_000).toISOString();
   assert.equal(remainLabel(hours(71.5)), "3일 남음", "2.98일을 '2일 남음'으로 내림하지 않는다");
+  assert.equal(remainLabel(hours(48.5)), "3일 남음", "48시간 30분도 올림해서 3일이다");
   assert.equal(remainLabel(hours(48)), "2일 남음");
   assert.equal(remainLabel(hours(5)), "5시간 남음");
   assert.equal(remainLabel(hours(-1)), "만료됨");

@@ -241,13 +241,17 @@ function RoomSettings({
 
   // allowed_categories 는 폴링마다 새 배열이라 그대로 의존성에 두면 4초마다 입력이 서버 값으로 되돌아간다.
   const catsKey = room.allowed_categories.join(",");
+  // 저장 범위를 둘로 나눠 두었으므로(이름·설명 / 고급) 서버 값 동기화도 같은 범위로 나눈다.
+  // 이름만 저장했을 때 접힌 고급 설정의 편집 중인 초안이 조용히 호기지 않게 한다.
   useEffect(() => {
     setName(room.name);
     setDescription(room.description);
+  }, [room.name, room.description]);
+  useEffect(() => {
     setPolicy(room.context_policy);
     setCategories(catsKey.replace(/,/g, ", "));
     setRetention(room.retention_days ? String(room.retention_days) : "");
-  }, [room.name, room.description, room.context_policy, catsKey, room.retention_days]);
+  }, [room.context_policy, catsKey, room.retention_days]);
 
   const since = Date.now() - room.rate_limit.window_seconds * 1000;
   const recent = store.messages.filter((m) => m.sender.type === "agent" && new Date(m.created_at).getTime() >= since).length;
@@ -259,12 +263,31 @@ function RoomSettings({
   const nearLimit = depthRatio >= 0.8 || rateRatio >= 0.8;
   const warning = depthRatio >= 0.8 ? `답장 체인 ${depth}/${room.max_chain_depth}` : `최근 ${durationLabel(room.rate_limit.window_seconds)} ${recent}/${room.rate_limit.count}`;
 
-  const save = async () => {
+  /**
+   * 기본 저장: 이름·설명만 보낸다.
+   * 예전에는 한 저장 버튼이 맥락 정책·카테고리·보존 기간까지 함께 보냈는데, 고급 설정을 접어 두면
+   * 보이지 않는 입력값이 함께 적용돼 이름만 바꿔도 메시지가 삭제될 수 있었다(보존 기간 축소).
+   */
+  const saveBasic = async () => {
     if (busy) return;
     if (!name.trim()) {
       notify("방 이름을 입력하세요.");
       return;
     }
+    setBusy(true);
+    try {
+      await store.patchRoom(room.id, { name: name.trim(), description });
+      notify("방 이름과 설명을 저장했습니다.");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "저장하지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 고급 저장: 맥락 정책·허용 카테고리·보존 기간만. */
+  const saveAdvanced = async () => {
+    if (busy) return;
     const days = retention.trim();
     if (days && (!/^\d+$/.test(days) || Number(days) < 1 || Number(days) > 3650)) {
       notify("보존 기간은 1~3650일 숫자이거나 비워 두세요.");
@@ -273,13 +296,11 @@ function RoomSettings({
     setBusy(true);
     try {
       await store.patchRoom(room.id, {
-        name: name.trim(),
-        description,
         context_policy: policy,
         allowed_categories: categories.split(",").map((c) => c.trim()).filter(Boolean),
         retention_days: days ? Number(days) : null,
       });
-      notify("방 정보를 저장했습니다.");
+      notify("고급 설정을 저장했습니다.");
     } catch (e) {
       notify(e instanceof Error ? e.message : "저장하지 못했습니다.");
     } finally {
@@ -357,7 +378,7 @@ function RoomSettings({
           </label>
           <input id="room-desc" className="field" maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="이 방의 용도 한 줄" />
         </div>
-        <button type="button" className="btn w-full" onClick={() => void save()} disabled={busy}>
+        <button type="button" className="btn w-full" onClick={() => void saveBasic()} disabled={busy}>
           {busy ? "저장 중…" : "저장"}
         </button>
       </div>
@@ -420,7 +441,7 @@ function RoomSettings({
                 placeholder="예: 30"
               />
             </div>
-            <button type="button" className="btn w-full" onClick={() => void save()} disabled={busy}>
+            <button type="button" className="btn w-full" onClick={() => void saveAdvanced()} disabled={busy}>
               {busy ? "저장 중…" : "고급 설정 저장"}
             </button>
           </section>
@@ -428,7 +449,7 @@ function RoomSettings({
           <section className="space-y-2">
             <p className="label">웹훅</p>
             <p className="panel-note">
-              새 글이 생길 때 외부 서비스로 알립니다. 등록하려면 방의 서명 시크릿이 필요합니다.
+              비서에게 보낸 글(지목·답장)을 외부 서비스로 알립니다. 등록하면 서명 시크릿을 한 번 보여 줍니다(수신측 검증용).
             </p>
             <div className="flex gap-2">
               <input

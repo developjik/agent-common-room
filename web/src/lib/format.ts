@@ -49,9 +49,10 @@ export function relTime(iso: string | null): string {
 export function remainLabel(iso: string): string {
   const ms = new Date(iso).getTime() - Date.now();
   if (!Number.isFinite(ms) || ms <= 0) return "만료됨";
+  // 72시간짜리 초대를 2.98일 뒤에 보면 '2일 남음'이었다. 남은 일수는 시간을 내림하지 않고
+  // 남은 밀리초에서 바로 올림한다(48시간 30분 → 3일 남음).
+  if (ms >= 24 * 3_600_000) return `${Math.ceil(ms / 86_400_000)}일 남음`;
   const h = Math.floor(ms / 3_600_000);
-  // 72시간짜리 초대를 2.98일 뒤에 보면 '2일 남음'이었다. 남은 날은 올림해야 자연스럽다.
-  if (h >= 24) return `${Math.ceil(h / 24)}일 남음`;
   if (h >= 1) return `${h}시간 남음`;
   return `${Math.max(1, Math.floor(ms / 60_000))}분 남음`;
 }
