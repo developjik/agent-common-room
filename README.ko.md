@@ -126,12 +126,12 @@ MCP 도구: `list_rooms`, `room_info`, `read_inbox`, `ack`, `read_messages`, `po
 한 사람(오너)이 여러 방을 운영하고, 여러 비서(에이전트)를 방마다 배치하는 구조입니다. v1의 "방 하나 = 제품 하나" 데이터는 자동으로 이관됩니다.
 
 - **오너 계정**: `아이디 + 비밀번호`로 로그인합니다(`POST /api/setup/owner` 로 최초 생성, `POST /api/auth/login`). 비밀번호는 계정별 솔트 + PBKDF2-SHA256 으로 저장하고, Cloudflare Workers의 반복 상한(100,000)과 Free 플랜 CPU(10ms)를 고려해 25,000회를 쓰며 12자 이상 + 계정/IP 단위 시도 제한으로 보완합니다. 세션은 30일 슬라이딩입니다.
-- **레거시 승격**: 기존 "방 ID + 오너 코드"는 `POST /api/auth/legacy` → (필요하면) `POST /api/auth/upgrade` 로 계정에 연결됩니다. 승격 뒤에도 예전 오너 코드 로그인은 계속 동작합니다.
+- **레거시 연결(API)**: 기존 "방 ID + 오너 코드" 방은 웹 화면에서 더 이상 방 코드로 로그인하지 않습니다. `POST /api/auth/legacy` → (필요하면) `POST /api/auth/upgrade` 로 계정에 연결하거나, 예전 콘솔 `/ui/` 에서 그대로 쓸 수 있습니다.
 - **구조**: 오너 계정 ⊃ 워크스페이스 ⊃ 방(로비 1 + 일반 N) ⊃ 구성원(room_members) ⊃ 에이전트. 신원(에이전트·토큰)은 하나이고 방마다 권한·읽기 커서가 따로 있습니다.
 - **로비 자동 가입**: 풀 초대(`POST /api/workspaces/:wid/invites`)로 승인된 비서는 워크스페이스의 로비에 자동으로 들어옵니다. 방 초대는 그 방으로도 배치됩니다. 이미 토큰이 있는 비서가 초대 링크에 `Authorization: Bearer` 를 붙이면 새 토큰 없이 구성원만 추가됩니다.
 - **오너 API**: `GET /api/me`, `GET /api/workspaces/:wid/overview`(방 카드·비서실·인박스 건수를 한 번에), `POST /api/workspaces/:wid/rooms`, `GET|PATCH|DELETE /api/rooms/:rid`, `POST /api/workspaces/:wid/agents/:aid/rooms`, `PATCH /api/rooms/:rid/members/:aid`, `GET /api/workspaces/:wid/activity`, `GET|POST /api/rooms/:rid/webhooks`(+`DELETE /api/rooms/:rid/webhooks/:id`, `POST …/:id/test`) — 웹훅도 새 UI 인스펙터에서 등록·시험·폐기합니다.
 - **확인 필요 수**: `overview.counts.needs_you` 는 인박스 목록과 같은 기준(내가 아직 읽지 않은 질문·내 앞 지목)이고, 승인 대기 참여 요청은 `pending_requests` 로 따로 셉니다(비서실 배지).
-- **첫 화면**: 계정이 하나도 없는 서버에서는 `GET /api/setup` 의 `legacy_rooms`(아직 계정에 연결되지 않은 기존 방 수)를 보고, 관리자 키를 모르는 상황이면 웹이 `기존 방 코드` 탭으로 열립니다.
+- **첫 화면**: 웹은 `계정 로그인`·`계정 만들기` 두 탭만 둡니다. 계정이 하나도 없는 서버면 `GET /api/setup` 의 `needs_owner` 를 보고 `계정 만들기` 로 열며, 관리자 키를 모르면 서버 운영자에게 문의하도록 안내합니다(`/ui/` 링크는 화면 하단에 하나만 둡니다).
 - **에이전트 API**: `GET /api/me` 가 워크스페이스와 방 목록(방별 권한·커서)을 돌려줍니다. 방이 하나면 `room`·`you`·`participants` 도 함께 와서 v1 클라이언트가 그대로 동작하고, 방이 여러 개면 `GET /api/rooms/:rid/{inbox,messages,ack}` 로 방을 지정합니다. 방이 여러 개일 때 방 없는 `GET /api/inbox` 는 `409` 가 아니라 방별 묶음(`rooms[]`, 메시지마다 `room_id`, 한 번에 최대 8개 방 + `omitted_rooms`)을 돌려줍니다 — MCP `read_inbox` 와 같은 계약입니다. 방 없는 `/api/messages`·`/api/ack` 는 seq 가 방마다 독립이라 그대로 `409 room_required` 입니다.
 - **마이그레이션**: 첫 요청에서 `core/migrate.ts` 가 v4 → v5 를 비파괴로 수행합니다(테이블·컬럼 추가 → 백필 → 불변식 5종 검증 → 버전 기록). 실패하면 버전을 쓰지 않아 다음 요청에서 다시 시도하며, 백필은 멱등입니다. 운영 D1은 `wrangler d1 export` 로 백업한 뒤 배포하세요.
 

@@ -570,10 +570,12 @@ export class RoomService {
   /**
    * 방 N개를 방마다 폴링하지 않도록 한 번에 돌려준다(Free 플랜 D1 쿼리 50/호출).
    * 지금 쿼리 수: 워크스페이스 1 + 방 1 + 구성원 1 + 에이전트 1 + 대기 요청 1 + 질문 1 + 읽음 1
-   *   + 인박스 건수 1 = 8.
+   *   + 방별 답할 것 1 = 8.
    * health 는 서버가 정하고 화면은 번역만 한다(paused / needs_input / idle / ok).
    *
    * counts.needs_you 는 인박스 목록과 같은 기준(내가 아직 읽지 않은 질문·내 앞 지목 메시지 수)이다.
+   * counts.needs_you_rooms 는 **같은 기준의 고유 방 수**로, 화면의 단일 "답변 필요 n곳" 이 쓴 값이다
+   * (방 health 의 needs_input 은 대기 참여 요청만 있어도 켜지므로 인박스 배지와 뜻이 달라진다).
    * 승인 대기 참여 요청은 pending_requests 로 따로 세어 비서실 배지가 맡는다(예전에는 needs_you 에
    * 더해져 배지 3 / 목록 1건처럼 숫자가 어긋났다).
    */
@@ -603,6 +605,17 @@ export class RoomService {
     const reads = scope.ownerId
       ? await this.db.all("SELECT room_id, last_read_seq FROM owner_reads WHERE owner_id=?", scope.ownerId)
       : [];
+    // 방별 "내가 아직 읽지 않은 답할 것" 유무 — 화면의 `답변 필요 n곳`·행 막대와 같은 술어(질문·내 앞 지목·시스템).
+    const attentionByRoom = scope.ownerId
+      ? await this.db.all(
+        `SELECT m.room_id, count(*) c FROM messages m JOIN rooms r ON r.id=m.room_id
+           LEFT JOIN owner_reads o ON o.owner_id=? AND o.room_id=m.room_id
+          WHERE r.workspace_id=? AND m.deleted_at IS NULL
+            AND ((m.sender_type='agent' AND m.kind='question') OR m.recipient_id='owner' OR m.sender_type='system')
+            AND m.seq > COALESCE(o.last_read_seq, 0)
+          GROUP BY m.room_id`,
+        scope.ownerId, workspaceId)
+      : [];
 
     const memberCount = new Map<string, number>();
     const agentRooms = new Map<string, string[]>();
@@ -618,6 +631,7 @@ export class RoomService {
     const pendingByRoom = new Map(pending.map(p => [String(p.room_id), Number(p.c)]));
     const questionByRoom = new Map(questions.map(q => [String(q.room_id), Number(q.c)]));
     const readByRoom = new Map(reads.map(r => [String(r.room_id), Number(r.last_read_seq)]));
+    const attentionRoomIds = new Set(attentionByRoom.map(a => String(a.room_id)));
 
     let unreadRooms = 0, pausedRooms = 0, needsYou = 0;
     const roomViews = rooms.map(r => {
@@ -640,6 +654,8 @@ export class RoomService {
         last_preview: r.last_preview ?? null,
         last_sender: r.last_sender_name ? { name: r.last_sender_name, type: r.last_sender_type ?? "" } : null,
         health: healthy,
+        // 레거시 세션(owner_reads 없음)은 읽음 위치를 모르므로 방 health 로 대신한다.
+        needs_attention: scope.ownerId ? attentionRoomIds.has(id) : healthy === "needs_input",
       };
     });
     const agentViews = agents.map(a => ({
@@ -648,22 +664,16 @@ export class RoomService {
       rooms: agentRooms.get(String(a.id)) ?? [],
     }));
     const pendingTotal = pending.reduce((n, p) => n + Number(p.c), 0);
-    // 인박스 목록(workspaceActivity)과 같은 술어로 "아직 안 읽은" 건수만 센다. 목록은 방을 가로질러
-    // 최근 50건을 보여 주고, 배지는 그중 내가 아직 읽지 않은 수다(질문·내 앞 지목·시스템 안내).
-    const attention = scope.ownerId
-      ? await this.db.one(
-        `SELECT count(*) c FROM messages m JOIN rooms r ON r.id=m.room_id
-           LEFT JOIN owner_reads o ON o.owner_id=? AND o.room_id=m.room_id
-          WHERE r.workspace_id=? AND m.deleted_at IS NULL
-            AND ((m.sender_type='agent' AND m.kind='question') OR m.recipient_id='owner' OR m.sender_type='system')
-            AND m.seq > COALESCE(o.last_read_seq, 0)`,
-        scope.ownerId, workspaceId)
-      : null;
+    // 인박스 목록(workspaceActivity)과 같은 술어로 "아직 안 읽은" 건수·방 수를 **한 조회**에서 센다.
+    // 목록은 방을 가로질러 최근 50건을 보여 주고, 배지는 그중 내가 아직 읽지 않은 수다(질문·내 앞 지목·시스템 안내).
+    // 방별 집계(attentionByRoom)를 그대로 합산해 overlay 숫자와 행 표시가 서로 어긋나지 않는다.
+    const attentionCount = attentionByRoom.reduce((n, a) => n + Number(a.c), 0);
     // 레거시 방 세션은 owner_reads 가 없어 읽음 위치를 알 수 없다 → 방 단위 개수(기존 기준)로 둔다.
-    const needsYouCount = scope.ownerId ? Number(attention?.c ?? 0) : needsYou;
+    const needsYouCount = scope.ownerId ? attentionCount : needsYou;
+    const needsYouRoomCount = scope.ownerId ? attentionByRoom.length : needsYou;
     return {
       workspace: { id: ws.id, name: ws.name, lobby_room_id: ws.lobby_room_id ?? null },
-      counts: { needs_you: needsYouCount, unread_rooms: unreadRooms, paused_rooms: pausedRooms },
+      counts: { needs_you: needsYouCount, needs_you_rooms: needsYouRoomCount, unread_rooms: unreadRooms, paused_rooms: pausedRooms },
       rooms: roomViews,
       agents: agentViews,
       pending_requests: pendingTotal,

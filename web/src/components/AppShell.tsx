@@ -15,7 +15,7 @@ import { useToast } from "./Toast.js";
 import { useWorkspace } from "../hooks/useWorkspace.js";
 import { useMediaQuery, type Theme } from "../hooks/useTheme.js";
 import { activeTab, type Route, type Tab } from "../lib/route.js";
-import { sortRoomCards } from "../lib/views.js";
+import { sortRoomCards, unreadRoomCount } from "../lib/views.js";
 import type { Owner, RoomDetail, Workspace } from "../lib/types.js";
 
 interface Props {
@@ -55,13 +55,26 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
   const rooms = useMemo(() => sortRoomCards(store.overview?.rooms ?? []), [store.overview]);
   const tab = activeTab(route);
   const liveAgents = store.overview?.agents.filter((a) => a.status === "active").length ?? 0;
+  // "답변 필요"는 어디서나 같은 값(인박스와 같은 기준의 고유 방 수)을 쓴다.
+  // 상단바·레일·탭·문서 제목·홈 상태줄·방 목록 필터가 모두 이 수를 쓴다.
+  const needRooms = store.overview?.counts.needs_you_rooms ?? store.overview?.rooms.filter((r) => r.needs_attention ?? r.health === "needs_input").length ?? 0;
+  const unreadRooms = store.overview ? unreadRoomCount(store.overview.rooms) : 0;
+  const viewTitle = route.roomId
+    ? store.room?.name ?? "방"
+    : route.view === "inbox"
+      ? "인박스"
+      : route.view === "rooms"
+        ? "방"
+        : route.view === "desk"
+          ? "비서실"
+          : route.view === "settings"
+            ? "설정"
+            : "관제실";
 
-  // 창 제목: 확인이 필요한 건수를 먼저 알린다.
+  // 창 제목: 답변을 기다리는 방 수를 먼저 알린다.
   useEffect(() => {
-    const needs = store.overview?.counts.needs_you ?? 0;
-    const label = route.roomId ? store.room?.name ?? "방" : tab === "inbox" ? "인박스" : tab === "desk" ? "비서실" : "관제실";
-    document.title = `${needs ? `(${needs}) ` : ""}${label} · ${workspace.name}`;
-  }, [store.overview, store.room, route.roomId, tab, workspace.name]);
+    document.title = `${needRooms ? `(${needRooms}) ` : ""}${viewTitle} · ${workspace.name}`;
+  }, [needRooms, viewTitle, workspace.name]);
 
   // 오류는 한 번만 토스트로 알리고, 연결 끊김 배너는 화면이 계속 보여 준다.
   useEffect(() => {
@@ -161,6 +174,7 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
       items={store.activity}
       rooms={rooms}
       ready={store.ready}
+      needCount={needRooms}
       pendingCount={store.overview?.pending_requests ?? 0}
       onOpenRoom={openRoom}
       onGoRooms={() => goView("rooms")}
@@ -170,6 +184,7 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
     <RoomsView
       rooms={rooms}
       agents={liveAgents}
+      needCount={needRooms}
       ready={store.ready}
       onOpenRoom={openRoom}
       onCreateRoom={() => setCreateOpen(true)}
@@ -219,8 +234,8 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
           </div>
           <div className="rail-group">
             {railButton("home", "관제실", "gauge")}
-            {railButton("inbox", "인박스", "inbox", store.overview?.counts.needs_you)}
-            {railButton("rooms", "방", "rooms", store.overview?.counts.unread_rooms)}
+            {railButton("inbox", "인박스", "inbox", needRooms)}
+            {railButton("rooms", "방", "rooms", unreadRooms)}
             {railButton("desk", "비서실", "bot", store.overview?.pending_requests)}
           </div>
           <div className="rail-spacer" />
@@ -257,10 +272,13 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
       <div className="shell-main">
         <header className={"topbar" + (route.roomId ? " is-room" : "")}>
           <div className="topbar-title">
-            <p className="eyebrow">{workspace.name}</p>
-            <h1 className="topbar-heading">
-              {route.roomId ? store.room?.name ?? "방" : route.view === "inbox" ? "통합 인박스" : route.view === "rooms" ? "방" : route.view === "desk" ? "비서실" : route.view === "settings" ? "설정" : "관제실"}
-            </h1>
+            <h1 className="topbar-heading">{viewTitle}</h1>
+            {!route.roomId ? (
+              <span className="topbar-meta">
+                {workspace.name} · 방 {rooms.length}
+                {needRooms ? ` · 답변 필요 ${needRooms}곳` : ""}
+              </span>
+            ) : null}
           </div>
           <button type="button" className="search-btn" onClick={() => setPaletteOpen(true)} aria-label="검색·이동 (⌘K)">
             <Icon name="search" size={15} />
@@ -296,9 +314,9 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
           {TABS.map((t) => {
             const badge =
               t.key === "inbox"
-                ? store.overview?.counts.needs_you
+                ? needRooms
                 : t.key === "rooms"
-                  ? store.overview?.counts.unread_rooms
+                  ? unreadRooms
                   : t.key === "desk"
                     ? store.overview?.pending_requests
                     : undefined;

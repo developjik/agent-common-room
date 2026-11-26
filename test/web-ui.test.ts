@@ -3,7 +3,7 @@
 // 맞으면 화면도 같은 규칙을 따른다.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { activeAgent, groupedWith, historyFloorLabel, plainPreview, recipientReset } from "../web/src/lib/format.js";
+import { activeAgent, DELIVERY_LABEL, deliveryNotice, groupedWith, historyFloorLabel, plainPreview, recipientReset, senderName } from "../web/src/lib/format.js";
 import { tokenizeLine } from "../web/src/lib/inline.js";
 import { completeMention, mentionTokenAt } from "../web/src/lib/mention.js";
 import type { Agent } from "../web/src/lib/types.js";
@@ -57,6 +57,23 @@ test("지목 대상은 활성(active) 참여자뿐이다", () => {
 test("'기록 #N부터'는 서버 가시성(seq > floor)과 같은 번호를 가리킨다", () => {
   assert.equal(historyFloorLabel(0), "기록 #1부터", "floor 0이면 첫 메시지(#1)부터 보인다");
   assert.equal(historyFloorLabel(10), "기록 #11부터", "floor 10이면 #10은 보이지 않고 #11부터다");
+});
+
+test("헤더 이름은 '나', 전달 상태는 예외만 말한다", () => {
+  const now = Date.UTC(2026, 10, 26, 4, 0, 0);
+  assert.equal(senderName(message({ sender: { type: "owner", id: "owner", name: "owner" } })), "나");
+  assert.equal(senderName(message()), "alpha");
+  const sent = message({
+    sender: { type: "owner", id: "owner", name: "owner" },
+    recipient: { id: "agt_1", name: "피클" },
+    delivery: { state: "sent" },
+    created_at: new Date(now - 60_000).toISOString(),
+  });
+  assert.equal(deliveryNotice(sent, now)?.label, "아직 전달 전", "1분 지나도 안 받았으면 알린다");
+  assert.equal(deliveryNotice({ ...sent, created_at: new Date(now - 5_000).toISOString() }, now), null, "방금 보낸 글은 조용히 기다린다");
+  assert.equal(deliveryNotice({ ...sent, delivery: { state: "fetched" } }, now), null, "받아갔으면 표시하지 않는다");
+  assert.equal(DELIVERY_LABEL.fetched, "전달됨", "'받아감' 대신 '전달됨'");
+  assert.equal(deliveryNotice({ ...sent, recipient: null }, now), null);
 });
 
 test("언더스코어/별표 강조는 단어 경계에서만 적용된다", () => {

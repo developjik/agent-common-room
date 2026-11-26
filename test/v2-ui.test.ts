@@ -19,10 +19,16 @@ import {
   pollDelay,
   poolInviteText,
   presenceLabel,
+  answerNeededRooms,
   roomInviteText,
+  roomStateText,
+  roomSummaryLine,
   setupLandingMode,
   sortRoomCards,
   unreadActivityCount,
+  needsAttentionRoomIds,
+  roomNeedsAnswer,
+  unreadRoomCount,
 } from "../web/src/lib/views.js";
 import type { ActivityItem, Message, RoomCard, RoomMember } from "../web/src/lib/types.js";
 
@@ -92,17 +98,44 @@ test("계정 만들기 규칙: 아이디 3~40자, 비밀번호 12자 이상", ()
   assert.equal(passwordProblem(" ".repeat(12)), null, "서버는 앞뒤 공백도 글자로 센다");
 });
 
-test("서버 health 를 상태 라벨로만 번역한다", () => {
-  assert.equal(healthLabel("needs_input").label, "확인 필요");
+test("서버 health 를 상태 라벨로만 번역한다(정상은 침묵)", () => {
+  assert.equal(healthLabel("needs_input").label, "답변 필요");
   assert.equal(healthLabel("needs_input").tone, "wait");
+  assert.equal(healthLabel("needs_input").quiet, false);
   assert.equal(healthLabel("paused").label, "정지");
-  assert.equal(healthLabel("ok").label, "안정");
-  assert.equal(healthLabel("idle").label, "조용함");
-  assert.equal(healthLabel("알수없음").label, "조용함", "모르는 값은 조용함으로(추측 금지)");
+  assert.equal(healthLabel("ok").label, "", "정상은 화면에 라벨을 그리지 않는다");
+  assert.equal(healthLabel("ok").quiet, true);
+  assert.equal(healthLabel("idle").label, "");
+  assert.equal(healthLabel("알수없음").quiet, true, "모르는 값은 침묵으로(추측 금지)");
+  assert.equal(roomStateText("ok"), "");
+  assert.equal(roomStateText("needs_input"), "답변 필요");
+  assert.equal(roomStateText("ok", true), "정지", "일시정지가 방 상태보다 먼저다");
 });
 
-test("관제실 정렬: 확인 필요 → 정지 → 안 읽음 → 진행 중 → 조용함, 같은 순위는 최근 활동", () => {
-  const needs = card({ id: "a", health: "needs_input", last_message_at: "2026-11-20T00:00:00.000Z" });
+test("`답변 필요` 수는 화면 어디서나 같은 술어(방별 답할 것 유무)를 쓴다", () => {
+  const rooms = [
+    card({ id: "a", health: "needs_input", needs_attention: true }),
+    card({ id: "b", health: "needs_input", unread: 4, needs_attention: false }),
+    card({ id: "c", unread: 2, needs_attention: true }),
+  ];
+  assert.equal(answerNeededRooms(rooms), 2, "health 기반 대체값(레거시 응답)");
+  assert.equal(needsYouRooms(rooms), 2, "예전 이름도 같은 값을 센다");
+  assert.equal(unreadRoomCount(rooms), 2);
+  assert.deepEqual([...needsAttentionRoomIds(rooms)].sort(), ["a", "c"], "서버가 준 방별 플래그를 그대로 쓴다(대기 요청만 있는 방은 제외)");
+  assert.deepEqual(
+    [...needsAttentionRoomIds([card({ id: "d", health: "needs_input" })])],
+    ["d"],
+    "플래그가 없는 응답은 health 로 대체한다",
+  );
+  assert.equal(
+    roomSummaryLine({ need: 2, unread: 2, paused: 1 }),
+    "답변 필요 2곳 · 안 읽은 방 2 · 정지 1",
+  );
+  assert.equal(roomSummaryLine({ need: 0, unread: 0, paused: 0 }), "", "0 은 쓰지 않는다");
+});
+
+test("관제실 정렬: 답변 필요 → 정지 → 안 읽음 → 진행 중 → 조용함, 같은 순위는 최근 활동", () => {
+  const needs = card({ id: "a", health: "needs_input", needs_attention: true, last_message_at: "2026-11-20T00:00:00.000Z" });
   const paused = card({ id: "b", health: "paused", paused: true });
   const unread = card({ id: "c", unread: 3 });
   const fresh = card({ id: "d", last_message_at: "2026-11-25T00:00:00.000Z" });
@@ -110,12 +143,19 @@ test("관제실 정렬: 확인 필요 → 정지 → 안 읽음 → 진행 중 �
   const lobby = card({ id: "f", kind: "lobby", health: "idle", last_message_at: null });
 
   const order = sortRoomCards([idle, fresh, unread, paused, needs, lobby]).map((r) => r.id);
-  assert.deepEqual(order.slice(0, 4), ["a", "b", "c", "d"], "확인 필요·정지·안 읽음·진행 중 순");
+  assert.deepEqual(order.slice(0, 4), ["a", "b", "c", "d"], "답변 필요·정지·안 읽음·진행 중 순");
   assert.equal(order[4], "f", "같은 조용함 순위에서는 로비가 먼저");
   assert.equal(needsYouRooms([needs, paused, unread]), 1);
+
+  // 승인 요청만 있어 health 가 needs_input 인 방(needs_attention=false)은 답변 필요 방보다 뒤에 선다.
+  const pendingOnly = card({ id: "g", health: "needs_input", needs_attention: false });
+  const directedOnly = card({ id: "h", health: "ok", needs_attention: true, last_message_at: "2026-11-01T00:00:00.000Z" });
+  assert.deepEqual(sortRoomCards([pendingOnly, directedOnly]).map((r) => r.id), ["h", "g"], "답변 필요 방이 승인 대기 방보다 먼저");
+  assert.equal(roomNeedsAnswer(pendingOnly), false);
+  assert.equal(roomNeedsAnswer(directedOnly), true);
 });
 
-test("인박스 필터: 종류(질문·내 앞 지목·시스템)와 방", () => {
+test("인박스 필터: 종류(질문·나에게·시스템)와 방", () => {
   const q = message({ seq: 1, kind: "question" });
   const direct = message({ seq: 2, recipient: { id: "owner", name: "owner" } });
   const sys = message({ seq: 3, sender: { type: "system", id: "system", name: "system" } });
@@ -175,7 +215,7 @@ test("방 구성원 → 화면 참여자: 멤버십과 신원 상태를 함께 �
   assert.equal(active.can_write, false);
   assert.equal(memberToAgent(m({ status: "invited" })).status, "unclaimed", "초대만 된 구성원은 지목 대상이 아니다");
   assert.equal(memberToAgent(m({ agent_status: "revoked" })).status, "revoked");
-  assert.equal(presenceLabel("active", null), "대기");
+  assert.equal(presenceLabel("active", null), "연결 대기");
   assert.equal(presenceLabel("active", new Date().toISOString()), "온라인");
   assert.equal(presenceLabel("revoked", new Date().toISOString()), "폐기됨");
 });
@@ -190,24 +230,14 @@ test("초대 전달 문장은 워크스페이스·방·링크를 구분해 담�
   assert.ok(!/로비/.test(room), "방 초대에 로비 문구를 섞지 않는다");
 });
 
-test("P0-1: 계정이 없고 관리자 키를 모르면 기존 방 코드 탭으로 열고, 방이 없으면 계정 만들기로 연다", () => {
+test("P0-1: 오너가 없으면 계정 만들기로 열고, 이미 있으면 로그인으로 연다(방 코드 탭 없음)", () => {
   assert.equal(setupLandingMode(null), "login");
   assert.equal(setupLandingMode({ needs_owner: false }), "login");
-  assert.equal(setupLandingMode({ needs_owner: true, bootstrap_allowed: true, legacy_rooms: 0 }), "onboard");
+  assert.equal(setupLandingMode({ needs_owner: true }), "onboard", "오너가 없으면 계정 만들기가 첫 화면");
   assert.equal(
-    setupLandingMode({ needs_owner: true, bootstrap_allowed: false, legacy_rooms: 2 }),
-    "legacy",
-    "관리자 키를 모르는 상태에서 기존 방이 있으면 방 코드 경로가 막다른 길을 피한다",
-  );
-  assert.equal(
-    setupLandingMode({ needs_owner: true, bootstrap_allowed: true, legacy_rooms: 1 }),
+    setupLandingMode({ needs_owner: true, bootstrap_allowed: false, legacy_rooms: 2 } as { needs_owner?: boolean }),
     "onboard",
-    "웹에서 키를 만들 수 있으면 계정 만들기가 첫 화면이다",
-  );
-  assert.equal(
-    setupLandingMode({ needs_owner: true, bootstrap_allowed: false, legacy_rooms: 0 }),
-    "onboard",
-    "기존 방이 없으면 안내만 하고 계정 만들기 탭에 둔다",
+    "기존 방이 있어도 방 코드 탭을 열지 않는다",
   );
 });
 

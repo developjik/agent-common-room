@@ -9,7 +9,7 @@ import { useToast } from "./Toast.js";
 import { copyText } from "../lib/browserClipboard.js";
 import { ApiError } from "../lib/api.js";
 import { fmtFull, remainLabel, relTime } from "../lib/format.js";
-import { agentNameConflict, poolInviteText, presenceLabel, presenceTone } from "../lib/views.js";
+import { agentNameConflict, poolInviteText, presenceTone } from "../lib/views.js";
 import type { WorkspaceStore } from "../hooks/useWorkspace.js";
 import type { Invite, JoinRequest, PoolAgent, RoomCard, Workspace } from "../lib/types.js";
 
@@ -59,49 +59,48 @@ export function DeskView({ store, workspace, rooms, focus, onClearFocus, onCreat
 
   const revoke = async (a: PoolAgent) => {
     const ok = await confirm({
-      title: `${a.name} 의 토큰을 폐기할까요?`,
-      text: "즉시 모든 방에서 읽기·쓰기가 막힙니다. 과거 메시지의 귀속은 남지만, 되돌리려면 새 초대 링크로 다시 참여해야 합니다.",
-      ok: "폐기",
+      title: `${a.name} 연결을 끊을까요?`,
+      text: "즉시 모든 방에서 읽기·쓰기가 막힙니다. 과거 메시지의 귀속은 남고, 다시 연결하려면 새 초대 링크가 필요합니다.",
+      ok: "연결 끊기",
       danger: true,
     });
     if (!ok) return;
     try {
       await store.revokeAgent(a.id);
-      notify(`${a.name} 의 토큰을 폐기했습니다.`);
+      notify(`${a.name} 연결을 끊었습니다.`);
     } catch (e) {
-      notify(e instanceof Error ? e.message : "폐기하지 못했습니다.");
+      notify(e instanceof Error ? e.message : "연결을 끊지 못했습니다.");
     }
   };
 
   return (
     <div className="page">
-      <SectionHead
-        title="비서실"
-        hint={`풀 ${live.length}명 · 방 ${rooms.length}개 · 접속 전 ${live.filter((a) => a.status === "unclaimed").length}명`}
-        action={
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => {
-              inviteRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
-              inviteRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
-            }}
-          >
-            <Icon name="link" size={14} /> 비서 초대
-          </button>
-        }
-      />
+      <div className="page-tools">
+        <p className="page-summary">
+          비서 {live.length}명 · 방 {rooms.length}개
+          {live.filter((a) => a.status === "unclaimed").length ? ` · 연결 대기 ${live.filter((a) => a.status === "unclaimed").length}명` : ""}
+        </p>
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={() => {
+            inviteRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+            inviteRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+          }}
+        >
+          <Icon name="link" size={14} /> 비서 초대
+        </button>
+      </div>
 
       <div className="desk-grid">
         <div className="desk-main">
           <section aria-labelledby="requests-head">
             <SectionHead
               title="승인 대기"
-              hint="초대 링크로 참여 요청이 오면 여기서 이름·권한을 정해 승인합니다"
               action={store.requests.length ? <span className="pill pill-wait">{store.requests.length}건</span> : null}
             />
             {store.requests.length === 0 ? (
-              <p className="desk-empty-line">대기 중인 요청이 없습니다.</p>
+              <p className="desk-empty-line">대기 중인 요청이 없습니다</p>
             ) : (
               <ul className="request-list">
                 {store.requests.map((q) => (
@@ -112,12 +111,12 @@ export function DeskView({ store, workspace, rooms, focus, onClearFocus, onCreat
           </section>
 
           <section aria-labelledby="pool-head">
-            <SectionHead title="풀" hint="방에 배치하면 그 방의 대화가 비서의 /api/me 에 나타납니다" />
+            <SectionHead title="비서" hint="방에 넣으면 그 방 대화를 받습니다" />
             {live.length === 0 ? (
               <EmptyState
                 icon="bot"
                 title="아직 비서가 없습니다"
-                text="아래에서 초대 링크를 만들어 비서에게 그대로 전달하세요."
+                text="초대 링크를 만들어 비서에게 그대로 전달하세요."
                 action={
                   <button
                     type="button"
@@ -150,8 +149,7 @@ export function DeskView({ store, workspace, rooms, focus, onClearFocus, onCreat
                           </p>
                           <p className="agent-card-status">
                             <span className="dot" data-tone={tone} aria-hidden="true" />
-                            {presenceLabel(a.status, a.last_seen)}
-                            {a.last_seen ? ` · ${relTime(a.last_seen)} 접속` : a.status === "unclaimed" ? " · 토큰 미수령" : ""}
+                            {a.status === "unclaimed" || !a.last_seen ? "연결 대기" : `${relTime(a.last_seen)} 접속`}
                           </p>
                         </div>
                       </div>
@@ -174,7 +172,7 @@ export function DeskView({ store, workspace, rooms, focus, onClearFocus, onCreat
                           <Icon name="plus" size={13} /> 방 배치
                         </button>
                         <button type="button" className="btn btn-sm btn-danger" onClick={() => void revoke(a)}>
-                          폐기
+                          연결 끊기
                         </button>
                       </div>
                     </li>
@@ -184,7 +182,7 @@ export function DeskView({ store, workspace, rooms, focus, onClearFocus, onCreat
             )}
             {revoked.length ? (
               <details className="revoked-box">
-                <summary>폐기된 비서 {revoked.length}명</summary>
+                <summary>연결 끊긴 비서 {revoked.length}명</summary>
                 <ul>
                   {revoked.map((a) => (
                     <li key={a.id}>
@@ -192,7 +190,7 @@ export function DeskView({ store, workspace, rooms, focus, onClearFocus, onCreat
                       <Avatar name={a.name} small />
                       <span className="min-w-0 flex-1">
                         <span className="font-semibold">{a.name}</span>
-                        <span className="text-[11.5px] text-faint"> · {fmtFull(a.created_at)} 등록 · 폐기됨</span>
+                        <span className="text-[11px] text-faint"> · {fmtFull(a.created_at)} 등록 · 연결 끊김</span>
                       </span>
                     </li>
                   ))}
@@ -216,13 +214,13 @@ export function DeskView({ store, workspace, rooms, focus, onClearFocus, onCreat
           </div>
           <section className="aside-card mt-3">
             <div className="aside-head">
-              <h2 className="section-title">풀 초대 이력</h2>
+              <h2 className="section-title">초대 이력</h2>
               <span className="pill">{invites?.filter((i) => i.active).length ?? 0}개 활성</span>
             </div>
             {invites === null ? (
               <p className="desk-empty-line">불러오는 중…</p>
             ) : invites.filter((i) => (i.kind ?? "room") === "pool").length === 0 ? (
-              <p className="desk-empty-line">아직 만든 초대가 없습니다.</p>
+              <p className="desk-empty-line">아직 만든 초대가 없습니다</p>
             ) : (
               <ul className="invite-list">
                 {[...invites]
@@ -335,7 +333,7 @@ function RequestCard({ store, q, rooms }: { store: WorkspaceStore; q: JoinReques
         can_write: scope !== "ro",
         name: q.existing_agent || wanted === q.display_name.trim() ? undefined : wanted,
       });
-      notify(`${approved} 님을 승인했습니다. 상대가 토큰을 한 번 받아 가면 대화할 수 있습니다.`);
+      notify(`${approved} 님을 승인했습니다. 상대가 연결하면 대화할 수 있습니다.`);
     } catch (e) {
       if (e instanceof ApiError && e.code === "name_taken") {
         notify(`'${wanted}' 이름은 이미 쓰고 있습니다. 이름을 바꿔 다시 승인하세요.`);
@@ -374,8 +372,8 @@ function RequestCard({ store, q, rooms }: { store: WorkspaceStore; q: JoinReques
           <p className="flex flex-wrap items-center gap-1.5 text-[13px] font-bold">
             {q.display_name}
             {q.product_self_declared ? <span className="tag">{q.product_self_declared}</span> : null}
-            {q.kind === "pool" ? <span className="tag">풀 초대</span> : null}
-            {q.existing_agent ? <span className="tag">기존 비서</span> : null}
+            {q.kind === "pool" ? <span className="tag">초대</span> : null}
+            {q.existing_agent ? <span className="tag">이미 연결됨</span> : null}
           </p>
           <p className="text-[11.5px] text-faint">
             {fmtFull(q.created_at)} 요청
@@ -399,10 +397,10 @@ function RequestCard({ store, q, rooms }: { store: WorkspaceStore; q: JoinReques
         />
         <p className="mt-1 text-[11px] leading-relaxed text-faint">
           {q.existing_agent
-            ? "이미 토큰이 있는 비서입니다. 승인하면 이름은 그대로 두고 이 방의 구성원만 추가합니다."
+            ? "이미 연결된 비서 · 이 방에만 추가"
             : conflict
               ? "이름을 바꾸면 바로 승인할 수 있습니다."
-              : "같은 이름의 비서가 이미 있으면 승인할 수 없습니다. 그때는 다른 이름으로 승인하세요."}
+              : ""}
         </p>
         {conflict ? (
           <p className="mt-1 text-[11px] leading-relaxed auth-error" role="alert">
@@ -495,12 +493,9 @@ export function PoolInvitePanel({
     <section className="aside-card" aria-label="비서 초대">
       <div className="aside-head">
         <h2 className="section-title">비서 초대</h2>
-        <span className="pill">{scopeLabel ?? "풀 → 로비"}</span>
+        {scopeLabel ? <span className="pill">{scopeLabel}</span> : null}
       </div>
-      <p className="panel-note">
-        링크로는 <strong>참여 요청</strong>만 가능하고, 승인은 위 <strong>승인 대기</strong>에서 합니다. 링크는 만든 직후에만 보이므로 다시
-        보내려면 새로 만드세요.
-      </p>
+      <p className="panel-note">링크는 만든 직후에만 보입니다</p>
       <div className="grid grid-cols-2 gap-2 mt-2">
         <div>
           <label className="label" htmlFor="pool-inv-ttl">
@@ -631,7 +626,7 @@ function PlaceDialog({
           </button>
         </div>
         <p className="panel-note mt-1">
-          새로 넣을 방만 저장합니다. 이미 참여한 방의 권한은 바뀌지 않으니, 권한은 그 방의 구성원 패널에서 바꾸세요.
+          새로 넣을 방만 저장합니다. 이미 참여한 방 권한은 그 방의 구성원 패널에서 바꾸세요.
         </p>
         <ul className="place-list">
           {rooms.map((r) => {

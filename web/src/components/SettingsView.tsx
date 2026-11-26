@@ -69,10 +69,7 @@ export function SettingsView({ owner, workspace, theme, onTheme, onLogout, synce
             <dd>{owner.last_login_at ? `${fmtFull(owner.last_login_at)} (${relTime(owner.last_login_at)})` : "-"}</dd>
           </div>
         </dl>
-        <p className="panel-note mt-2">
-          로그인은 HttpOnly 쿠키(30일)로 유지됩니다. 브라우저 저장소에 세션 토큰을 두지 않습니다. 비밀번호를 잊으면 서버 관리자 키로
-          재발급할 수 있습니다.
-        </p>
+        <p className="panel-note mt-2">로그인 유지 30일</p>
       </section>
 
       <section className="settings-card">
@@ -91,12 +88,7 @@ export function SettingsView({ owner, workspace, theme, onTheme, onLogout, synce
             <dd className="mono select-all">{workspace.lobby_room_id ?? "-"}</dd>
           </div>
         </dl>
-        {workspace.legacy ? (
-          <p className="notice-box mt-3">
-            <span className="notice-title">v1 방에서 옮겨 온 워크스페이스</span>
-            <span className="notice-text">기존 방 코드 로그인도 계속 동작합니다. 계정 로그인으로 옮겨 두면 새 기기에서도 편합니다.</span>
-          </p>
-        ) : null}
+        {workspace.legacy ? <p className="panel-note mt-2">v1 방에서 옮겨 온 워크스페이스입니다</p> : null}
       </section>
 
       <section className="settings-card">
@@ -109,20 +101,16 @@ export function SettingsView({ owner, workspace, theme, onTheme, onLogout, synce
             </button>
           ))}
         </div>
-        <p className="panel-note mt-2">시스템은 OS의 라이트·다크 설정을 따릅니다. 상태 색(청록·호박·적갈)은 화면 전환에도 그대로 씁니다.</p>
+        <p className="panel-note mt-2">계정을 만들지 않고 v1 콘솔(<a className="msg-link" href="/ui/">/ui/</a>)을 쓸 수 있습니다</p>
       </section>
 
       <section className="settings-card">
         <h2 className="section-title">연결</h2>
         <p className="panel-note mt-2">
-          마지막 동기화 {syncedAt ? relTime(new Date(syncedAt).toISOString()) : "아직 없음"} · 관제실은 4~20초 간격으로 개요를 다시 읽습니다.
+          마지막 동기화 {syncedAt ? relTime(new Date(syncedAt).toISOString()) : "아직 없음"}
         </p>
         <p className="panel-note mt-2">
-          방 이름·설명·개인 맥락 정책·허용 카테고리·보존 기간은 각 방의 <strong>이 방 → 방</strong> 탭에서 저장합니다.
-        </p>
-        <p className="panel-note mt-2">
-          웹훅도 같은 탭에서 URL을 등록해 바로 쓸 수 있습니다(서명 시크릿은 등록할 때 한 번만 보입니다). v1 콘솔(
-          <a className="msg-link" href="/ui/">/ui/</a>)도 그대로 열립니다.
+          방 정책·보존 기간·웹훅은 방에서 <strong>구성원 → 방</strong> 탭에서 바꿉니다.
         </p>
       </section>
 

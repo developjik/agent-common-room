@@ -6,7 +6,7 @@ export interface SetupState {
   admin_key_configured: boolean;
   bootstrap_allowed: boolean;
   needs_owner?: boolean;
-  /** 아직 계정에 연결되지 않은 기존 방(로비) 수 — 첫 화면이 방 코드 경로를 안내하는 데 쓴다. */
+  /** 아직 계정에 연결되지 않은 기존 방(로비) 수. */
   legacy_rooms?: number;
   schema_version: number;
   runtime?: Runtime;
@@ -112,6 +112,8 @@ export interface RoomCard {
   last_preview: string | null;
   last_sender: { name: string; type: string } | null;
   health: RoomHealth;
+  /** 내가 아직 읽지 않은 답할 것(질문·나에게 온 글·시스템 안내)이 있는 방. "답변 필요 n곳" 과 같은 술어. */
+  needs_attention?: boolean;
 }
 
 /** 개요의 비서 요약(방 이름 대신 방 ID 목록). */
@@ -126,7 +128,7 @@ export interface AgentSummary {
 
 export interface Overview {
   workspace: { id: string; name: string; lobby_room_id: string | null };
-  counts: { needs_you: number; unread_rooms: number; paused_rooms: number };
+  counts: { needs_you: number; /** 같은 기준(안 읽은 질문·나에게 온 글·시스템 안내)의 고유 방 수 */ needs_you_rooms: number; unread_rooms: number; paused_rooms: number };
   rooms: RoomCard[];
   agents: AgentSummary[];
   pending_requests: number;

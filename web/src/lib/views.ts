@@ -57,31 +57,79 @@ export function passwordProblem(raw: string): string | null {
 }
 
 export interface HealthLabel {
+  /** 화면에 그릴 라벨. 정상(ok·idle)은 빈 문자열이다("정상은 침묵"). */
   label: string;
   tone: "online" | "wait" | "paused" | "idle";
-  /** 타일의 한 줄 설명. */
+  /** 어디에나 붙는 대신 hover·title 로만 보여 주는 한 줄 설명. */
   hint: string;
+  /** 할 일이 없는 상태(정상). 점·라벨을 그리지 않는다. */
+  quiet: boolean;
 }
 
 const HEALTH: Record<string, HealthLabel> = {
-  ok: { label: "안정", tone: "online", hint: "최근 30분 안에 대화가 있었습니다" },
-  needs_input: { label: "확인 필요", tone: "wait", hint: "내가 답해야 할 질문·승인이 있습니다" },
-  paused: { label: "정지", tone: "paused", hint: "에이전트는 읽기만 할 수 있습니다" },
-  idle: { label: "조용함", tone: "idle", hint: "30분 넘게 새 글이 없습니다" },
+  ok: { label: "", tone: "online", hint: "30분 안에 대화가 있었습니다", quiet: true },
+  needs_input: { label: "답변 필요", tone: "wait", hint: "내가 답해야 할 질문이 있습니다", quiet: false },
+  paused: { label: "정지", tone: "paused", hint: "비서는 읽기만 할 수 있습니다", quiet: false },
+  idle: { label: "", tone: "idle", hint: "30분 넘게 새 글이 없습니다", quiet: true },
 };
 
-/** 서버가 정한 health 를 한국어 한 단어로 옮긴다(추측하지 않는다). */
+/** 서버가 정한 health 를 한국어 한 단어로 옮긴다(추측하지 않는다). 정상은 말하지 않는다. */
 export function healthLabel(health: RoomHealth | string): HealthLabel {
   return HEALTH[health] ?? HEALTH.idle;
 }
 
+/** 방 health 를 상태 한 단어로 옮긴다(정상이면 빈 문자열). 화면 행은 roomNeedsAnswer 를 쓴다. */
+export function roomStateText(health: RoomHealth | string, paused = false): string {
+  return paused || health === "paused" ? "정지" : health === "needs_input" ? "답변 필요" : "";
+}
+
+/** 방 health 기준으로 답을 기다리는 방 수(서버 needs_attention 이 없는 레거시 응답용 대체값). */
+export function answerNeededRooms(rooms: RoomCard[]): number {
+  return rooms.filter((r) => r.health === "needs_input").length;
+}
+
 /**
- * 관제실 방 타일 순서: 확인 필요 → 정지 → 안 읽음 → 진행 중 → 조용함.
+ * 이 방에 내가 아직 답할 것(안 읽은 질문·나에게 온 글·시스템 안내)이 있는가.
+ * 서버가 준 방별 플래그를 쓰고, 플래그가 없는 응답(레거시 세션)만 health 로 대체한다.
+ * 행 막대·`답변 필요` 단어·정렬·방 전환 메뉴가 모두 이 판정 하나를 쓴다.
+ */
+export function roomNeedsAnswer(r: RoomCard): boolean {
+  return r.needs_attention ?? r.health === "needs_input";
+}
+
+/** "답변 필요" 행 표시: 서버가 준 방별 답할 것(없으면 health 로 대체). */
+export function needsAttentionRoomIds(rooms: RoomCard[]): Set<string> {
+  const out = new Set<string>();
+  for (const r of rooms) if (roomNeedsAnswer(r)) out.add(r.id);
+  return out;
+}
+
+/** 안 읽은 글이 있는 방 수. */
+export function unreadRoomCount(rooms: RoomCard[]): number {
+  return rooms.filter((r) => r.unread > 0).length;
+}
+
+/**
+ * 관제실 상태 한 줄. 0 은 쓰지 않고, 할 일이 없으면 빈 문자열이다(정상은 침묵).
+ * need 는 인박스와 같은 기준의 고유 방 수(서버 counts.needs_you_rooms).
+ */
+export function roomSummaryLine(counts: { need: number; unread: number; paused: number }): string {
+  return [
+    counts.need ? `답변 필요 ${counts.need}곳` : "",
+    counts.unread ? `안 읽은 방 ${counts.unread}` : "",
+    counts.paused ? `정지 ${counts.paused}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/**
+ * 관제실 방 목록 순서: 답변 필요 → 정지 → 안 읽음 → 진행 중 → 조용함.
  * 같은 순위에서는 최근 활동이 위, 로비는 같은 순위에서 먼저(정체성).
  */
 export function sortRoomCards(rooms: RoomCard[]): RoomCard[] {
   const rank = (r: RoomCard): number =>
-    r.health === "needs_input" ? 0 : r.paused || r.health === "paused" ? 1 : r.unread > 0 ? 2 : r.health === "ok" ? 3 : 4;
+    roomNeedsAnswer(r) ? 0 : r.paused || r.health === "paused" ? 1 : r.unread > 0 ? 2 : r.health === "ok" ? 3 : 4;
   return [...rooms].sort((a, b) => {
     const d = rank(a) - rank(b);
     if (d !== 0) return d;
@@ -102,7 +150,7 @@ export type ActivityKind = "all" | "question" | "directed" | "system";
 export const ACTIVITY_KINDS: { key: ActivityKind; label: string }[] = [
   { key: "all", label: "전체" },
   { key: "question", label: "질문" },
-  { key: "directed", label: "내 앞 지목" },
+  { key: "directed", label: "나에게" },
   { key: "system", label: "시스템" },
 ];
 
@@ -115,7 +163,7 @@ export function activityKind(item: ActivityItem): Exclude<ActivityKind, "all"> {
 
 export const ACTIVITY_LABEL: Record<Exclude<ActivityKind, "all">, string> = {
   question: "질문",
-  directed: "내 앞 지목",
+  directed: "나에게",
   system: "시스템",
 };
 
@@ -168,12 +216,14 @@ export interface PaletteItem {
   group: "이동" | "방" | "비서" | "명령";
   label: string;
   hint?: string;
+  /** 항목마다 다른 아이콘(이동 4행이 모두 같은 아이콘이면 구분이 안 된다). */
+  icon?: "gauge" | "inbox" | "rooms" | "bot" | "plus" | "link";
   action: PaletteAction;
 }
 
 export const PALETTE_COMMANDS: PaletteItem[] = [
-  { id: "cmd:new-room", group: "명령", label: "새 방 만들기", hint: "이름과 설명으로 방을 만듭니다", action: { type: "new-room" } },
-  { id: "cmd:invite", group: "명령", label: "비서 초대 링크 만들기", hint: "비서실에서 풀 초대 링크를 만듭니다", action: { type: "invite" } },
+  { id: "cmd:new-room", group: "명령", label: "새 방 만들기", icon: "plus", action: { type: "new-room" } },
+  { id: "cmd:invite", group: "명령", label: "비서 초대 링크 만들기", icon: "link", action: { type: "invite" } },
 ];
 
 /** 팔레트 항목: 이동 4 + 방 + 비서 + 명령. 검색어는 라벨·힌트의 부분 일치(대소문자 무시). */
@@ -183,22 +233,24 @@ export function paletteItems(
   limit = 14,
 ): PaletteItem[] {
   const nav: PaletteItem[] = [
-    { id: "nav:home", group: "이동", label: "관제실 (홈)", action: { type: "view", view: "home" } },
-    { id: "nav:inbox", group: "이동", label: "통합 인박스", action: { type: "view", view: "inbox" } },
-    { id: "nav:rooms", group: "이동", label: "방 목록", action: { type: "view", view: "rooms" } },
-    { id: "nav:desk", group: "이동", label: "비서실", action: { type: "view", view: "desk" } },
+    { id: "nav:home", group: "이동", label: "관제실 (홈)", icon: "gauge", action: { type: "view", view: "home" } },
+    { id: "nav:inbox", group: "이동", label: "통합 인박스", icon: "inbox", action: { type: "view", view: "inbox" } },
+    { id: "nav:rooms", group: "이동", label: "방 목록", icon: "rooms", action: { type: "view", view: "rooms" } },
+    { id: "nav:desk", group: "이동", label: "비서실", icon: "bot", action: { type: "view", view: "desk" } },
   ];
   const rooms: PaletteItem[] = input.rooms.map((r) => ({
     id: `room:${r.id}`,
     group: "방",
     label: r.name,
-    hint: r.kind === "lobby" ? "로비" : r.unread ? `새 글 ${r.unread}` : healthLabel(r.health).label,
+    icon: "rooms",
+    hint: r.kind === "lobby" ? "로비" : r.unread ? `새 글 ${r.unread}` : r.paused || r.health === "paused" ? "정지" : roomNeedsAnswer(r) ? "답변 필요" : undefined,
     action: { type: "room", roomId: r.id },
   }));
   const agents: PaletteItem[] = input.agents.map((a) => ({
     id: `agent:${a.id}`,
     group: "비서",
     label: a.name,
+    icon: "bot",
     hint: a.product || "비서실에서 보기",
     action: { type: "agent", agentId: a.id },
   }));
@@ -262,16 +314,15 @@ export function pollDelay(quiet: number, waiting: boolean, steps: number[] = POL
 
 // ---------- 최초 화면(로그인/계정 만들기) ----------
 
-export type LandingMode = "login" | "legacy" | "onboard";
+export type LandingMode = "login" | "onboard";
 
 /**
  * 계정이 하나도 없을 때 어느 탭으로 열지 정한다.
- * 관리자 키를 모르면 '계정 만들기'는 막다른 길이라(웹 부트스트랩이 꺼져 있으면 키 입력창만 보인다),
- * 아직 계정에 연결되지 않은 기존 방이 있으면 '기존 방 코드'로 열어 준다.
+ * 로그인 화면만 보이는 것은 막다른 길이라, 오너가 없으면 '계정 만들기'로 연다.
+ * (v1 방 코드 로그인은 화면에서 걷어냈다 — 백엔드 /api/auth/legacy 는 기존 클라이언트용으로 남긴다.)
  */
-export function setupLandingMode(setup: { needs_owner?: boolean; bootstrap_allowed?: boolean; legacy_rooms?: number } | null): LandingMode {
+export function setupLandingMode(setup: { needs_owner?: boolean } | null): LandingMode {
   if (!setup?.needs_owner) return "login";
-  if (setup.legacy_rooms && setup.legacy_rooms > 0 && !setup.bootstrap_allowed) return "legacy";
   return "onboard";
 }
 

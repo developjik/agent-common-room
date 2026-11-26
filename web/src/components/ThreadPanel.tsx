@@ -36,10 +36,7 @@ export function ThreadPanel({ chat, roomId, rootSeq, agents, onClose, onJump, on
     <>
       <div className="panel-head">
         <div className="min-w-0 flex-1">
-          <h2 className="panel-title">스레드</h2>
-          <p className="truncate text-[11.5px] text-muted">
-            #{rootSeq} · 답글 {replies.length}개
-          </p>
+          <h2 className="panel-title">답글 {replies.length}개</h2>
         </div>
         {root ? (
           <button type="button" className="btn btn-sm" onClick={() => onJump(root.seq)}>

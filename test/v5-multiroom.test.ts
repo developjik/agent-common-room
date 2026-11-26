@@ -582,12 +582,16 @@ test("P1-2 회귀: 인박스 배지(counts.needs_you)는 승인 대기를 빼고
     const unread = feed.items.filter((i: any) => i.unread).length;
     assert.equal(overview.counts.needs_you, 2, "안 읽은 질문 2건");
     assert.equal(overview.counts.needs_you, unread, "배지와 인박스 목록의 확인 필요 수가 같다");
+    assert.equal(overview.counts.needs_you_rooms, 1, "화면의 '답변 필요 n곳' 은 고유 방 수다");
+    assert.equal(overview.rooms.find((x: any) => x.id === lobbyId).needs_attention, true, "방 행 막대도 같은 술어");
     assert.equal(overview.pending_requests, 0);
 
     // 방을 열어 읽음 위치를 옮기면 배지도 0이 된다(읽었지만 답하지 않은 것을 계속 세지 않는다).
     await t.call("GET", `/api/rooms/${lobbyId}/messages?after=0`, owner);
     const read = (await t.call("GET", `/api/workspaces/${wid}/overview`, owner)).json;
     assert.equal(read.counts.needs_you, 0);
+    assert.equal(read.counts.needs_you_rooms, 0);
+    assert.equal(read.rooms.find((x: any) => x.id === lobbyId).needs_attention, false, "읽으면 행 마크도 꺼진다");
     const feedAfter = (await t.call("GET", `/api/workspaces/${wid}/activity`, owner)).json;
     assert.equal(feedAfter.items.filter((i: any) => i.unread).length, 0);
     assert.ok(feedAfter.items.length >= 2, "목록은 이력으로 남는다");
@@ -597,6 +601,8 @@ test("P1-2 회귀: 인박스 배지(counts.needs_you)는 승인 대기를 빼고
     await t.call("POST", `/api/rooms/${lobbyId}/messages`, cl.agent_token, { client_id: "d-2", content: "@owner 확인 부탁드려요", recipient: "owner" });
     const directed = (await t.call("GET", `/api/workspaces/${wid}/overview`, owner)).json;
     assert.equal(directed.counts.needs_you, 1, "내 앞 지목 1건만 센다");
+    assert.equal(directed.counts.needs_you_rooms, 1, "지목된 방도 '답변 필요' 방으로 센다(방 health 와 무관하게)");
+    assert.equal(directed.rooms.find((x: any) => x.id === lobbyId).needs_attention, true, "질문이 없어도 지목이 있으면 행을 표시한다");
   } finally { await t.close(); }
 });
 

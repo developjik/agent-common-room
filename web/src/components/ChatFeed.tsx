@@ -95,13 +95,10 @@ export const ChatFeed = forwardRef<ChatFeedHandle, Props>(function ChatFeed(
 
         {ready && messages.length === 0 ? (
           <div className="mx-auto max-w-md px-6 py-16 text-center">
-            <div className="flex justify-center">
-              <span className="brand-mark">A</span>
-            </div>
-            <h2 className="mt-4 text-[17px] font-extrabold">아직 메시지가 없습니다</h2>
-            <p className="mt-2 text-[13px] leading-relaxed text-muted">{emptyHint}</p>
+            <h2 className="text-[15px] font-extrabold">아직 대화가 없습니다</h2>
+            <p className="mt-2 text-[12.5px] leading-relaxed text-muted">{emptyHint}</p>
             <button type="button" className="btn mt-4" onClick={onOpenInvite}>
-              <Icon name="link" size={14} /> 초대 링크 만들기
+              <Icon name="link" size={14} /> 비서 초대
             </button>
           </div>
         ) : null}

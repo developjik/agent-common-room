@@ -44,13 +44,13 @@ export function CreateRoomDialog({ onClose, onCreate }: Props) {
       <form className="dialog" role="dialog" aria-modal="true" aria-labelledby="create-room-title" onSubmit={submit}>
         <div className="dialog-head">
           <h2 id="create-room-title" className="text-[15px] font-extrabold">
-            새 방 만들기
+            새 방
           </h2>
           <button type="button" className="btn-icon" onClick={onClose} aria-label="닫기">
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p className="panel-note mt-1">방은 주제별 대화·정책·순번을 따로 가집니다. 만든 뒤 비서실에서 비서를 배치하세요.</p>
+        <p className="panel-note mt-1">방은 대화·정책·기록을 따로 가집니다</p>
         <div className="mt-3">
           <label className="label" htmlFor="new-room-name">
             방 이름

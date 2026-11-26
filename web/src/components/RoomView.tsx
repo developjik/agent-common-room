@@ -6,12 +6,11 @@ import { Composer, type SendInput } from "./Composer.js";
 import { ThreadPanel } from "./ThreadPanel.js";
 import { RoomInspector } from "./RoomInspector.js";
 import { Icon } from "./icons.js";
-import { StatusLed } from "./ui.js";
 import { useToast } from "./Toast.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { copyText } from "../lib/browserClipboard.js";
 import { durationLabel, recipientReset, threadRootOf, threadSummaries } from "../lib/format.js";
-import { healthLabel } from "../lib/views.js";
+import { roomNeedsAnswer } from "../lib/views.js";
 import type { WorkspaceStore } from "../hooks/useWorkspace.js";
 import type { Message, RoomCard, RoomDetail, Workspace } from "../lib/types.js";
 import type { View } from "../lib/route.js";
@@ -171,7 +170,7 @@ export function RoomView({
   const deleteMessage = async (m: Message) => {
     const ok = await confirm({
       title: "메시지를 삭제할까요?",
-      text: `#${m.seq} 메시지를 지웁니다. 이미 받아 간 비서의 사본은 회수되지 않습니다.`,
+      text: "이 메시지를 지웁니다. 이미 받아 간 비서의 사본은 회수되지 않습니다.",
       ok: "삭제",
       danger: true,
     });
@@ -245,7 +244,6 @@ export function RoomView({
   }
 
   const liveAgents = agents.filter((a) => a.status === "active");
-  const card = rooms.find((r) => r.id === roomId);
   const pinnedAgent = recipient ? agents.find((a) => a.id === recipient) : undefined;
   const panelContent =
     panel?.kind === "thread" ? (
@@ -267,7 +265,6 @@ export function RoomView({
         store={store}
         room={room}
         workspace={workspace}
-        rooms={rooms}
         onClose={() => setPanel(null)}
         onMention={mention}
         recipient={recipient}
@@ -289,11 +286,7 @@ export function RoomView({
             <Icon name="chevron-down" size={15} />
           </button>
           <div className="room-head-meta">
-            <StatusLed health={room.paused ? "paused" : card?.health ?? (room.last_message_at ? "ok" : "idle")} />
-            <span className="room-head-dot" aria-hidden="true">·</span>
             <span>비서 {liveAgents.length}명</span>
-            <span className="room-head-dot" aria-hidden="true">·</span>
-            <span className="mono">#{room.last_seq}</span>
           </div>
           <div className="room-head-actions">
             <button type="button" className="btn-icon" onClick={onOpenPalette} aria-label="검색·이동 (⌘K)" title="검색·이동 (⌘K)">
@@ -333,7 +326,8 @@ export function RoomView({
             ) : null}
             {replyTo ? (
               <span className="pin">
-                <Icon name="reply" size={13} />#{replyTo.seq} 에 답장
+                <Icon name="reply" size={13} />
+                답장
                 <button type="button" className="pin-clear" onClick={() => setReplyTo(null)} aria-label="답장 대상 해제">
                   <Icon name="close" size={12} />
                 </button>
@@ -369,11 +363,7 @@ export function RoomView({
           threadOpenSeq={panel?.kind === "thread" ? panel.seq : null}
           flashSeq={flashSeq}
           ready={store.ready}
-          emptyHint={
-            <>
-              <strong>구성원</strong>에서 비서를 배치하거나 초대하고, 아래 입력창에서 첫 메시지를 보내 보세요.
-            </>
-          }
+          emptyHint={<><strong>비서</strong>를 초대하고 첫 메시지를 보내세요.</>}
           onOpenThread={openThread}
           onQuoteReply={quoteReply}
           onMention={mention}
@@ -444,11 +434,12 @@ export function RoomView({
                         if (r.id !== roomId) onOpenRoom(r.id);
                       }}
                     >
-                      <span className="led-dot" data-tone={healthLabel(r.health).tone} aria-hidden="true" />
                       <span className="min-w-0 flex-1">
                         <span className="switch-name">{r.name}</span>
                         <span className="switch-meta">
-                          {r.kind === "lobby" ? "로비" : healthLabel(r.health).label} · 비서 {r.member_count}
+                          {[r.paused ? "정지" : roomNeedsAnswer(r) ? "답변 필요" : "", `비서 ${r.member_count}`]
+                            .filter(Boolean)
+                            .join(" · ")}
                         </span>
                       </span>
                       {r.unread ? <span className="tile-unread">{r.unread}</span> : null}
@@ -483,19 +474,17 @@ function PauseBanner({ room, messages, onResume }: { room: RoomDetail; messages:
   const info = room.pause_info;
   const auto = room.pause_reason === "rate_cap";
   const who = info?.actor_id ? messages.find((m) => m.sender.id === info.actor_id)?.sender.name : "";
+  const at = info?.at ? new Date(info.at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false }) : "";
   return (
     <div className={"banner" + (auto ? " is-auto" : "")} role="status">
       <Icon name={auto ? "bolt" : "pause"} size={18} className="mt-0.5 shrink-0" />
       <div className="min-w-0 flex-1">
         <p className="banner-title">
           {auto ? "자동 정지" : "일시정지"}
-          {info?.at ? ` · ${new Date(info.at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })}` : ""}
-          {auto ? " · 빈도 상한" : " · 내가 정지함"}
+          {auto ? ` · 최근 ${durationLabel(room.rate_limit.window_seconds)} ${recent}/${room.rate_limit.count}` : at ? ` · ${at}` : ""}
         </p>
         <p className="banner-text">
-          {auto
-            ? `최근 ${durationLabel(room.rate_limit.window_seconds)}에 비서 메시지가 상한(${room.rate_limit.count}개)에 닿았습니다${who ? ` · 마지막 발신 ${who}` : ""} · 지금 ${recent}/${room.rate_limit.count}. 일시정지 중에도 내 메시지는 전달됩니다.`
-            : "비서는 읽기만 할 수 있습니다. 재개하면 다시 말할 수 있습니다. 일시정지 중에도 내 메시지는 전달됩니다."}
+          {auto && who ? `마지막 발신 ${who} · ` : ""}비서는 읽기만 합니다. 내 메시지는 그대로 전달됩니다.
         </p>
       </div>
       <button type="button" className="btn btn-primary btn-sm shrink-0" onClick={onResume}>

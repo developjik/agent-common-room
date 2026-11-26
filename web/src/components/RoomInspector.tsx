@@ -6,10 +6,10 @@ import { useToast } from "./Toast.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { copyText } from "../lib/browserClipboard.js";
 import { room as roomApi } from "../lib/api.js";
-import { agentTone, durationLabel, fmtFull, remainLabel, seenLabel } from "../lib/format.js";
+import { agentTone, durationLabel, fmtFull, historyFloorLabel, remainLabel, seenLabel } from "../lib/format.js";
 import { memberToAgent, roomInviteText } from "../lib/views.js";
 import type { WorkspaceStore } from "../hooks/useWorkspace.js";
-import type { Invite, RoomCard, RoomDetail, Webhook, Workspace } from "../lib/types.js";
+import type { Invite, RoomDetail, Webhook, Workspace } from "../lib/types.js";
 
 type Tab = "members" | "room" | "invite";
 
@@ -17,7 +17,6 @@ interface Props {
   store: WorkspaceStore;
   room: RoomDetail;
   workspace: Workspace;
-  rooms: RoomCard[];
   recipient: string;
   onClose: () => void;
   onMention: (a: { id: string; name: string; status: string }) => void;
@@ -26,7 +25,7 @@ interface Props {
   onDeleteRoom: (room: RoomDetail) => void;
 }
 
-export function RoomInspector({ store, room, workspace, rooms, recipient, onClose, onMention, onOpenRoom, onCreateRoom, onDeleteRoom }: Props) {
+export function RoomInspector({ store, room, workspace, recipient, onClose, onMention, onOpenRoom, onCreateRoom, onDeleteRoom }: Props) {
   const [tab, setTab] = useState<Tab>("members");
   const members = room.members.filter((m) => m.status !== "removed");
 
@@ -35,8 +34,8 @@ export function RoomInspector({ store, room, workspace, rooms, recipient, onClos
       <div className="panel-head">
         <div className="min-w-0 flex-1">
           <h2 className="panel-title">이 방</h2>
-          <p className="truncate text-[11.5px] text-muted">
-            {room.kind === "lobby" ? "로비" : "방"} · 비서 {members.filter((m) => m.status === "active").length}명 · 마지막 #{room.last_seq}
+          <p className="truncate text-[11px] text-muted">
+            {room.kind === "lobby" ? "로비" : "방"} · 비서 {members.filter((m) => m.status === "active").length}명
           </p>
         </div>
         <button type="button" className="btn-icon" data-close onClick={onClose} aria-label="패널 닫기" title="닫기 (Esc)">
@@ -61,7 +60,7 @@ export function RoomInspector({ store, room, workspace, rooms, recipient, onClos
           <MemberList store={store} room={room} recipient={recipient} onMention={onMention} onOpenRoom={onOpenRoom} onCreateRoom={onCreateRoom} />
         ) : null}
         {tab === "room" ? (
-          <RoomSettings store={store} room={room} rooms={rooms} onDeleteRoom={onDeleteRoom} />
+          <RoomSettings store={store} room={room} onDeleteRoom={onDeleteRoom} />
         ) : null}
         {tab === "invite" ? <RoomInvites store={store} room={room} workspace={workspace} /> : null}
       </div>
@@ -116,9 +115,6 @@ function MemberList({
 
   return (
     <div className="space-y-3">
-      <p className="panel-note">
-        상태 점은 마지막 접속(30분) 기준입니다. 지목(@)하면 그 비서에게만 메시지가 갑니다.
-      </p>
       {members.length === 0 ? (
         <div className="rounded-lg border border-dashed border-line p-5 text-center text-[12.5px] text-muted">
           <p>이 방에 비서가 없습니다.</p>
@@ -147,7 +143,9 @@ function MemberList({
                     {a.product_self_declared ? <span className="tag">{a.product_self_declared}</span> : null}
                     {m.status === "invited" ? <span className="tag tag-wait">초대됨</span> : null}
                   </p>
-                  <p className="member-meta">{seenLabel(a)}</p>
+                  <p className="member-meta" title={historyFloorLabel(a.history_floor_seq)}>
+                    {seenLabel(a)}
+                  </p>
                   <div className="member-perms">
                     <button
                       type="button"
@@ -167,7 +165,6 @@ function MemberList({
                     >
                       쓰기
                     </button>
-                    <span className="member-floor">기록 #{a.history_floor_seq + 1}부터</span>
                   </div>
                 </div>
                 <div className="member-actions">
@@ -211,12 +208,10 @@ function MemberList({
 function RoomSettings({
   store,
   room,
-  rooms,
   onDeleteRoom,
 }: {
   store: WorkspaceStore;
   room: RoomDetail;
-  rooms: RoomCard[];
   onDeleteRoom: (room: RoomDetail) => void;
 }) {
   const notify = useToast();
@@ -246,6 +241,10 @@ function RoomSettings({
   const lastChat = [...store.messages].reverse().find((m) => m.sender.type !== "system");
   const depth = lastChat && lastChat.depth > 0 ? lastChat.depth : 0;
   const paused = room.paused;
+  const depthRatio = room.max_chain_depth ? depth / room.max_chain_depth : 0;
+  const rateRatio = room.rate_limit.count ? recent / room.rate_limit.count : 0;
+  const nearLimit = depthRatio >= 0.8 || rateRatio >= 0.8;
+  const warning = depthRatio >= 0.8 ? `답장 체인 ${depth}/${room.max_chain_depth}` : `최근 ${durationLabel(room.rate_limit.window_seconds)} ${recent}/${room.rate_limit.count}`;
 
   const save = async () => {
     if (busy) return;
@@ -320,35 +319,31 @@ function RoomSettings({
 
   return (
     <div className="space-y-4">
-      <div className={"card " + (paused ? "border-[color:var(--acr-paused)]" : "")}>
-        <p className="flex items-center gap-2 text-[13px] font-extrabold">
-          <span className="dot" data-tone={paused ? "idle" : "online"} />
-          {paused ? "일시정지 상태" : "정상 동작 중"}
-        </p>
-        <p className="mt-1 text-[12px] leading-relaxed text-muted">
-          {paused
-            ? `${room.pause_reason === "rate_cap" ? "빈도 상한으로 자동 정지" : "오너가 정지함"}${room.pause_info?.at ? ` · ${fmtFull(room.pause_info.at)}` : ""}. 비서는 읽기만 할 수 있고, 내 메시지는 그대로 전달됩니다.`
-            : "비서가 읽고 답장할 수 있습니다. 정지하면 새 비서 메시지만 막힙니다."}
-        </p>
-        <button type="button" className={"btn btn-sm mt-2 w-full " + (paused ? "btn-primary" : "")} onClick={() => void toggle()}>
-          <Icon name={paused ? "play" : "pause"} size={13} /> {paused ? "재개" : "방 일시정지"}
-        </button>
+      <div className="status-box" data-paused={paused ? "true" : undefined}>
+        <div className="status-line">
+          <span className="dot" data-tone={paused ? "paused" : "online"} aria-hidden="true" />
+          <span className="status-name">{paused ? "일시정지" : "정상"}</span>
+          {paused && room.pause_info?.at ? <span className="status-time">{fmtFull(room.pause_info.at)}</span> : null}
+          <button type="button" className="btn btn-sm ml-auto" onClick={() => void toggle()}>
+            <Icon name={paused ? "play" : "pause"} size={13} /> {paused ? "재개" : "일시정지"}
+          </button>
+        </div>
+        <p className="panel-note mt-1">{paused ? "비서는 읽기만 합니다. 내 메시지는 그대로 전달됩니다." : "비서가 답장할 수 있습니다"}</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <div className="card">
-          <p className="text-[11px] font-bold text-muted">답장 체인</p>
-          <p className="metric mt-1">
-            {depth}/{room.max_chain_depth}
-          </p>
+      <details className="limit-box" open={nearLimit || paused}>
+        <summary>
+          한도{nearLimit ? ` · ${warning}` : ""}
+        </summary>
+        <div className="limit-rows">
+          <span>
+            답장 체인 <strong>{depth}/{room.max_chain_depth}</strong>
+          </span>
+          <span>
+            최근 {durationLabel(room.rate_limit.window_seconds)} <strong>{recent}/{room.rate_limit.count}</strong>
+          </span>
         </div>
-        <div className="card">
-          <p className="text-[11px] font-bold text-muted">최근 {durationLabel(room.rate_limit.window_seconds)}</p>
-          <p className="metric mt-1">
-            {recent}/{room.rate_limit.count}
-          </p>
-        </div>
-      </div>
+      </details>
 
       <div className="space-y-2">
         <div>
@@ -407,31 +402,27 @@ function RoomSettings({
           />
         </div>
         <button type="button" className="btn w-full" onClick={() => void save()} disabled={busy}>
-          {busy ? "저장 중…" : "이름·설명·정책 저장"}
+          {busy ? "저장 중…" : "저장"}
         </button>
       </div>
 
-      <dl className="kv border-t border-line pt-3">
-        <div>
-          <dt>방 ID</dt>
-          <dd className="mono select-all">{room.id}</dd>
-        </div>
-        <div>
-          <dt>만든 시각</dt>
-          <dd>{fmtFull(room.created_at)}</dd>
-        </div>
-      </dl>
+      <details className="more-box">
+        <summary>고급</summary>
+        <dl className="kv mt-2">
+          <div>
+            <dt>방 ID</dt>
+            <dd className="mono select-all">{room.id}</dd>
+          </div>
+          <div>
+            <dt>만든 시각</dt>
+            <dd>{fmtFull(room.created_at)}</dd>
+          </div>
+        </dl>
+      </details>
 
-      <p className="panel-note">
-        방 정책·보존 기간·이름은 여기서 저장합니다. 웹훅은 아래에서 바로 등록합니다(서명 시크릿은 등록할 때 한 번만 보입니다).
-      </p>
-
-      <div className="card space-y-2">
-        <p className="text-[12px] font-extrabold">웹훅</p>
-        <p className="panel-note">
-          비서를 수신자로 지목한 메시지(예: <span className="mono">recipient: "피클"</span>)가 이 방에 생기면 지정한 https URL로
-          POST합니다. 수신 서버는 <span className="mono">X-Acr-Signature</span>(sha256=HMAC) 로 검증하세요.
-        </p>
+      <details className="more-box">
+        <summary>웹훅</summary>
+        <div className="space-y-2 mt-2">
         <div className="flex gap-2">
           <input
             id="room-hook-url"
@@ -473,10 +464,8 @@ function RoomSettings({
               .map((h) => (
                 <li key={h.id} className="invite-row">
                   <div className="min-w-0 flex-1">
-                    <p className="mono break-all text-[11.5px]">{h.url}</p>
-                    <p className="text-[11px] text-faint">
-                      {h.last_kind ? `${h.last_kind} · ${h.last_status ?? "대기"}` : "아직 전달 기록 없음"}
-                    </p>
+                    <p className="mono break-all text-[11px]">{h.url}</p>
+                    <p className="text-[11px] text-faint">{h.last_kind ? `${h.last_kind} · ${h.last_status ?? "대기"}` : "아직 전달 기록 없음"}</p>
                   </div>
                   <button
                     type="button"
@@ -512,21 +501,19 @@ function RoomSettings({
               ))}
           </ul>
         )}
-      </div>
+        </div>
+      </details>
 
       {room.kind !== "lobby" ? (
         <div className="danger-box">
           <p className="text-[12.5px] font-bold">이 방 삭제</p>
-          <p className="panel-note mt-1">메시지와 구성원 자격이 함께 사라집니다. 되돌릴 수 없습니다.</p>
           <button type="button" className="btn btn-danger btn-sm mt-2" onClick={() => onDeleteRoom(room)}>
             <Icon name="trash" size={13} /> 방 삭제
           </button>
         </div>
       ) : (
-        <p className="panel-note">로비는 워크스페이스의 입구라 삭제할 수 없습니다.</p>
+        <p className="panel-note">로비는 삭제할 수 없습니다</p>
       )}
-
-      <p className="panel-note text-[11px]">방 {rooms.length}개 중 하나 · 이 방을 바꾸면 관제실 타일도 함께 바뀝니다.</p>
     </div>
   );
 }
@@ -577,7 +564,7 @@ function RoomInvites({ store, room, workspace }: { store: WorkspaceStore; room: 
   return (
     <div className="space-y-4">
       <p className="panel-note">
-        이 방에만 들어오는 링크입니다. 승인되면 비서는 로비와 이 방의 구성원이 됩니다. 링크로는 <strong>참여 요청</strong>만 가능합니다.
+        이 방에만 들어오는 링크입니다. 승인하면 로비와 이 방에 들어옵니다.
       </p>
       <div className="grid grid-cols-2 gap-2">
         <div>

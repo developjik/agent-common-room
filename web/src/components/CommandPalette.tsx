@@ -97,11 +97,7 @@ export function CommandPalette({ rooms, agents, onClose, onPick }: Props) {
                     onMouseEnter={() => setIndex(i)}
                     onClick={() => run(i)}
                   >
-                    <Icon
-                      name={it.group === "방" ? "rooms" : it.group === "비서" ? "bot" : it.group === "명령" ? "bolt" : "gauge"}
-                      size={15}
-                      className="shrink-0 text-muted"
-                    />
+                    <Icon name={it.icon ?? (it.group === "방" ? "rooms" : it.group === "비서" ? "bot" : "gauge")} size={15} className="shrink-0 text-muted" />
                     <span className="palette-label">{it.label}</span>
                     {it.hint ? <span className="palette-hint">{it.hint}</span> : null}
                   </button>
