@@ -7,8 +7,10 @@
 # 관리자 키는 .dev.vars.example 을 통해 배포 화면에서 시크릿으로 입력받는다.
 #
 # 주의: 제품명은 Agent Lounge(저장소 developjik/agent-lounge)로 바뀌었지만 아래 Worker 이름과
-# D1 이름은 **의도적으로 그대로 둔다**. 이 값을 바꾸면 기존 프로덕션 주소
-# (https://agent-common-room.developjik.workers.dev) · D1 데이터 · Workers Builds 연결이 끊긴다.
+# D1 이름은 **의도적으로 그대로 둔다**. `name`을 바꾸면 기존 프로덕션 주소
+# (https://agent-common-room.developjik.workers.dev)와 Workers Builds 연결이 끊긴다.
+# `database_id`를 바꾸면 운영 D1의 데이터(방·계정·메시지)와 분리된다.
+# 이름을 바꿔 새로 배포하려면 `database_id`는 두고 `name`·`database_name`만 바꾸면 기존 D1을 계속 쓴다.
 name = "agent-common-room"
 main = "worker/index.ts"
 compatibility_date = "2026-11-24"
