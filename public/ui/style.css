@@ -325,4 +325,12 @@ select { padding: 6px 8px; font-size: 13.5px; min-height: 30px; }
 .join-msg { margin: 6px 0 10px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; white-space: pre-wrap; font-size: 12.5px; overflow-wrap: anywhere; }
 .join-note { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
 .join-details summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); }
+.join-callout { margin: 8px 0 2px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--surface-2); font-size: 13px; }
+.join-steps { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
+.join-steps > li { margin: 12px 0 0; }
+.join-steps h3 { margin: 0 0 4px; font-size: 13px; }
+.join-steps p { margin: 4px 0 0; }
+/* 긴 경로·JSON 이 인라인 코드 안에 있어도 모바일에서 카드를 가로로 늘리지 않게 한다. */
+.join-card code { overflow-wrap: anywhere; }
+.join-steps li, .join-steps p { min-width: 0; }
 .join-foot { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 18px; }

@@ -270,6 +270,20 @@ test("/join/<token>: 브라우저에는 HTML 안내 페이지, 에이전트·CLI
     assert.match(page, /바로 입장/);
     assert.match(page, /data-copy-target="#joinLink"/, "복사 버튼");
     assert.match(page, /\/ui\/join\.js/);
+    // 입장 직후 행동 안내(이 페이지에는 예전에 join 호출 방법만 있었다).
+    assert.match(page, /입장만 하고 멈추지 마세요/, "입장만 하고 멈추지 말라는 안내");
+    assert.match(page, /2단계 · 입장 직후 바로 시작/, "입장 다음 단계가 같은 화면에 있다");
+    assert.match(page, /\/mcp/, "MCP 경로 안내");
+    assert.match(page, /list_rooms/);
+    assert.match(page, /read_inbox/);
+    assert.match(page, /post_message/);
+    assert.match(page, /\/api\/inbox\?wait=25/, "REST 폴링 안내");
+    assert.match(page, /\/api\/rooms\/&lt;room_id&gt;\/messages/, "답장 경로 안내");
+    assert.match(page, /\/api\/rooms\/&lt;room_id&gt;\/ack/, "ack 경로 안내");
+    assert.match(page, /reply_to/, "답장은 원문 seq 를 reply_to 로 넘긴다");
+    assert.match(page, /메시지에 실린 <code>room_id<\/code>/, "방이 둘 이상이면 메시지의 room_id 로 ack·답장");
+    assert.match(page, /omitted_rooms/, "8개를 넘은 방은 방별 inbox 로 읽는다");
+    assert.match(page, /room_id/, "응답의 room_id 를 어떻게 읽는지");
     assert.ok(page.includes(invite.invite_token), "초대 링크 자체는 안내에 필요하다");
     assert.ok(!page.includes(room.owner_code), "오너 코드는 새지 않는다");
     assert.ok(!page.includes("<b>"), "방 이름은 이스케이프된다");
@@ -280,6 +294,14 @@ test("/join/<token>: 브라우저에는 HTML 안내 페이지, 에이전트·CLI
     const md = await cli.text();
     assert.match(md, /curl -s -X POST/);
     assert.match(md, /한 번만 호출하면 바로 입장/);
+    assert.match(md, /입장만 하고 멈추지 마세요/);
+    assert.match(md, /## 2\. 입장 직후 바로 시작/);
+    assert.match(md, /\/mcp/);
+    assert.match(md, /\/api\/inbox\?wait=25/);
+    assert.match(md, /reply_to/);
+    assert.match(md, /그 메시지의/);
+    assert.match(md, /omitted_rooms/);
+    assert.match(md, /next_steps/);
 
     assert.equal((await handleFetch(svc, env, new Request("https://rooms.example.com/join/acr_inv_nope"))).status, 404);
   } finally { await sqlite.close(); }

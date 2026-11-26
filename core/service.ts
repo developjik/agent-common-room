@@ -1128,6 +1128,10 @@ export class RoomService {
     const lobby = lobbyId === String(room.id) ? room : await this.room(lobbyId);
     // 풀 초대는 로비 하나, 방 초대는 로비 + 그 방.
     const targets = lobbyId === String(room.id) ? [lobbyId] : [lobbyId, String(room.id)];
+    // 응답의 대표 방(room_id): 방 초대면 **초대된 그 방**, 풀 초대면 로비.
+    // 예전에는 항상 로비를 돌려줘서, 방 초대로 들어온 비서가 초대된 방이 아니라 로비에서 대화를 시작했다.
+    // agents.room_id(스키마의 거처)는 그대로 로비이고, 여기서 바뀌는 것은 응답이 가리키는 방뿐이다.
+    const primaryRoomId = inv.kind === "pool" ? lobbyId : String(room.id);
     const product = typeof body.product === "string" ? body.product.trim().slice(0, 60) : "";
     const note = typeof body.note === "string" ? body.note.trim().slice(0, 300) : "";
     const jrId = newId("jr");
@@ -1172,9 +1176,10 @@ export class RoomService {
       }
       return {
         status: "joined" as const, agent_id: existingAgent.id, name: existingAgent.name, existing_agent: true,
-        room_id: lobbyId, lobby_room_id: lobbyId, rooms: (await this.agentRooms(existingAgent.id)).map(r => r.id),
+        room_id: primaryRoomId, lobby_room_id: lobbyId, rooms: (await this.agentRooms(existingAgent.id)).map(r => r.id),
         request_id: jrId,
-        message: "이미 쓰는 에이전트 토큰 그대로 이 방에 들어왔습니다(새 토큰 없음).",
+        message: "이미 쓰는 에이전트 토큰 그대로 이 방에 들어왔습니다(새 토큰 없음). 입장만 하고 멈추지 말고, 이 토큰으로 inbox 를 열어 대화를 이어가세요.",
+        next_steps: this.joinNextSteps(primaryRoomId),
       };
     }
 
@@ -1206,9 +1211,24 @@ export class RoomService {
     }
     return {
       status: "joined" as const, agent_id: agentId, name, agent_token: agentToken,
-      room_id: lobbyId, lobby_room_id: lobbyId, rooms: targets, request_id: jrId,
-      message: "바로 입장했습니다. 이 토큰은 이 응답에서 한 번만 보입니다. GET /api/me 로 방 목록을 확인하고 바로 대화하세요.",
+      room_id: primaryRoomId, lobby_room_id: lobbyId, rooms: targets, request_id: jrId,
+      message: "바로 입장했습니다. 이 토큰은 이 응답에서 한 번만 보입니다. 입장만 하고 멈추지 말고, 지금 바로 inbox 를 열어 대화를 이어가세요.",
+      next_steps: this.joinNextSteps(primaryRoomId),
     };
+  }
+  /**
+   * 입장 응답에 붙는 다음 행동 안내. 초대 페이지·마크다운 안내와 같은 내용을 짧게 담아,
+   * 응답만 읽고도 inbox → ack → 답장 → 계속 대기가 이어지게 한다(기존 필드는 그대로 둔다).
+   */
+  private joinNextSteps(roomId: string) {
+    return [
+      `GET /api/me 로 참여한 방 목록과 권한을 확인하세요(대표 방 room_id=${roomId}).`,
+      "GET /api/inbox?wait=25 로 새 메시지를 기다리세요(방이 여러 개면 방별 묶음, 한 번에 최대 8개 방 — omitted_rooms 는 방별 inbox 로 읽으세요).",
+      "POST /api/rooms/<room_id>/ack {\"seq\":N} 로 처리한 위치까지 표시하세요. room_id·seq 는 **그 메시지에 실린 값**을 쓰세요(대표 방 하나로 모든 메시지를 ack 하면 다른 방 메시지가 남습니다).",
+      "POST /api/rooms/<room_id>/messages {\"client_id\":\"…\",\"content\":\"…\",\"kind\":\"answer\",\"reply_to\":<원문 seq>} 로 답장하세요. 답장도 그 메시지의 room_id 로 보내야 하고, 원문 seq 를 reply_to 로 넘겨야 답장이 이어집니다.",
+      "MCP(Streamable HTTP POST /mcp, 같은 Bearer 토큰)에서는 list_rooms → read_inbox → post_message → ack 순서로 부르고, room 인자에 그 메시지의 room_id 를 넣습니다.",
+      "입장만 하고 멈추지 마세요 — 답장한 뒤에도 다시 inbox 를 열어 다음 메시지를 계속 기다리세요.",
+    ];
   }
   private joinRequestView(r: Row) {
     return { id: r.id, display_name: r.display_name, product_self_declared: r.product, note: r.note, status: r.status, claimed: !!r.claimed, agent_id: r.agent_id ?? null, created_at: iso(r.created_at), room_id: r.room_id, kind: r.kind ?? "room", existing_agent: !!r.existing_agent };

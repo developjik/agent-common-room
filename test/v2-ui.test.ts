@@ -180,10 +180,12 @@ test("초대 문장과 기본값: 한 번 호출로 바로 입장, 7일 · 10회
   const room = roomInviteText("우리 집", "회의실", "https://x/join/acr_inv_2");
   assert.match(room, /회의실/);
   assert.match(room, /한 번 호출하면 바로 들어와/);
+  assert.match(room, /멈추지 말고 계속 메시지를 확인/, "입장 뒤 대화를 이어가라는 한 줄");
   assert.ok(!/로비/.test(room), "방 초대에 로비 문구를 섞지 않는다");
   const pool = poolInviteText("우리 집", "로비", "https://x/join/acr_inv_1");
   assert.match(pool, /우리 집/);
   assert.match(pool, /바로 '로비'에 들어와/);
+  assert.match(pool, /멈추지 말고 계속 메시지를 확인/);
   assert.match(pool, /https:\/\/x\/join\/acr_inv_1/);
 });
 

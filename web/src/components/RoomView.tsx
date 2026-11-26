@@ -1,5 +1,5 @@
 // 방 하나: 대화 + 컴포저 + 방 패널. 단톡방처럼 읽히게 대화·@멘션·답장만 남겼다.
-// 초대는 헤더의 '초대 링크 복사' 한 번(7일 · 10회 기본값)으로 끝난다.
+// 초대는 헤더의 '초대 문장 복사' 한 번(7일 · 10회 기본값)으로 끝난다.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatFeed, type ChatFeedHandle } from "./ChatFeed.js";
 import { Composer, type SendInput } from "./Composer.js";
@@ -9,7 +9,7 @@ import { useToast } from "./Toast.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { copyText } from "../lib/browserClipboard.js";
 import { recipientReset } from "../lib/format.js";
-import { INVITE_DEFAULTS } from "../lib/views.js";
+import { INVITE_DEFAULTS, roomInviteText } from "../lib/views.js";
 import type { WorkspaceStore } from "../hooks/useWorkspace.js";
 import type { Message, RoomDetail, Workspace } from "../lib/types.js";
 
@@ -141,17 +141,19 @@ export function RoomView({ roomId, store, workspace, isWide, onBack }: Props) {
     }
   };
 
-  /** 원클릭 초대: 기본값(7일 · 10회)으로 링크를 만들어 바로 클립보드에 넣는다. */
+  /** 원클릭 초대: 기본값(7일 · 10회)으로 링크를 만들어 '전달 문장'째로 클립보드에 넣는다. */
   const invite = async () => {
     if (inviting) return;
     setInviting(true);
     try {
       const res = await store.createInvite(roomId, INVITE_DEFAULTS.ttlHours, INVITE_DEFAULTS.maxUses);
       const link = `${location.origin}/join/${res.invite_token}`;
-      const ok = await copyText(link);
+      // 링크만 보내면 비서가 join 만 하고 멈출 수 있다. 입장 뒤 대화를 이어가라는 한 줄까지 같이 보낸다.
+      const text = roomInviteText(workspace.name, room?.name ?? "이 방", link);
+      const ok = await copyText(text);
       if (ok) {
         setFallbackLink(null);
-        notify(`초대 링크를 복사했습니다 · 7일 · 10회. 비서에게 그대로 붙여넣으세요.`);
+        notify(`초대 문장을 복사했습니다 · 7일 · 10회. 비서에게 그대로 붙여넣으세요.`);
       } else {
         setFallbackLink(link);
         notify("클립보드에 넣지 못했습니다. 아래 링크를 직접 복사하세요.");
@@ -233,9 +235,9 @@ export function RoomView({ roomId, store, workspace, isWide, onBack }: Props) {
             <span>비서 {liveAgents.length}명</span>
           </div>
           <div className="room-head-actions">
-            <button type="button" className="btn btn-sm btn-primary" onClick={() => void invite()} disabled={inviting} aria-label="초대 링크 복사">
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => void invite()} disabled={inviting} aria-label="초대 문장 복사">
               <Icon name="link" size={14} />
-              <span className="hidden sm:inline">{inviting ? "만드는 중…" : "초대 링크 복사"}</span>
+              <span className="hidden sm:inline">{inviting ? "만드는 중…" : "초대 문장 복사"}</span>
             </button>
             <button
               type="button"

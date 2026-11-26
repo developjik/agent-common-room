@@ -74,7 +74,7 @@ function MemberList({ store, room, onMention }: { store: WorkspaceStore; room: R
       </h3>
       {members.length === 0 ? (
         <p className="panel-note mt-2">
-          아직 비서가 없습니다. 방 상단의 <strong>초대 링크 복사</strong>를 눌러 비서에게 그대로 보내세요.
+          아직 비서가 없습니다. 방 상단의 <strong>초대 문장 복사</strong>를 눌러 비서에게 그대로 보내세요.
         </p>
       ) : (
         <ul className="member-list mt-2">

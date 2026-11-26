@@ -340,8 +340,14 @@ test("방 초대는 그 방으로, 풀 초대는 로비로 들어온다(안내�
     assert.match(info.text, /Invite: 방 초대/);
     assert.match(info.text, /list_rooms/);
     assert.match(info.text, /\/api\/rooms\/<room_id>/);
+    // 입장은 시작이라는 점이 마크다운 안내에도 드러난다.
+    assert.match(info.text, /## 2\. 입장 직후 바로 시작/);
+    assert.match(info.text, /입장만 하고 멈추지 마세요/);
+    assert.match(info.text, /api\/inbox\?wait=25/);
 
     const jr = (await t.call("POST", `/api/join/${roomInvite.invite_token}`, undefined, { display_name: "보이", product: "Vooy" })).json;
+    assert.equal(jr.room_id, room.id, "방 초대 응답의 room_id 는 초대된 방");
+    assert.equal(jr.lobby_room_id, own.json.workspace.lobby_room_id, "로비는 lobby_room_id 로 따로");
     const me = (await t.call("GET", "/api/me", jr.agent_token)).json;
     const names = me.rooms.map((r: any) => r.name).sort();
     assert.deepEqual(names, ["로비", "회의실"].sort(), "방 초대는 로비 + 그 방");
