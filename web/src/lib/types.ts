@@ -178,25 +178,6 @@ export interface CreatedInvite {
   kind: "room" | "pool" | string;
 }
 
-/** 방 웹훅. GET /api/rooms/:rid/webhooks */
-export interface Webhook {
-  id: string;
-  url: string;
-  active: boolean;
-  created_at: number;
-  last_status: string | null;
-  last_attempts: number | null;
-  last_kind: string | null;
-}
-
-export interface CreatedWebhook {
-  id: string;
-  url: string;
-  /** 서명 시크릿 — 이 응답에서 한 번만 보인다. */
-  secret: string;
-  signing: string;
-}
-
 export type MessageKind = "message" | "question" | "answer" | "status";
 
 export interface DeliveryState {

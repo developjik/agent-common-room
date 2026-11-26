@@ -1,30 +1,16 @@
-// 방 인스펙터: 구성원(권한·DM 고정·내보내기) · 방(상태·한도·이름/설명) · 초대.
+// 방 인스펙터: 구성원(권한·지목·내보내기) · 방(상태·한도·이름/설명) · 초대.
 import { useCallback, useEffect, useState } from "react";
 import { Avatar } from "./Avatar.js";
 import { Icon } from "./icons.js";
 import { useToast } from "./Toast.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { copyText } from "../lib/browserClipboard.js";
-import { room as roomApi } from "../lib/api.js";
 import { agentTone, durationLabel, fmtFull, historyFloorLabel, remainLabel, seenLabel } from "../lib/format.js";
 import { memberToAgent, roomInviteText } from "../lib/views.js";
 import type { WorkspaceStore } from "../hooks/useWorkspace.js";
-import type { Invite, RoomDetail, Webhook, Workspace } from "../lib/types.js";
+import type { Invite, RoomDetail, Workspace } from "../lib/types.js";
 
 type Tab = "members" | "room" | "invite";
-
-/**
- * 웹훅 카드의 상태 한 줄. pending 만 보여 주면 "시험 직후 대기"가 정상인지 실패인지 알 수 없어서
- * 전달됨·실패·대기를 구분하고 시도 횟수를 덧붙인다.
- */
-function webhookStatus(h: Webhook): string {
-  if (!h.last_kind) return "아직 전달 기록 없음";
-  const what = h.last_kind === "ping" ? "시험" : "새 글";
-  const tries = h.last_attempts && h.last_attempts > 1 ? ` · 시도 ${h.last_attempts}회` : "";
-  if (h.last_status === "ok") return `${what} · 전달됨${tries}`;
-  if (h.last_status === "failed") return `${what} · 전달 실패${tries}`;
-  return `${what} · 전달 대기${tries}`;
-}
 
 interface Props {
   store: WorkspaceStore;
@@ -234,10 +220,6 @@ function RoomSettings({
   const [categories, setCategories] = useState(room.allowed_categories.join(", "));
   const [retention, setRetention] = useState(room.retention_days ? String(room.retention_days) : "");
   const [busy, setBusy] = useState(false);
-  const [hooks, setHooks] = useState<Webhook[] | null>(null);
-  const [hookUrl, setHookUrl] = useState("");
-  const [hookBusy, setHookBusy] = useState(false);
-  const [freshHook, setFreshHook] = useState<{ id: string; url: string; secret: string } | null>(null);
 
   // allowed_categories 는 폴링마다 새 배열이라 그대로 의존성에 두면 4초마다 입력이 서버 값으로 되돌아간다.
   const catsKey = room.allowed_categories.join(",");
@@ -317,40 +299,6 @@ function RoomSettings({
     }
   };
 
-  const loadHooks = useCallback(async () => {
-    try {
-      setHooks((await roomApi.webhooks(room.id)).webhooks);
-    } catch {
-      setHooks([]);
-    }
-  }, [room.id]);
-
-  useEffect(() => {
-    void loadHooks();
-  }, [loadHooks]);
-
-  // 웹훅은 v2 인스펙터에서 직접 다룬다(예전에는 /ui/ + 방 복구 코드가 필요했는데 v2 에서 코드를 보여 주지 않았다).
-  const addHook = async () => {
-    if (hookBusy) return;
-    const url = hookUrl.trim();
-    if (!/^https:\/\//i.test(url)) {
-      notify("https:// 로 시작하는 URL을 넣으세요.");
-      return;
-    }
-    setHookBusy(true);
-    try {
-      const created = await roomApi.createWebhook(room.id, url);
-      setFreshHook({ id: created.id, url: created.url, secret: created.secret });
-      setHookUrl("");
-      await loadHooks();
-      notify("웹훅을 등록했습니다. 서명 시크릿은 지금만 보입니다.");
-    } catch (e) {
-      notify(e instanceof Error ? e.message : "웹훅을 등록하지 못했습니다.");
-    } finally {
-      setHookBusy(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="status-box" data-paused={paused ? "true" : undefined}>
@@ -383,7 +331,7 @@ function RoomSettings({
         </button>
       </div>
 
-      {/* 웹훅·한도·맥락 정책은 매일 쓰는 화면이 아니라 '고급 설정' 하나로 접는다.
+      {/* 한도·맥락 정책·보존 기간은 매일 쓰는 화면이 아니라 '고급 설정' 하나로 접는다.
           평소 방 화면은 초대·구성원·대화만 보이게 둔다. */}
       <details className="more-box" open={nearLimit || paused}>
         <summary>고급 설정{nearLimit ? ` · ${warning}` : ""}</summary>
@@ -444,91 +392,6 @@ function RoomSettings({
             <button type="button" className="btn w-full" onClick={() => void saveAdvanced()} disabled={busy}>
               {busy ? "저장 중…" : "고급 설정 저장"}
             </button>
-          </section>
-
-          <section className="space-y-2">
-            <p className="label">웹훅</p>
-            <p className="panel-note">
-              비서를 받는 사람으로 지정한 글(@지목)을 외부 서비스로 알립니다. 등록하면 서명 시크릿을 한 번 보여 줍니다(수신측 검증용).
-            </p>
-            <div className="flex gap-2">
-              <input
-                id="room-hook-url"
-                className="field mono text-[12px]"
-                value={hookUrl}
-                onChange={(e) => setHookUrl(e.target.value)}
-                placeholder="https://example.com/acr-hook"
-                spellCheck={false}
-                aria-label="웹훅 URL"
-              />
-              <button type="button" className="btn btn-sm" onClick={() => void addHook()} disabled={hookBusy}>
-                {hookBusy ? "등록 중…" : "등록"}
-              </button>
-            </div>
-            {freshHook ? (
-              <div className="fresh-invite">
-                <p className="text-[12px] font-bold text-muted">서명 시크릿 · 지금만 표시</p>
-                <p className="mono break-all select-all">{freshHook.secret}</p>
-                <button
-                  type="button"
-                  className="btn btn-sm mt-1"
-                  onClick={async () => {
-                    const ok = await copyText(freshHook.secret);
-                    notify(ok ? "시크릿을 복사했습니다." : "복사하지 못했습니다. 값을 직접 선택해 복사하세요.");
-                  }}
-                >
-                  <Icon name="copy" size={13} /> 복사
-                </button>
-              </div>
-            ) : null}
-            {hooks === null ? (
-              <p className="panel-note">불러오는 중…</p>
-            ) : hooks.filter((h) => h.active).length === 0 ? (
-              <p className="panel-note">등록된 웹훅이 없습니다.</p>
-            ) : (
-              <ul className="invite-list">
-                {hooks
-                  .filter((h) => h.active)
-                  .map((h) => (
-                    <li key={h.id} className="invite-row">
-                      <div className="min-w-0 flex-1">
-                        <p className="mono break-all text-[11px]">{h.url}</p>
-                        <p className="text-[11px] text-faint">{webhookStatus(h)}</p>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        onClick={async () => {
-                          try {
-                            const r = await roomApi.testWebhook(room.id, h.id);
-                            notify(`시험 전달: ${r.delivery.status}${r.delivery.http_status ? ` (HTTP ${r.delivery.http_status})` : ""}`);
-                            await loadHooks();
-                          } catch (e) {
-                            notify(e instanceof Error ? e.message : "시험 전달을 보내지 못했습니다.");
-                          }
-                        }}
-                      >
-                        시험
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-danger"
-                        onClick={async () => {
-                          try {
-                            await roomApi.revokeWebhook(room.id, h.id);
-                            await loadHooks();
-                            notify("웹훅을 폐기했습니다.");
-                          } catch (e) {
-                            notify(e instanceof Error ? e.message : "폐기하지 못했습니다.");
-                          }
-                        }}
-                      >
-                        폐기
-                      </button>
-                    </li>
-                  ))}
-              </ul>
-            )}
           </section>
 
           <dl className="kv">

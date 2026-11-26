@@ -163,7 +163,6 @@
       token = j.session_token;
       sessionStorage.setItem("acr_session", token);
       $("ownerCode").value = "";
-      $("whSecret").textContent = "";
       start();
     } catch (e) { $("loginErr").textContent = e.message; }
     finally { btn.disabled = false; }
@@ -184,7 +183,6 @@
     closeMention();
   }
   function logout(expired) {
-    $("whSecret").textContent = "";
     if (token && !expired) fetch("/api/owner/logout", { method: "POST", headers: { authorization: "Bearer " + token } }).catch(function () {});
     token = "";
     sessionStorage.removeItem("acr_session");
@@ -207,7 +205,6 @@
     $("settingsView").hidden = false;
     $("settingsBtn").setAttribute("aria-pressed", "true");
     setRail(false);
-    loadWebhooks();
   }
 
   // ---------- 우측 관리 레일(데스크톱 고정 / 모바일 시트) ----------
@@ -709,33 +706,6 @@
       "아래 링크를 비서에게 그대로 전달해 주면 참여 요청을 보낼 수 있어(내가 승인하면 대화에 참여해).\n" + link;
   }
 
-  // ---------- 웹훅 ----------
-  async function loadWebhooks() {
-    var list = $("whList");
-    try { var r = await api("GET", "/api/owner/webhooks"); } catch (e) { return; }
-    list.textContent = "";
-    r.webhooks.forEach(function (w) {
-      var li = el("li");
-      var stat = w.last_status === "ok" ? "최근 전달 성공" : w.last_status === "failed" ? "최근 전달 실패" : w.last_status === "pending" ? "전달 대기/재시도 중" : "아직 전달 없음";
-      li.appendChild(el("span", "mono", w.url));
-      li.appendChild(el("span", "muted", " · " + stat));
-      var tb = el("button", "btn", "테스트"); tb.type = "button";
-      tb.addEventListener("click", async function () {
-        try {
-          var t = await api("POST", "/api/owner/webhooks/" + w.id + "/test");
-          toast("테스트 전달: " + t.delivery.status + (t.delivery.http_status ? " (HTTP " + t.delivery.http_status + ")" : ""));
-          loadWebhooks();
-        } catch (e) { toast(e.message); }
-      });
-      var db = el("button", "btn", "삭제"); db.type = "button";
-      db.addEventListener("click", async function () {
-        try { await api("DELETE", "/api/owner/webhooks/" + w.id); loadWebhooks(); } catch (e) { toast(e.message); }
-      });
-      li.appendChild(tb); li.appendChild(db);
-      list.appendChild(li);
-    });
-  }
-
   // ---------- 새로고침/폴링 ----------
   async function refreshAll(full) {
     try {
@@ -936,17 +906,6 @@
       await loadRoom();
     } catch (e) { toast(e.message); }
   });
-  $("whAddBtn").addEventListener("click", async function () {
-    var tok = token;
-    try {
-      var r = await api("POST", "/api/owner/webhooks", { url: $("whUrl").value.trim() });
-      if (tok && tok === token) { $("whSecret").textContent = r.secret + " — " + r.signing; }
-      $("whUrl").value = "";
-      toast("웹훅을 등록했습니다.");
-      loadWebhooks();
-    } catch (e) { toast(e.message); }
-  });
-
   // ---------- 첫 방 만들기(웹 온보딩) ----------
   // 관리자 키는 이 스크립트의 변수에만 있고 sessionStorage·localStorage에 남기지 않는다.
   var setupInfo = { bootstrap_allowed: false, admin_key_configured: false };
@@ -1047,7 +1006,6 @@
     if (!fresh) return;
     token = fresh.session;
     sessionStorage.setItem("acr_session", token);
-    $("whSecret").textContent = "";
     start();
   });
 

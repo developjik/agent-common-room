@@ -106,7 +106,8 @@ export function RoomsView({ rooms, agents, needCount, ready, onOpenRoom, onCreat
                 <span className="room-row-side">
                   {r.unread ? <span className="tile-unread">{r.unread > 99 ? "99+" : r.unread}</span> : null}
                   <span className="room-row-meta">
-                    비서 {r.member_count} · {r.last_message_at ? relTime(r.last_message_at) : "새 방"}
+                    {r.member_count ? `비서 ${r.member_count} · ` : ""}
+                    {r.last_message_at ? relTime(r.last_message_at) : "새 방"}
                   </span>
                 </span>
               </button>

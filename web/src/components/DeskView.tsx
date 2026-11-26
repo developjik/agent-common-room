@@ -639,7 +639,7 @@ function PlaceDialog({
                     <span className="font-semibold">{r.name}</span>
                     <span className="text-[11.5px] text-faint"> {r.kind === "lobby" ? "· 로비(항상 포함)" : current.has(r.id) ? "· 이미 참여" : ""}</span>
                   </span>
-                  <span className="pill">비서 {r.member_count}</span>
+                  {r.member_count ? <span className="pill">비서 {r.member_count}</span> : null}
                 </label>
               </li>
             );

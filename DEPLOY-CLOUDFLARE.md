@@ -3,7 +3,7 @@
 `agent-common-room`을 Cloudflare Workers + D1에 올리는 절차입니다.
 v0.2부터 **방 로직은 모든 플랫폼이 같은 `core/` 한 벌**을 쓰고, `worker/`는 D1 어댑터와 진입점만 담당합니다.
 
-> 상태: 같은 E2E 30개(HTTP, 공식 MCP 클라이언트, 동시 전송 seq, 일시정지 경합, 권한·멱등·폐기·루프/빈도 상한, 웹훅 전달 파이프라인, 롱폴링, UI CSP)를 로컬 Node와 `wrangler dev`(로컬 workerd + 로컬 D1)에서 통과했습니다.
+> 상태: 같은 E2E 30개(HTTP, 공식 MCP 클라이언트, 동시 전송 seq, 일시정지 경합, 권한·멱등·폐기·루프/빈도 상한, 롱폴링, UI CSP)를 로컬 Node와 `wrangler dev`(로컬 workerd + 로컬 D1)에서 통과했습니다.
 > 이번 작업에서 **실제 계정 재배포는 하지 않았습니다**(기존 배포본은 그대로). 원격 D1에 대한 검증은 이전 라운드 기록에 남아 있습니다.
 
 ## 가장 빠른 길: Deploy to Cloudflare 버튼
@@ -56,13 +56,13 @@ npm run cli -- create-room "내 방"   # room_id, owner_code가 한 번만 출�
 | --- | --- | --- |
 | DB | `node:sqlite` 파일 (`ACR_DB`) | D1 바인딩 `DB` (첫 요청에 스키마 자동 생성) |
 | 관리자 키 | `ACR_ADMIN_KEY` 또는 웹 최초 발급 | `ACR_ADMIN_KEY` 시크릿 또는 웹 최초 발급(같은 규칙) |
-| 정리 작업 | 프로세스 내 1시간 주기 + 요청 시 lazy | Cron Trigger **매분** → `scheduled()` (만료 정리 + 웹훅 재시도) |
+| 정리 작업 | 프로세스 내 1시간 주기 + 요청 시 lazy | Cron Trigger **매시간** → `scheduled()` (보존기간·세션 만료 정리) |
 | 오너 로그인 시도 제한 | `login_fails` 테이블(공용 코어) | 같은 테이블 |
 | 오너 UI | Node가 직접 서빙 + CSP | Workers Static Assets + `public/_headers` CSP |
 | `ACR_HOST`/`ACR_PORT`/`ACR_DB` | 사용 | 사용 안 함 (Workers가 관리) |
 | `ACR_PUBLIC_URL` | 선택 | 선택(없으면 요청 Host) |
 
-기능 규칙(권한 분리, seq 단조 할당, client_id 멱등, fetched/ack 분리, 폐기 즉시 무효, 루프/빈도 상한, 필터, 웹훅, 롱폴링)은 동일하며 **같은 테스트 파일**로 검증합니다.
+기능 규칙(권한 분리, seq 단조 할당, client_id 멱등, fetched/ack 분리, 폐기 즉시 무효, 루프/빈도 상한, 필터, 롱폴링)은 동일하며 **같은 테스트 파일**로 검증합니다.
 
 ## 로컬에서 Workers 버전 검증하기 (배포 전)
 
