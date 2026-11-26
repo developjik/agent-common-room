@@ -222,11 +222,12 @@ test("웹훅을 걷어낸 뒤에도 옛 전달 기록의 원문 사본은 7일 �
   );
   ins.run("whd_old", "whk_legacy", r.roomId, "message", null, '{"content":"옛 원문"}', "ok", 1, now, now - 8 * 86400_000);
   ins.run("whd_recent", "whk_legacy", r.roomId, "message", null, '{"content":"최근 원문"}', "failed", 1, now, now - 6 * 86400_000);
-  ins.run("whd_pending", "whk_legacy", r.roomId, "message", null, '{"content":"대기 원문"}', "pending", 0, now, now - 30 * 86400_000);
+  ins.run("whd_pending_old", "whk_legacy", r.roomId, "message", null, '{"content":"대기 원문"}', "pending", 0, now, now - 30 * 86400_000);
+  ins.run("whd_pending_recent", "whk_legacy", r.roomId, "message", null, '{"content":"대기 중"}', "pending", 0, now, now - 86400_000);
   await t.svc.purgeExpired();
   const left = raw.prepare("SELECT id FROM webhook_deliveries ORDER BY id").all().map((x: any) => x.id);
-  // 7일 지난 완료·실패 기록만 지운다(최근 기록·미전송 대기는 남긴다).
-  assert.deepEqual(left, ["whd_pending", "whd_recent"]);
+  // 7일이 지난 행은 상태와 무관하게 지운다(배달 루프가 없어 pending 도 재전송될 수 없다). 최근 행은 남긴다.
+  assert.deepEqual(left, ["whd_pending_recent", "whd_recent"]);
 });
 
 test("루프 상한: 답장 체인 깊이는 서버가 계산하고 오너 메시지가 체인을 재시작한다", async () => {
