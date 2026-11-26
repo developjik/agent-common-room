@@ -606,41 +606,17 @@ test("P1-2 회귀: 인박스 배지(counts.needs_you)는 승인 대기를 빼고
   } finally { await t.close(); }
 });
 
-test("P1-4 회귀: 오너 세션이 v2 API 로 방 웹훅을 조회·등록·시험·폐기한다", async () => {
+test("웹훅 제거 회귀: v2 방 경로의 웹훅 API 는 404 이고 목록·한도도 사라졌다", async () => {
   const t = await start();
   try {
-    const own = await t.call("POST", "/api/setup/owner", ADMIN_KEY, { login_id: "hooks", password: "long-enough-password", workspace_name: "우리 집" });
+    const own = await t.call("POST", "/api/setup/owner", ADMIN_KEY, { login_id: "nohooks", password: "long-enough-password", workspace_name: "우리 집" });
     const owner = own.json.session_token as string;
-    const wid = own.json.workspace.id as string;
-    const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
+    const room = (await t.call("POST", `/api/workspaces/${own.json.workspace.id}/rooms`, owner, { name: "회의실" })).json;
 
-    const empty = await t.call("GET", `/api/rooms/${room.id}/webhooks`, owner);
-    assert.equal(empty.status, 200);
-    assert.deepEqual(empty.json.webhooks, []);
-
-    const bad = await t.call("POST", `/api/rooms/${room.id}/webhooks`, owner, { url: "http://example.com/hook" });
-    assert.equal(bad.status, 400, "https 만 등록한다");
-
-    const created = await t.call("POST", `/api/rooms/${room.id}/webhooks`, owner, { url: "https://example.com/acr-hook" });
-    assert.equal(created.status, 201);
-    assert.match(created.json.id, /^whk_/);
-    assert.match(created.json.secret, /^whsec_/);
-
-    const listed = (await t.call("GET", `/api/rooms/${room.id}/webhooks`, owner)).json.webhooks;
-    assert.equal(listed.length, 1);
-    assert.equal(listed[0].active, true);
-
-    const ping = await t.call("POST", `/api/rooms/${room.id}/webhooks/${created.json.id}/test`, owner);
-    assert.equal(ping.status, 200);
-    assert.equal(ping.json.delivery.kind, "ping");
-    assert.ok(["delivered", "pending", "failed"].includes(ping.json.delivery.status));
-
-    assert.equal((await t.call("DELETE", `/api/rooms/${room.id}/webhooks/${created.json.id}`, owner)).status, 200);
-    assert.equal((await t.call("GET", `/api/rooms/${room.id}/webhooks`, owner)).json.webhooks[0].active, false);
-
-    // 세션 없는 요청은 웹훅 경로를 쓸 수 없다.
-    assert.equal((await t.call("GET", `/api/rooms/${room.id}/webhooks`)).status, 401);
-    assert.equal((await t.call("POST", `/api/rooms/${room.id}/webhooks`, undefined, { url: "https://example.com/x" })).status, 401);
+    assert.equal((await t.call("GET", `/api/rooms/${room.id}/webhooks`, owner)).status, 404);
+    assert.equal((await t.call("POST", `/api/rooms/${room.id}/webhooks`, owner, { url: "https://example.com/acr-hook" })).status, 404);
+    assert.equal((await t.call("POST", `/api/rooms/${room.id}/webhooks/whk_x/test`, owner)).status, 404);
+    assert.equal((await t.call("DELETE", `/api/rooms/${room.id}/webhooks/whk_x`, owner)).status, 404);
   } finally { await t.close(); }
 });
 
@@ -674,28 +650,6 @@ test("P1-2 후속: 읽은 최신 글이 페이지를 채워도 안 읽은 항목
     assert.equal(feed.items[0].unread, true);
     assert.equal(feed.items.filter((i: any) => i.unread).length, 1);
     assert.equal(feed.items.filter((i: any) => i.unread).length, overview.counts.needs_you, "배지와 목록의 확인 필요 수가 같다");
-  } finally { await t.close(); }
-});
-
-test("P1-4 후속: 폐기한 웹훅은 등록 한도를 차지하지 않는다", async () => {
-  const t = await start();
-  try {
-    const own = await t.call("POST", "/api/setup/owner", ADMIN_KEY, { login_id: "hooklimit", password: "long-enough-password", workspace_name: "우리 집" });
-    const owner = own.json.session_token as string;
-    const room = (await t.call("POST", `/api/workspaces/${own.json.workspace.id}/rooms`, owner, { name: "알림방" })).json;
-
-    const ids: string[] = [];
-    for (let i = 0; i < 10; i++) {
-      const created = await t.call("POST", `/api/rooms/${room.id}/webhooks`, owner, { url: `https://example.com/hook-${i}` });
-      assert.equal(created.status, 201);
-      ids.push(created.json.id);
-    }
-    assert.equal((await t.call("POST", `/api/rooms/${room.id}/webhooks`, owner, { url: "https://example.com/hook-11" })).status, 409, "활성 10개가 한도");
-
-    for (const id of ids) assert.equal((await t.call("DELETE", `/api/rooms/${room.id}/webhooks/${id}`, owner)).status, 200);
-    const again = await t.call("POST", `/api/rooms/${room.id}/webhooks`, owner, { url: "https://example.com/hook-new" });
-    assert.equal(again.status, 201, "폐기 뒤에는 같은 방에 다시 등록할 수 있다");
-    assert.equal((await t.call("GET", `/api/rooms/${room.id}/webhooks`, owner)).json.webhooks.filter((h: any) => h.active).length, 1);
   } finally { await t.close(); }
 });
 

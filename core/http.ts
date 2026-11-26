@@ -13,7 +13,7 @@
 //   관리자    /api/admin/rooms… · /api/admin/owners/:id/rotate-secret
 //   오너 계정 /api/auth/login · /api/auth/logout · /api/auth/legacy · /api/auth/upgrade
 //   오너 v2   /api/me · /api/workspaces/:wid/{overview,rooms,agents,invites,join-requests,activity}
-//             /api/rooms/:rid{,/messages,/invites,/webhooks,/members/:aid} · /api/join-requests/:jid/{approve,deny}
+//             /api/rooms/:rid{,/messages,/invites,/members/:aid} · /api/join-requests/:jid/{approve,deny}
 //   호환      /api/owner/login · /api/owner/*  (방 1개 워크스페이스로 해석, 1~2 릴리스 유지)
 //   에이전트  /mcp · /api/me · /api/room · /api/inbox · /api/ack · /api/messages
 //             /api/rooms/:rid/{inbox,ack,messages}  (방 없는 /api/inbox 는 방이 여러 개면 방별 묶음)
@@ -35,7 +35,10 @@ export interface Env {
   ACR_RUNTIME?: string;
 }
 
-/** 요청 수명 이후에도 도는 작업(웹훅 전송, lazy 정리). Workers/Vercel의 waitUntil. */
+/**
+ * 런타임이 응답 뒤 작업을 붙이는 포트(Workers·Vercel의 waitUntil, Node의 fire-and-forget).
+ * 웹훅 배달 루프를 없앤 뒤로 코어 경로는 이 훅을 쓰지 않지만, 런타임 계약으로 남긴다.
+ */
 export interface Ctx {
   waitUntil?(promise: Promise<unknown>): void;
 }
@@ -47,7 +50,7 @@ export interface Assets {
 
 const MAX_BODY = 64 * 1024;
 // "/"는 web/(Vite+React) 빌드 산출물인 public/app/index.html을 서빙한다.
-// 이전 콘솔은 파일을 그대로 남겨 /ui/ 에서 계속 쓸 수 있다(정책·웹훅 설정 등).
+// 이전 콘솔은 파일을 그대로 남겨 /ui/ 에서 계속 쓸 수 있다(정책 설정 등).
 const UI_FILES: Record<string, [string, string]> = {
   "/": ["app/index.html", "text/html; charset=utf-8"],
   "/index.html": ["app/index.html", "text/html; charset=utf-8"],
@@ -335,8 +338,7 @@ export async function handleFetch(
       if (!secret) throw new ApiError(404, "not_found", "없는 경로입니다.");
       if (!safeEqualHex(await hashToken(bearer(req)), await hashToken(secret))) throw new ApiError(401, "unauthorized", "스케줄러 인증이 필요합니다.");
       const purged = await svc.purgeExpired();
-      const delivered = await svc.processDueDeliveries();
-      return json(200, { ok: true, purged, delivered });
+      return json(200, { ok: true, purged });
     }
 
     // ----- public: invite link (join request only) -----
@@ -441,12 +443,8 @@ export async function handleFetch(
       if (path === "/api/owner/agents" && method === "GET") return json(200, { agents: await svc.listAgents(room) });
       if ((m = /^\/api\/owner\/agents\/([^/]+)\/revoke$/.exec(path)) && method === "POST") { await svc.revokeAgent(room, m[1]); return json(200, { revoked: true }); }
       if (path === "/api/owner/messages" && method === "GET") return json(200, await svc.ownerMessages(room, Number(url.searchParams.get("after") ?? 0), url.searchParams.get("limit") ?? undefined, auth.scope));
-      if (path === "/api/owner/messages" && method === "POST") { const r = await svc.postAsOwner(room, obj(await readJson(req))); if (!r.duplicate) ctx?.waitUntil?.(svc.processDueDeliveries(room).catch(() => {})); return json(r.duplicate ? 200 : 201, r); }
+      if (path === "/api/owner/messages" && method === "POST") { const r = await svc.postAsOwner(room, obj(await readJson(req))); return json(r.duplicate ? 200 : 201, r); }
       if ((m = /^\/api\/owner\/messages\/(\d+)$/.exec(path)) && method === "DELETE") { await svc.deleteMessage(room, Number(m[1])); return json(200, { deleted: true }); }
-      if (path === "/api/owner/webhooks" && method === "GET") return json(200, await svc.listWebhooks(room));
-      if (path === "/api/owner/webhooks" && method === "POST") return json(201, await svc.createWebhook(room, obj(await readJson(req)).url));
-      if ((m = /^\/api\/owner\/webhooks\/(whk_[A-Za-z0-9]+)$/.exec(path)) && method === "DELETE") { await svc.revokeWebhook(room, m[1]); return json(200, { revoked: true }); }
-      if ((m = /^\/api\/owner\/webhooks\/(whk_[A-Za-z0-9]+)\/test$/.exec(path)) && method === "POST") return json(200, { delivery: await svc.testWebhook(room, m[1]) });
       throw new ApiError(404, "not_found", "없는 경로입니다.");
     }
 
@@ -486,7 +484,6 @@ export async function handleFetch(
         if (rest === "/messages" && method === "GET") return json(200, await svc.readMessages(agent, Number(url.searchParams.get("after") ?? 0), url.searchParams.get("limit") ?? undefined, rid));
         if (rest === "/messages" && method === "POST") {
           const r = await svc.postAsAgent(agent, obj(await readJson(req)), rid);
-          if (!r.duplicate) ctx?.waitUntil?.(svc.processDueDeliveries(rid).catch(() => {}));
           return json(r.duplicate ? 200 : 201, r);
         }
         if (rest === "" && method === "GET") return json(200, await svc.roomForAgent(agent, rid));
@@ -509,7 +506,6 @@ export async function handleFetch(
       if (rest === "/messages" && method === "POST") {
         await svc.assertOwnerRoom(auth.scope, rid);
         const r = await svc.postAsOwner(rid, obj(await readJson(req)));
-        if (!r.duplicate) ctx?.waitUntil?.(svc.processDueDeliveries(rid).catch(() => {}));
         return json(r.duplicate ? 200 : 201, r);
       }
       if ((m = /^\/messages\/(\d+)$/.exec(rest)) && method === "DELETE") { await svc.assertOwnerRoom(auth.scope, rid); await svc.deleteMessage(rid, Number(m[1])); return json(200, { deleted: true }); }
@@ -518,20 +514,6 @@ export async function handleFetch(
       if ((m = /^\/invites\/([^/]+)$/.exec(rest)) && method === "DELETE") { await svc.assertOwnerRoom(auth.scope, rid); await svc.revokeInvite(rid, m[1]); return json(200, { revoked: true }); }
       if ((m = /^\/members\/([^/]+)$/.exec(rest)) && method === "PATCH") return json(200, await svc.updateMembership(auth.scope, rid, m[1], obj(await readJson(req))));
       if ((m = /^\/members\/([^/]+)$/.exec(rest)) && method === "DELETE") return json(200, await svc.removeMembership(auth.scope, rid, m[1]));
-      if (rest === "/webhooks" && method === "GET") { await svc.assertOwnerRoom(auth.scope, rid); return json(200, await svc.listWebhooks(rid)); }
-      if (rest === "/webhooks" && method === "POST") {
-        await svc.assertOwnerRoom(auth.scope, rid);
-        return json(201, await svc.createWebhook(rid, obj(await readJson(req)).url));
-      }
-      if ((m = /^\/webhooks\/(whk_[A-Za-z0-9]+)$/.exec(rest)) && method === "DELETE") {
-        await svc.assertOwnerRoom(auth.scope, rid);
-        await svc.revokeWebhook(rid, m[1]);
-        return json(200, { revoked: true });
-      }
-      if ((m = /^\/webhooks\/(whk_[A-Za-z0-9]+)\/test$/.exec(rest)) && method === "POST") {
-        await svc.assertOwnerRoom(auth.scope, rid);
-        return json(200, { delivery: await svc.testWebhook(rid, m[1]) });
-      }
       throw new ApiError(404, "not_found", "없는 경로입니다.");
     }
 
@@ -550,9 +532,7 @@ export async function handleFetch(
       if (path === "/mcp") {
         if (method !== "POST") return json(405, { error: { code: "method_not_allowed", message: "POST만 지원합니다 (stateless Streamable HTTP)." } }, { allow: "POST" });
         // 공식 SDK 전송이 바디 파싱/JSON-RPC 에러(-32700 등)/프로토콜 협상을 직접 처리한다.
-        const res = await handleMcp(svc, agent, req);
-        ctx?.waitUntil?.(svc.processDueDeliveries(agent.room_id).catch(() => {}));
-        return res;
+        return await handleMcp(svc, agent, req);
       }
       if (path === "/api/room" && method === "GET") return json(200, await svc.roomForAgent(agent));
       if (path === "/api/inbox" && method === "GET") {
@@ -567,7 +547,7 @@ export async function handleFetch(
       }
       if (path === "/api/ack" && method === "POST") return json(200, await svc.ack(agent, obj(await readJson(req)).seq));
       if (path === "/api/messages" && method === "GET") return json(200, await svc.readMessages(agent, Number(url.searchParams.get("after") ?? 0), url.searchParams.get("limit") ?? undefined));
-      if (path === "/api/messages" && method === "POST") { const r = await svc.postAsAgent(agent, obj(await readJson(req))); if (!r.duplicate) ctx?.waitUntil?.(svc.processDueDeliveries(agent.room_id).catch(() => {})); return json(r.duplicate ? 200 : 201, r); }
+      if (path === "/api/messages" && method === "POST") { const r = await svc.postAsAgent(agent, obj(await readJson(req))); return json(r.duplicate ? 200 : 201, r); }
     }
     throw new ApiError(404, "not_found", "없는 경로입니다.");
   } catch (e) {

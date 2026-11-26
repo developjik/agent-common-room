@@ -119,8 +119,10 @@ export function MissionControl({ overview, ready, onOpenRoom, onGoView, onCreate
                       <span className="room-row-side">
                         {r.unread ? <span className="tile-unread">{r.unread > 99 ? "99+" : r.unread}</span> : null}
                         <span className="room-row-meta">
-                          비서 {r.member_count}
-                          {r.last_message_at ? ` · ${relTime(r.last_message_at)}` : ""}
+                          {/* 0은 침묵: 비서가 없는 방은 '비서 0' 대신 시간만 말한다. */}
+                          {[r.member_count ? `비서 ${r.member_count}` : "", r.last_message_at ? relTime(r.last_message_at) : ""]
+                            .filter(Boolean)
+                            .join(" · ")}
                         </span>
                       </span>
                     </button>

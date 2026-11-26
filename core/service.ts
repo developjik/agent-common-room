@@ -19,7 +19,7 @@
 //    "워크스페이스당 이름 유일"을 무ALTER로 달성한다.
 //  - 레거시(방 1개 = 워크스페이스 1개)는 그 방이 곧 로비다. 기존 /api/owner/*·/api/inbox 경로는
 //    구성원이 정확히 1개일 때 그 방으로 해석되어, 구 클라이언트가 코드 변경 없이 동작한다.
-import { hashToken, hmacSha256Hex, newId, newPassword, newSaltHex, newToken, passwordHash, safeEqualHex, sha256Hex, PBKDF2_ITERATIONS } from "./crypto.js";
+import { hashToken, newId, newPassword, newSaltHex, newToken, passwordHash, safeEqualHex, sha256Hex, PBKDF2_ITERATIONS } from "./crypto.js";
 import { batchChanges, isConstraintError, type DbStatement, type SqlDb, type Row } from "./db.js";
 import { SCHEMA_VERSION } from "./schema.js";
 
@@ -235,7 +235,8 @@ export class RoomService {
       const others = await this.db.one("SELECT count(*) c FROM rooms WHERE workspace_id=?", room.workspace_id);
       if (Number(others?.c ?? 0) > 1) throw err(409, "lobby_protected", "다른 방이 남아 있는 워크스페이스의 로비는 삭제할 수 없습니다.");
     }
-    // 0002의 webhook 테이블은 ON DELETE CASCADE가 없어 방 삭제 전에 먼저 지운다.
+    // 웹훅 기능은 제거됐지만 옛 DB에는 webhooks·webhook_deliveries 행이 남아 있을 수 있고
+    // 두 테이블은 ON DELETE CASCADE가 없어 방 삭제가 FK에 막힌다. 남은 행을 먼저 지운다(비파괴 호환).
     // 한 batch(=SQL 트랜잭션)로 묶어, 중간 실패 시 전달 이력만 지워지고 방이 남는 상태를 막는다.
     const stmts = [
       this.db.prep("DELETE FROM webhook_deliveries WHERE room_id=?", roomId),
@@ -1779,7 +1780,6 @@ export class RoomService {
       throw err(500, "internal", "메시지를 저장하지 못했습니다.");
     }
     await this.touchRoomPreview(roomId, msg);
-    if (recipientId && recipientId !== "owner") await this.enqueueDeliveries(roomId, msg);
     return { duplicate: false, message: await this.toPublic(msg) };
   }
 
@@ -1819,153 +1819,6 @@ export class RoomService {
     await this.touchRoomPreview(roomId);
   }
 
-  // ---------- webhooks (오너가 등록하는 지정 수신 알림) ----------
-  // 오너가 임의 URL을 적기 때문에 SSRF 가드(https + 공인 호스트만)와 최대치를 둔다.
-  async createWebhook(roomId: string, urlRaw: unknown) {
-    await this.room(roomId);
-    if (typeof urlRaw !== "string") throw err(400, "bad_url", "url 문자열이 필요합니다.");
-    const u = this.checkWebhookUrl(urlRaw);
-    await this.assertPublicHost(u.toString());
-    const count = (await this.db.one("SELECT count(*) c FROM webhooks WHERE room_id=? AND active=1", roomId))!.c;
-    if (count >= 10) throw err(409, "webhook_limit", "웹훅은 방당 최대 10개입니다.");
-    const id = newId("whk");
-    const secret = newToken("whsec");
-    await this.db.run("INSERT INTO webhooks(id, room_id, url, secret, active, created_at) VALUES (?,?,?,?,1,?)", id, roomId, u.toString(), secret, this.clock.now());
-    await this.audit(roomId, "owner", "webhook.create", u.host);
-    return { id, url: u.toString(), secret, signing: "응답은 이 secret을 한 번만 보여줍니다. 수신 서버는 X-Acr-Signature 헤더(sha256=<HMAC-SHA256(secret, 원문 body)>)로 검증하세요." };
-  }
-  async listWebhooks(roomId: string) {
-    await this.room(roomId);
-    const hooks = await this.db.all(
-      `SELECT w.id, w.url, w.active, w.created_at,
-              (SELECT status FROM webhook_deliveries d WHERE d.webhook_id=w.id ORDER BY d.created_at DESC LIMIT 1) AS last_status,
-              (SELECT attempts FROM webhook_deliveries d WHERE d.webhook_id=w.id ORDER BY d.created_at DESC LIMIT 1) AS last_attempts,
-              (SELECT kind FROM webhook_deliveries d WHERE d.webhook_id=w.id ORDER BY d.created_at DESC LIMIT 1) AS last_kind
-       FROM webhooks w WHERE w.room_id=? ORDER BY w.created_at`, roomId);
-    return { webhooks: hooks.map(h => ({ id: h.id, url: h.url, active: !!h.active, created_at: h.created_at, last_status: h.last_status ?? null, last_attempts: h.last_attempts ?? null, last_kind: h.last_kind ?? null })) };
-  }
-  async revokeWebhook(roomId: string, id: string) {
-    const r = await this.db.run("UPDATE webhooks SET active=0 WHERE room_id=? AND id=? AND active=1", roomId, id);
-    if (!r.changes) throw err(404, "webhook_not_found", "웹훅을 찾을 수 없습니다.");
-    await this.audit(roomId, "owner", "webhook.revoke", id);
-  }
-  async testWebhook(roomId: string, id: string) {
-    const w = await this.db.one("SELECT * FROM webhooks WHERE room_id=? AND id=? AND active=1", roomId, id);
-    if (!w) throw err(404, "webhook_not_found", "웹훅을 찾을 수 없습니다.");
-    const payload = JSON.stringify({ type: "ping", room_id: roomId, webhook_id: id, sent_at: this.clock.now() });
-    const dId = newId("whd");
-    await this.db.run(
-      "INSERT INTO webhook_deliveries(id, webhook_id, room_id, kind, message_id, payload, status, attempts, next_attempt_at, created_at) VALUES (?,?,?,?,?,?, 'pending', 0, ?, ?)",
-      dId, id, roomId, "ping", null, payload, this.clock.now(), this.clock.now());
-    await this.processDueDeliveries(roomId);
-    return await this.db.one("SELECT id, kind, status, attempts, http_status, last_error FROM webhook_deliveries WHERE id=?", dId);
-  }
-  /** 지정 수신 메시지가 저장된 직후 활성 웹훅 각각에 전달 레코드를 만든다. 실제 전송은 processDueDeliveries. */
-  private async enqueueDeliveries(roomId: string, msg: Row) {
-    const hooks = await this.db.all("SELECT id FROM webhooks WHERE room_id=? AND active=1", roomId);
-    if (!hooks.length) return;
-    const pub = await this.toPublic(msg);
-    const now = this.clock.now();
-    for (const h of hooks) {
-      const payload = JSON.stringify({ type: "message", room_id: roomId, webhook_id: h.id, message: pub });
-      await this.db.run(
-        "INSERT INTO webhook_deliveries(id, webhook_id, room_id, kind, message_id, payload, status, attempts, next_attempt_at, created_at) VALUES (?,?,?,?,?,?, 'pending', 0, ?, ?)",
-        newId("whd"), h.id, roomId, "message", msg.id, payload, now, now);
-    }
-  }
-  /** 기한이 된 전달을 시도한다. cron과 전송 직후(ctx.waitUntil) 양쪽에서 호출. */
-  async processDueDeliveries(roomId?: string): Promise<number> {
-    const now = this.clock.now();
-    const due = roomId
-      ? await this.db.all("SELECT * FROM webhook_deliveries WHERE status='pending' AND next_attempt_at<=? AND room_id=? ORDER BY next_attempt_at LIMIT 50", now, roomId)
-      : await this.db.all("SELECT * FROM webhook_deliveries WHERE status='pending' AND next_attempt_at<=? ORDER BY next_attempt_at LIMIT 100", now);
-    let done = 0;
-    for (const d of due) {
-      await this.deliverOnce(d, now);
-      done++;
-    }
-    return done;
-  }
-  private async deliverOnce(d: Row, now: number) {
-    const w = await this.db.one("SELECT * FROM webhooks WHERE id=?", d.webhook_id);
-    if (!w || !w.active) {
-      await this.db.run("UPDATE webhook_deliveries SET status='failed', last_error='webhook_revoked' WHERE id=?", d.id);
-      return;
-    }
-    // 삭제/보존 만료된 메시지의 원문은 큐에 남아 있어도 다시 보내지 않는다.
-    if (d.kind === "message" && d.message_id) {
-      const m = await this.db.one("SELECT deleted_at FROM messages WHERE id=?", d.message_id);
-      if (!m || m.deleted_at) {
-        await this.db.run("UPDATE webhook_deliveries SET status='failed', last_error='message_deleted' WHERE id=?", d.id);
-        return;
-      }
-    }
-    const attempts = Number(d.attempts) + 1;
-    let httpStatus: number | null = null;
-    let error: string | null = null;
-    try {
-      const sig = await hmacSha256Hex(w.secret, d.payload);
-      // 수신 측 멱등 키: X-Acr-Delivery-Id (전달은 at-least-once라 재시도 시 같은 ID가 다시 온다).
-      const res = await fetch(w.url, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-acr-signature": `sha256=${sig}`, "x-acr-delivery-id": d.id, "user-agent": "agent-common-room/1.0" },
-        body: d.payload,
-        redirect: "error",
-        signal: AbortSignal.timeout(10_000),
-      });
-      httpStatus = res.status;
-      // 응답 본문은 읽지 않고 닫는다(대용량 응답으로 메모리를 쓰지 않기 위해).
-      await res.body?.cancel().catch(() => {});
-      if (res.status < 200 || res.status >= 300) error = `http_${res.status}`;
-    } catch (e) {
-      error = e instanceof Error && e.name === "TimeoutError" ? "timeout" : "fetch_failed";
-    }
-    const BACKOFF = [60_000, 300_000, 900_000, 3_600_000, 21_600_000]; // 1m, 5m, 15m, 1h, 6h
-    if (!error) {
-      await this.db.run("UPDATE webhook_deliveries SET status='ok', attempts=?, http_status=?, last_error=NULL WHERE id=?", attempts, httpStatus, d.id);
-    } else if (attempts > BACKOFF.length) {
-      await this.db.run("UPDATE webhook_deliveries SET status='failed', attempts=?, http_status=?, last_error=? WHERE id=?", attempts, httpStatus, error, d.id);
-    } else {
-      await this.db.run("UPDATE webhook_deliveries SET attempts=?, http_status=?, last_error=?, next_attempt_at=? WHERE id=?",
-        attempts, httpStatus, error, now + BACKOFF[attempts - 1], d.id);
-    }
-  }
-  private checkWebhookUrl(raw: string): URL {
-    let u: URL;
-    try { u = new URL(raw); } catch { throw err(400, "bad_url", "URL 형식이 올바르지 않습니다."); }
-    if (u.protocol !== "https:") throw err(400, "bad_url", "https URL만 등록할 수 있습니다.");
-    const h = u.hostname.toLowerCase();
-    // IP 리터럴은 전면 금지(숫자 인코딩 우회 차단). URL 파서가 2130706433 같은 형태도 정규화한다.
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(h) || h.startsWith("[")) throw err(400, "bad_url", "IP 주소가 아닌 도메인으로 등록하세요.");
-    if (h === "localhost" || h.endsWith(".local") || h.endsWith(".internal") || h.endsWith(".localhost")) throw err(400, "bad_url", "내부망/로컬 주소는 등록할 수 없습니다.");
-    if (!h.includes(".")) throw err(400, "bad_url", "전체 도메인 이름으로 등록하세요.");
-    if (u.username || u.password) throw err(400, "bad_url", "URL에 인증 정보를 넣을 수 없습니다.");
-    return u;
-  }
-  /** 등록/전달 시점에 DoH로 실제 해석 결과를 검사해 사설 IP로 향하는 도메인을 막는다 (DNS 리바인딩 완화, TOCTOU 잔여 위험은 문서화). */
-  private async assertPublicHost(url: string) {
-    const host = new URL(url).hostname;
-    const isPrivate = (ip: string) =>
-      /^127\./.test(ip) || /^10\./.test(ip) || /^192\.168\./.test(ip) || /^169\.254\./.test(ip) ||
-      /^172\.(1[6-9]|2\d|3[01])\./.test(ip) || /^0\./.test(ip) ||
-      ip === "::1" || ip.startsWith("fc") || ip.startsWith("fd") || ip.startsWith("fe80");
-    for (const type of ["A", "AAAA"]) {
-      try {
-        const res = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=${type}`, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(5000) });
-        if (!res.ok) continue;
-        const j: any = await res.json();
-        for (const ans of j.Answer ?? []) {
-          if ((ans.type === 1 || ans.type === 28) && isPrivate(String(ans.data))) {
-            throw err(400, "bad_url", "해당 도메인이 사설/로컬 IP로 해석되어 등록할 수 없습니다.");
-          }
-        }
-      } catch (e) {
-        if (e instanceof ApiError) throw e;
-        // DoH 자체 실패는 통과(가용성 우선). 문자열 가드와 TLS가 남는다.
-      }
-    }
-  }
-
   // ---------- owner message ops ----------
   async ownerMessages(roomId: string, after = 0, limit?: unknown, scope?: OwnerScope) {
     await this.room(roomId);
@@ -1991,8 +1844,6 @@ export class RoomService {
     await this.db.run("DELETE FROM sessions WHERE expires_at<=?", now);
     await this.db.run("DELETE FROM owner_sessions WHERE expires_at<=?", now);
     await this.db.run("DELETE FROM upgrade_tickets WHERE expires_at<=?", now);
-    // 종결된 웹훅 전달은 7일 보관: 테이블이 무한히 자라지 않게 한다 (재시도 큐는 status 인덱스로 제한된다).
-    await this.db.run("DELETE FROM webhook_deliveries WHERE status IN ('ok','failed') AND created_at<?", now - 7 * 86400_000);
     await this.db.run("DELETE FROM login_fails WHERE ? - first >= 900000", now);
     await this.db.run("DELETE FROM auth_fails WHERE ? - first >= 900000", now);
     let n = 0;

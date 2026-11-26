@@ -30,9 +30,10 @@ binding = "DB"
 database_name = "agent-common-room-preview"
 database_id = "8e58f928-7317-40c4-bc2e-cfdcd2308fae"
 
-# 보존기간(retention) 만료 메시지와 만료 세션 정리 + 웹훅 재시도 처리.
+# 보존기간(retention) 만료 메시지와 만료 세션 정리만 한다(웹훅 배달 루프는 제거).
+# 만료 정리는 분 단위 정밀도가 필요 없어 매시간 한 번만 돈다 — 무료 D1 읽기 한도를 아낀다.
 [triggers]
-crons = ["* * * * *"]  # 매분: 방 정리 + 웹훅 재시도
+crons = ["0 * * * *"]  # 매시 정각: 보존기간·세션 정리
 
 # 외부 주소(초대 안내문에 표시). 배포 후 실제 주소로 바꾸거나 워커 요청의 Host를 그대로 쓴다.
 # [vars]

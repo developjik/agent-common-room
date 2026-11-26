@@ -181,6 +181,9 @@ const SQLITE_BASE = [
   )`,
 ];
 
+// 레거시 테이블: 웹훅 기능은 2026-11-26 제거됐다(개인 비서 단톡방 흐름은 MCP·롱폴링·인박스가 맡는다).
+// 기존 D1·Postgres 에 남아 있는 테이블과 행을 지우는 DROP 마이그레이션은 넣지 않는다(비파괴).
+// 다만 방 삭제가 FK(ON DELETE CASCADE 없음)에 막히지 않도록 DELETE 는 계속 쓰므로, 새 DB 에도 만든다.
 const SQLITE_WEBHOOKS = [
   `CREATE TABLE IF NOT EXISTS webhooks (
     id TEXT PRIMARY KEY,
@@ -411,6 +414,7 @@ const PG_BASE = [
   )`,
 ];
 
+// SQLITE_WEBHOOKS 와 같은 이유로 남긴 레거시 테이블이다(웹훅 기능은 제거됨).
 const PG_WEBHOOKS = [
   `CREATE TABLE IF NOT EXISTS webhooks (
     id TEXT PRIMARY KEY,

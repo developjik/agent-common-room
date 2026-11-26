@@ -385,45 +385,20 @@ test("지정 수신 메시지의 전달 상태(보냄→전달됨→처리 확�
   assert.equal(msgs.find((m: any) => m.content === "전체 공지").delivery, null);
 });
 
-test("오너 웹훅: URL 검증, 등록/삭제, 지정 수신 메시지 전달 파이프라인", async () => {
+test("웹훅은 제거됐다: 등록·목록·시험·폐기 경로가 모두 없다", async () => {
   const r = await t.setupRoom();
   const a = await t.join(r, "훅봇");
-  // SSRF/프로토콜 가드
-  for (const bad of ["http://example.com/h", "https://127.0.0.1/h", "https://localhost/h", "https://192.168.0.1/h", "not-a-url", "https://user:pw@example.com/h", "https://2130706433/h", "https://[::1]/h", "https://intranet/h", "https://host.local/h"]) {
-    const res = await t.call("POST", "/api/owner/webhooks", r.sess, { url: bad });
-    assert.equal(res.status, 400, bad);
-  }
-  const w = (await t.call("POST", "/api/owner/webhooks", r.sess, { url: "https://example.com/acr-hook" })).json;
-  assert.ok(w.id.startsWith("whk_"));
-  assert.ok(w.secret.startsWith("whsec_"));
-  // 핑 테스트: 인라인으로 1회 시도가 기록된다 (example.com은 실제로 응답하므로 ok/failed 둘 다 시도 증거).
-  const ping2 = (await t.call("POST", `/api/owner/webhooks/${w.id}/test`, r.sess)).json.delivery;
-  assert.equal(ping2.kind, "ping");
-  assert.equal(ping2.attempts, 1);
-  assert.ok(ping2.status === "ok" || ping2.status === "pending" || ping2.status === "failed");
-  // 가짜 시계에서는 핑과 메시지 전달이 같은 ms에 만들어져 "최신 전달" 순서가 갈린다. 실제 시간 흐름을 흉내 낸다.
-  if (!EXTERNAL) t.clock.advance(1_000);
-  // 지정 수신 메시지 → 핑과 구분되는 새 전달이 시도되어야 한다. 전송 직후 목록의 최신 전달은
-  // 방금 만들어진 메시지 전달(attempts=0)이므로, attempts>=1이 되면 핑이 아니라 이 메시지의 시도다.
-  await t.call("POST", "/api/owner/messages", r.sess, { client_id: "wh-1", content: "웹훅 알림 대상", recipient: a.id });
-  let seen: any = null;
-  for (let i = 0; i < 20; i++) {
-    const l = (await t.call("GET", "/api/owner/webhooks", r.sess)).json;
-    seen = l.webhooks.find((x: any) => x.id === w.id);
-    if (seen && seen.last_kind === "message" && seen.last_attempts >= 1) break;
-    await new Promise(r2 => setTimeout(r2, 700));
-  }
-  assert.ok(seen, "웹훅이 목록에 있다");
-  assert.equal(seen.last_kind, "message", "최신 전달은 핑이 아니라 지정 수신 메시지여야 한다");
-  assert.ok(seen.last_attempts >= 1, "지정 수신 메시지의 새 전달이 시도되었다 (attempts=" + seen.last_attempts + ")");
-  // 지정 수신이 아닌 메시지는 전달 대상이 아니다: 직전 상태 그대로인지는 전달 수로 간접 확인한다.
-  const before = seen.last_attempts;
-  await t.call("POST", "/api/owner/messages", r.sess, { client_id: "wh-2", content: "전체 공지" });
-  await new Promise(r2 => setTimeout(r2, 1200));
-  const after = (await t.call("GET", "/api/owner/webhooks", r.sess)).json.webhooks.find((x: any) => x.id === w.id);
-  assert.equal(after.last_attempts, before, "전체 공지는 새 전달을 만들지 않는다");
-  assert.equal((await t.call("DELETE", `/api/owner/webhooks/${w.id}`, r.sess)).status, 200);
-  assert.equal((await t.call("GET", "/api/owner/webhooks", r.sess)).json.webhooks.find((x: any) => x.id === w.id).active, false);
+  // 호환 계층(/api/owner/*)과 v2 경로 모두 404 — 기능이 없으니 조용히 실패하지 않고 경로 부재를 알린다.
+  assert.equal((await t.call("GET", "/api/owner/webhooks", r.sess)).status, 404);
+  assert.equal((await t.call("POST", "/api/owner/webhooks", r.sess, { url: "https://example.com/acr-hook" })).status, 404);
+  assert.equal((await t.call("DELETE", "/api/owner/webhooks/whk_x", r.sess)).status, 404);
+  assert.equal((await t.call("POST", "/api/owner/webhooks/whk_x/test", r.sess)).status, 404);
+  // 지정 수신 메시지는 그대로 저장되고 수신자·전달 상태만 남는다(알림 경로는 인박스·롱폴링).
+  const sent = await t.call("POST", "/api/owner/messages", r.sess, { client_id: "wh-gone", content: "지목 글", recipient: a.id });
+  assert.equal(sent.status, 201);
+  const inbox = (await t.call("GET", "/api/inbox?wait=1", a.token)).json;
+  assert.equal(inbox.messages.length, 1);
+  assert.equal(inbox.messages[0].recipient.id, a.id);
 });
 
 test("inbox 롱폴링: wait 동안 새 메시지를 기다렸다가 즉시 반환한다", async () => {

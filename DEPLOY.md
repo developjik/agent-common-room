@@ -21,7 +21,7 @@
 2. 배포 화면에서 시크릿 `ACR_ADMIN_KEY`를 묻습니다(`.dev.vars.example` 정의). 비워 두면 배포 후 첫 접속에서 웹으로 발급합니다.
 3. 배포가 끝나면 `https://agent-common-room.<계정>.workers.dev` 를 엽니다.
 
-- 저장소: D1 (SQLite 호환). 매분 Cron이 만료 정리 + 웹훅 재시도를 돌립니다.
+- 저장소: D1 (SQLite 호환). 매시간 Cron이 만료 메시지·세션을 정리합니다.
 - 스키마: 첫 요청에서 워커가 생성합니다. `wrangler d1 migrations apply`는 **선택**입니다(기존 운영 DB에는 0004가 추가됩니다).
 - 상태 확인: `GET /healthz`, `GET /api/setup`(키 설정 여부·스키마 버전)
 - 소유자(인권 님) 재배포: `npm run deploy:worker` — `wrangler.toml`의 기존 D1 ID를 그대로 씁니다.
