@@ -1,5 +1,5 @@
 // 저장소 포트. 방 로직(core/service.ts)은 이 인터페이스만 알면 되고,
-// 실제 SQL 방언·드라이버는 런타임별 어댑터(runtime/d1.ts, runtime/pg.ts, runtime/node-sqlite.ts)가 맡는다.
+// 실제 SQL 방언·드라이버는 런타임별 어댑터(worker/db.ts, runtime/pg.ts, runtime/node-sqlite.ts)가 맡는다.
 //
 // 규칙 (모든 어댑터가 지켜야 함):
 //  - prep()는 실행 전 문장 핸들을 만든다. batch()는 그 문장들을 "하나의 트랜잭션"으로 실행한다.
