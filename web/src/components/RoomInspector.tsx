@@ -449,7 +449,7 @@ function RoomSettings({
           <section className="space-y-2">
             <p className="label">웹훅</p>
             <p className="panel-note">
-              비서에게 보낸 글(지목·답장)을 외부 서비스로 알립니다. 등록하면 서명 시크릿을 한 번 보여 줍니다(수신측 검증용).
+              비서를 받는 사람으로 지정한 글(@지목)을 외부 서비스로 알립니다. 등록하면 서명 시크릿을 한 번 보여 줍니다(수신측 검증용).
             </p>
             <div className="flex gap-2">
               <input
