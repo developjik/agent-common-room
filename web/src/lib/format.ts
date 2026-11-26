@@ -67,7 +67,7 @@ export function agentTone(a: Agent, now = Date.now()): AgentTone {
 export const TONE_LABEL: Record<AgentTone, string> = {
   online: "온라인",
   idle: "자리 비움",
-  pending: "대기",
+  pending: "연결 대기",
   offline: "폐기됨",
 };
 
@@ -97,8 +97,8 @@ export function historyFloorLabel(historyFloorSeq: number): string {
 }
 
 export function seenLabel(a: Agent): string {
-  if (a.status === "revoked") return "폐기됨 · 다시 초대해야 함";
-  if (a.status === "unclaimed") return "승인됨 · 아직 접속 전";
+  if (a.status === "revoked") return "연결 끊김 · 다시 초대해야 함";
+  if (a.status === "unclaimed") return "승인됨 · 연결 대기";
   if (!a.last_seen) return "접속 기록 없음";
   const d = Math.max(0, Date.now() - new Date(a.last_seen).getTime());
   if (d < 3 * 60_000) return "방금 확인함";
@@ -115,9 +115,15 @@ export function avatarTone(name: string): number {
 }
 
 export function senderName(m: Message): string {
-  if (m.sender.type === "owner") return "오너 (나)";
+  if (m.sender.type === "owner") return "나";
   if (m.sender.type === "system") return "시스템";
   return m.sender.name || "?";
+}
+
+/** 방 카드 미리보기의 발신자 이름. 서버는 오너를 'owner' 로 적는다. */
+export function senderLabel(name: string | null | undefined): string {
+  if (!name) return "";
+  return name === "owner" ? "나" : name;
 }
 
 export const KIND_LABEL: Record<string, string> = {
@@ -125,6 +131,23 @@ export const KIND_LABEL: Record<string, string> = {
   question: "질문",
   answer: "답변",
   status: "상태",
+};
+
+/** 전달 상태는 예외만 말한다: 아직 받지 않은(sent) 30초 경과만 화면에 남긴다. */
+export function deliveryNotice(m: Message, now = Date.now()): { label: string; title: string } | null {
+  if (!m.recipient || !m.delivery || m.deleted) return null;
+  if (m.delivery.state !== "sent") return null;
+  const at = new Date(m.created_at).getTime();
+  if (!Number.isFinite(at) || now - at < 30_000) return null;
+  return { label: "아직 전달 전", title: `${m.recipient.name}이(가) 아직 받지 않았습니다` };
+}
+
+/** 전달 상태 한 단어(테스트·툴팁용). fetched 는 '전달됨'이다. */
+export const DELIVERY_LABEL: Record<string, string> = {
+  sent: "보냄",
+  fetched: "전달됨",
+  acked: "확인함",
+  replied: "답장함",
 };
 
 export function groupedWith(prev: Message | undefined, m: Message): boolean {
@@ -194,6 +217,9 @@ export function plainPreview(text: string | null, max = 80): string {
   const flat = String(text ?? "")
     .replace(/```[\s\S]*?```/g, " [코드] ")
     .replace(/`([^`]*)`/g, "$1")
+    // 머리표(#)·목록 기호는 한 줄 미리보기에서 읽기만 방해한다.
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}[-*+]\s+/gm, "")
     // 주소 안의 `_`는 강조가 아니라 주소의 일부다(미리보기에서도 그대로 둔다).
     .replace(/https?:\/\/[^\s<>"']+/g, (u) => {
       urls.push(u);

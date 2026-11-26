@@ -19,10 +19,14 @@ import {
   pollDelay,
   poolInviteText,
   presenceLabel,
+  answerNeededRooms,
   roomInviteText,
+  roomStateText,
+  roomSummaryLine,
   setupLandingMode,
   sortRoomCards,
   unreadActivityCount,
+  unreadRoomCount,
 } from "../web/src/lib/views.js";
 import type { ActivityItem, Message, RoomCard, RoomMember } from "../web/src/lib/types.js";
 
@@ -92,16 +96,34 @@ test("계정 만들기 규칙: 아이디 3~40자, 비밀번호 12자 이상", ()
   assert.equal(passwordProblem(" ".repeat(12)), null, "서버는 앞뒤 공백도 글자로 센다");
 });
 
-test("서버 health 를 상태 라벨로만 번역한다", () => {
-  assert.equal(healthLabel("needs_input").label, "확인 필요");
+test("서버 health 를 상태 라벨로만 번역한다(정상은 침묵)", () => {
+  assert.equal(healthLabel("needs_input").label, "답변 필요");
   assert.equal(healthLabel("needs_input").tone, "wait");
+  assert.equal(healthLabel("needs_input").quiet, false);
   assert.equal(healthLabel("paused").label, "정지");
-  assert.equal(healthLabel("ok").label, "안정");
-  assert.equal(healthLabel("idle").label, "조용함");
-  assert.equal(healthLabel("알수없음").label, "조용함", "모르는 값은 조용함으로(추측 금지)");
+  assert.equal(healthLabel("ok").label, "", "정상은 화면에 라벨을 그리지 않는다");
+  assert.equal(healthLabel("ok").quiet, true);
+  assert.equal(healthLabel("idle").label, "");
+  assert.equal(healthLabel("알수없음").quiet, true, "모르는 값은 침묵으로(추측 금지)");
+  assert.equal(roomStateText("ok"), "");
+  assert.equal(roomStateText("needs_input"), "답변 필요");
+  assert.equal(roomStateText("ok", true), "정지", "일시정지가 방 상태보다 먼저다");
 });
 
-test("관제실 정렬: 확인 필요 → 정지 → 안 읽음 → 진행 중 → 조용함, 같은 순위는 최근 활동", () => {
+test("`답변 필요` 수는 화면 어디서나 방 기준 한 값이다", () => {
+  const rooms = [
+    card({ id: "a", health: "needs_input" }),
+    card({ id: "b", health: "needs_input", unread: 4 }),
+    card({ id: "c", unread: 2 }),
+  ];
+  assert.equal(answerNeededRooms(rooms), 2);
+  assert.equal(needsYouRooms(rooms), 2, "예전 이름도 같은 값을 센다");
+  assert.equal(unreadRoomCount(rooms), 2);
+  assert.equal(roomSummaryLine(rooms), "답변 필요 2곳 · 안 읽은 방 2");
+  assert.equal(roomSummaryLine([card({ id: "d" })]), "", "0 은 쓰지 않는다");
+});
+
+test("관제실 정렬: 답변 필요 → 정지 → 안 읽음 → 진행 중 → 조용함, 같은 순위는 최근 활동", () => {
   const needs = card({ id: "a", health: "needs_input", last_message_at: "2026-11-20T00:00:00.000Z" });
   const paused = card({ id: "b", health: "paused", paused: true });
   const unread = card({ id: "c", unread: 3 });
@@ -115,7 +137,7 @@ test("관제실 정렬: 확인 필요 → 정지 → 안 읽음 → 진행 중 �
   assert.equal(needsYouRooms([needs, paused, unread]), 1);
 });
 
-test("인박스 필터: 종류(질문·내 앞 지목·시스템)와 방", () => {
+test("인박스 필터: 종류(질문·나에게·시스템)와 방", () => {
   const q = message({ seq: 1, kind: "question" });
   const direct = message({ seq: 2, recipient: { id: "owner", name: "owner" } });
   const sys = message({ seq: 3, sender: { type: "system", id: "system", name: "system" } });
@@ -175,7 +197,7 @@ test("방 구성원 → 화면 참여자: 멤버십과 신원 상태를 함께 �
   assert.equal(active.can_write, false);
   assert.equal(memberToAgent(m({ status: "invited" })).status, "unclaimed", "초대만 된 구성원은 지목 대상이 아니다");
   assert.equal(memberToAgent(m({ agent_status: "revoked" })).status, "revoked");
-  assert.equal(presenceLabel("active", null), "대기");
+  assert.equal(presenceLabel("active", null), "연결 대기");
   assert.equal(presenceLabel("active", new Date().toISOString()), "온라인");
   assert.equal(presenceLabel("revoked", new Date().toISOString()), "폐기됨");
 });

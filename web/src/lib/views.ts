@@ -57,22 +57,53 @@ export function passwordProblem(raw: string): string | null {
 }
 
 export interface HealthLabel {
+  /** 화면에 그릴 라벨. 정상(ok·idle)은 빈 문자열이다("정상은 침묵"). */
   label: string;
   tone: "online" | "wait" | "paused" | "idle";
-  /** 타일의 한 줄 설명. */
+  /** 어디에나 붙는 대신 hover·title 로만 보여 주는 한 줄 설명. */
   hint: string;
+  /** 할 일이 없는 상태(정상). 점·라벨을 그리지 않는다. */
+  quiet: boolean;
 }
 
 const HEALTH: Record<string, HealthLabel> = {
-  ok: { label: "안정", tone: "online", hint: "최근 30분 안에 대화가 있었습니다" },
-  needs_input: { label: "확인 필요", tone: "wait", hint: "내가 답해야 할 질문·승인이 있습니다" },
-  paused: { label: "정지", tone: "paused", hint: "에이전트는 읽기만 할 수 있습니다" },
-  idle: { label: "조용함", tone: "idle", hint: "30분 넘게 새 글이 없습니다" },
+  ok: { label: "", tone: "online", hint: "30분 안에 대화가 있었습니다", quiet: true },
+  needs_input: { label: "답변 필요", tone: "wait", hint: "내가 답해야 할 질문이 있습니다", quiet: false },
+  paused: { label: "정지", tone: "paused", hint: "비서는 읽기만 할 수 있습니다", quiet: false },
+  idle: { label: "", tone: "idle", hint: "30분 넘게 새 글이 없습니다", quiet: true },
 };
 
-/** 서버가 정한 health 를 한국어 한 단어로 옮긴다(추측하지 않는다). */
+/** 서버가 정한 health 를 한국어 한 단어로 옮긴다(추측하지 않는다). 정상은 말하지 않는다. */
 export function healthLabel(health: RoomHealth | string): HealthLabel {
   return HEALTH[health] ?? HEALTH.idle;
+}
+
+/** 방 행에 붙는 상태 한 단어. 정상이면 빈 문자열. */
+export function roomStateText(health: RoomHealth | string, paused = false): string {
+  return paused || health === "paused" ? "정지" : health === "needs_input" ? "답변 필요" : "";
+}
+
+/** 인박스·상단바가 함께 쓰는 "답변 필요" 기준: 답을 기다리는 방 수. */
+export function answerNeededRooms(rooms: RoomCard[]): number {
+  return rooms.filter((r) => r.health === "needs_input").length;
+}
+
+/** 안 읽은 글이 있는 방 수. */
+export function unreadRoomCount(rooms: RoomCard[]): number {
+  return rooms.filter((r) => r.unread > 0).length;
+}
+
+/**
+ * 관제실 상태 한 줄. 0 은 쓰지 않고, 할 일이 없으면 빈 문자열이다(정상은 침묵).
+ * 모든 화면이 같은 숫자를 쓰도록 방 기준(answerNeededRooms)만 센다.
+ */
+export function roomSummaryLine(rooms: RoomCard[]): string {
+  const need = answerNeededRooms(rooms);
+  const unread = unreadRoomCount(rooms);
+  const paused = rooms.filter((r) => r.paused || r.health === "paused").length;
+  return [need ? `답변 필요 ${need}곳` : "", unread ? `안 읽은 방 ${unread}` : "", paused ? `정지 ${paused}` : ""]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /**
@@ -102,7 +133,7 @@ export type ActivityKind = "all" | "question" | "directed" | "system";
 export const ACTIVITY_KINDS: { key: ActivityKind; label: string }[] = [
   { key: "all", label: "전체" },
   { key: "question", label: "질문" },
-  { key: "directed", label: "내 앞 지목" },
+  { key: "directed", label: "나에게" },
   { key: "system", label: "시스템" },
 ];
 
@@ -115,7 +146,7 @@ export function activityKind(item: ActivityItem): Exclude<ActivityKind, "all"> {
 
 export const ACTIVITY_LABEL: Record<Exclude<ActivityKind, "all">, string> = {
   question: "질문",
-  directed: "내 앞 지목",
+  directed: "나에게",
   system: "시스템",
 };
 
@@ -168,12 +199,14 @@ export interface PaletteItem {
   group: "이동" | "방" | "비서" | "명령";
   label: string;
   hint?: string;
+  /** 항목마다 다른 아이콘(이동 4행이 모두 같은 아이콘이면 구분이 안 된다). */
+  icon?: "gauge" | "inbox" | "rooms" | "bot" | "plus" | "link";
   action: PaletteAction;
 }
 
 export const PALETTE_COMMANDS: PaletteItem[] = [
-  { id: "cmd:new-room", group: "명령", label: "새 방 만들기", hint: "이름과 설명으로 방을 만듭니다", action: { type: "new-room" } },
-  { id: "cmd:invite", group: "명령", label: "비서 초대 링크 만들기", hint: "비서실에서 풀 초대 링크를 만듭니다", action: { type: "invite" } },
+  { id: "cmd:new-room", group: "명령", label: "새 방 만들기", icon: "plus", action: { type: "new-room" } },
+  { id: "cmd:invite", group: "명령", label: "비서 초대 링크 만들기", icon: "link", action: { type: "invite" } },
 ];
 
 /** 팔레트 항목: 이동 4 + 방 + 비서 + 명령. 검색어는 라벨·힌트의 부분 일치(대소문자 무시). */
@@ -183,22 +216,24 @@ export function paletteItems(
   limit = 14,
 ): PaletteItem[] {
   const nav: PaletteItem[] = [
-    { id: "nav:home", group: "이동", label: "관제실 (홈)", action: { type: "view", view: "home" } },
-    { id: "nav:inbox", group: "이동", label: "통합 인박스", action: { type: "view", view: "inbox" } },
-    { id: "nav:rooms", group: "이동", label: "방 목록", action: { type: "view", view: "rooms" } },
-    { id: "nav:desk", group: "이동", label: "비서실", action: { type: "view", view: "desk" } },
+    { id: "nav:home", group: "이동", label: "관제실 (홈)", icon: "gauge", action: { type: "view", view: "home" } },
+    { id: "nav:inbox", group: "이동", label: "통합 인박스", icon: "inbox", action: { type: "view", view: "inbox" } },
+    { id: "nav:rooms", group: "이동", label: "방 목록", icon: "rooms", action: { type: "view", view: "rooms" } },
+    { id: "nav:desk", group: "이동", label: "비서실", icon: "bot", action: { type: "view", view: "desk" } },
   ];
   const rooms: PaletteItem[] = input.rooms.map((r) => ({
     id: `room:${r.id}`,
     group: "방",
     label: r.name,
-    hint: r.kind === "lobby" ? "로비" : r.unread ? `새 글 ${r.unread}` : healthLabel(r.health).label,
+    icon: "rooms",
+    hint: r.kind === "lobby" ? "로비" : r.unread ? `새 글 ${r.unread}` : roomStateText(r.health, r.paused) || undefined,
     action: { type: "room", roomId: r.id },
   }));
   const agents: PaletteItem[] = input.agents.map((a) => ({
     id: `agent:${a.id}`,
     group: "비서",
     label: a.name,
+    icon: "bot",
     hint: a.product || "비서실에서 보기",
     action: { type: "agent", agentId: a.id },
   }));

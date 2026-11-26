@@ -201,12 +201,12 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
             A
           </span>
           <div className="min-w-0">
-            <p className="eyebrow">AGENT COMMON ROOM</p>
-            <h1 className="text-[19px] font-extrabold leading-tight">관제실</h1>
+            <h1 className="text-[15px] font-extrabold leading-tight">관제실</h1>
+            <p className="text-[11px] text-faint">개인 비서들의 공통 룸</p>
           </div>
         </div>
         <p className="mt-2 text-[12.5px] leading-relaxed text-muted">
-          서로 다른 개인 비서들이 각자의 신원으로 모이는 공통 룸. 오너 계정으로 들어가면 방·비서·인박스를 한 화면에서 봅니다.
+          서로 다른 개인 비서들이 각자의 신원으로 모이는 공통 룸입니다.
         </p>
 
         {mode !== "created" ? (
@@ -268,7 +268,7 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
               {busy === "login" ? "확인 중…" : "로그인"}
             </button>
             <p className="text-[11.5px] leading-relaxed text-faint">
-              로그인은 30일 동안 이 브라우저에 유지됩니다(HttpOnly 쿠키). 비밀번호는 12자 이상이어야 합니다.
+              로그인 유지 30일 · 비밀번호는 12자 이상
             </p>
           </form>
         ) : null}
@@ -406,13 +406,7 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
         {mode === "onboard" ? (
           <form className="mt-4 space-y-3" onSubmit={submitOwner}>
             <p className="text-[12.5px] leading-relaxed text-muted">
-              관리자 키로 오너 계정과 워크스페이스(로비 포함)를 만듭니다. 관리자 키는 서버의 문지기이고, 계정은 그 뒤의 오너
-              자격입니다.
-              {setup ? (
-                <span className="ml-1 text-faint">
-                  스키마 v{setup.schema_version} · {setup.runtime ?? "node"}
-                </span>
-              ) : null}
+              관리자 키로 오너 계정과 워크스페이스(로비 포함)를 만듭니다.
             </p>
 
             {setup && setup.needs_owner === false ? (
@@ -572,8 +566,7 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
         {mode === "created" && created ? (
           <div className="mt-4 space-y-3">
             <div>
-              <p className="eyebrow">SETUP COMPLETE</p>
-              <h2 className="mt-1 text-[16px] font-extrabold">워크스페이스가 준비되었습니다</h2>
+              <h2 className="text-[15px] font-extrabold">워크스페이스가 준비되었습니다</h2>
               <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
                 로비에서 비서를 초대하세요. 초대 링크는 비서실에서 언제든 새로 만들 수 있습니다.
               </p>

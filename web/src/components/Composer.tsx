@@ -163,7 +163,7 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
         <div className="composer-chip is-dm">
           <Icon name="at" size={14} />
           <span className="min-w-0 flex-1 truncate">
-            <strong>@{recipientAgent.name}</strong> 에게만 보냅니다 · 다른 참여자는 이 메시지를 받지 못합니다
+            <strong>@{recipientAgent.name}</strong>에게만
           </span>
           <button type="button" className="btn-icon h-6 w-6" onClick={() => onRecipient("")} aria-label="받는 사람 해제 (방 전체로)">
             <Icon name="close" size={14} />
@@ -260,8 +260,8 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
                 </option>
               ))}
             </select>
-            <span className="hidden text-[11.5px] text-faint sm:inline">
-              <strong>Enter</strong> 전송 · <strong>Shift+Enter</strong> 줄바꿈 · <strong>@</strong>로 지목
+            <span className="composer-hint hidden sm:inline">
+              <strong>Enter</strong> 전송 · <strong>Shift+Enter</strong> 줄바꿈
             </span>
             <span className="flex-1" />
             <button type="submit" className="btn btn-primary btn-sm" disabled={!text.trim() || sending}>
