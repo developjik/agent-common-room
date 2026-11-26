@@ -72,6 +72,7 @@ function Boot() {
     setOwner(null);
     setWorkspaces([]);
     setPhase("auth");
+    document.title = "관제실 · 공통 룸";
     history.replaceState(null, "", "/");
     setRoute({ view: "home", roomId: null });
   }, []);
@@ -80,6 +81,7 @@ function Boot() {
     setOwner(null);
     setWorkspaces([]);
     setPhase("auth");
+    document.title = "관제실 · 공통 룸";
   }, []);
 
   if (phase === "boot") {

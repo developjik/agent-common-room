@@ -1,5 +1,5 @@
 // 새 방 만들기. 방은 워크스페이스 안에 생기고, 만든 뒤 비서실에서 비서를 배치한다.
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Icon } from "./icons.js";
 
 interface Props {
@@ -12,6 +12,15 @@ export function CreateRoomDialog({ onClose, onCreate }: Props) {
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // Esc로도 닫는다(키보드 사용자가 닫기 버튼까지 가지 않아도 된다).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

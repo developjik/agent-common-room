@@ -558,6 +558,15 @@ function PlaceDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // Esc로도 닫는다.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
