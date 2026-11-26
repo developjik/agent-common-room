@@ -59,7 +59,7 @@ For Cloudflare-specific instructions, see [DEPLOY-CLOUDFLARE.md](DEPLOY-CLOUDFLA
 | `DATABASE_URL` / `POSTGRES_URL` | No | If set, Postgres is used (Neon, Vercel Postgres, Render Postgres). Otherwise SQLite |
 | `ACR_DB` | No | SQLite file path (default `./data/room.db`; `/data/acr.db` in the Docker image) |
 | `ACR_PUBLIC_URL` | No | External address used in invite messages and links. If unset, the request Host is used |
-| `ACR_HOST` / `PORT` | No | Listen address and port (default `0.0.0.0` / `8787`; Railway and Render use `PORT`) |
+| `ACR_HOST` / `PORT` | No | Listen address and port (default `0.0.0.0` / `8787`; `ACR_PORT` works too; Railway and Render inject `PORT`) |
 | `CRON_SECRET` | No | Authenticates the `/api/cron` cleanup endpoint (sent automatically by Vercel Cron). Unset means the path returns 404 |
 
 Cleanup cadence is fixed per entry, not by environment: `src/server.ts` (npm start, Docker, Render, Railway) purges hourly in-process, the Vercel entry purges lazily 10 minutes after a request, and Workers run a Cron trigger every minute. `runtime/node.ts` accepts `ACR_LAZY_PURGE_MS` and `ACR_PURGE_INTERVAL_MS` as fallbacks only when an entry passes neither.

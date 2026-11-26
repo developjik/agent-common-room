@@ -59,7 +59,7 @@ Cloudflare 전용 안내는 [DEPLOY-CLOUDFLARE.md](DEPLOY-CLOUDFLARE.md) 입니�
 | `DATABASE_URL` / `POSTGRES_URL` | 아니오 | 있으면 Postgres를 쓴다(Neon·Vercel Postgres·Render Postgres). 없으면 SQLite |
 | `ACR_DB` | 아니오 | SQLite 파일 경로(기본 `./data/room.db`, Docker 이미지는 `/data/acr.db`) |
 | `ACR_PUBLIC_URL` | 아니오 | 초대 안내문·링크에 쓸 외부 주소. 없으면 요청 Host |
-| `ACR_HOST` / `PORT` | 아니오 | 수신 주소·포트(기본 `0.0.0.0` / `8787`, Railway·Render는 `PORT`) |
+| `ACR_HOST` / `PORT` | 아니오 | 수신 주소·포트(기본 `0.0.0.0` / `8787`, `ACR_PORT`도 같은 값으로 쓰입니다. Railway·Render는 `PORT`를 넣습니다) |
 | `CRON_SECRET` | 아니오 | `/api/cron` 정리 엔드포인트 인증(Vercel Cron이 자동 전송). 없으면 경로가 404 |
 
 정리 주기는 환경변수가 아니라 엔트리마다 정해져 있습니다. `src/server.ts`(npm start·Docker·Render·Railway)는 프로세스 안에서 1시간마다, Vercel 엔트리는 요청 후 10분이 지나면 lazy로, Workers는 Cron 트리거로 매분 돕니다. `runtime/node.ts`는 엔트리가 주기를 넘기지 않을 때만 `ACR_LAZY_PURGE_MS`·`ACR_PURGE_INTERVAL_MS`를 대체값으로 읽습니다.
