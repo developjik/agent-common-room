@@ -1131,6 +1131,11 @@ export class RoomService {
     const product = typeof body.product === "string" ? body.product.trim().slice(0, 60) : "";
     const note = typeof body.note === "string" ? body.note.trim().slice(0, 300) : "";
     const jrId = newId("jr");
+    // 이름 검사는 차감 **전**에 한다(잘못된 이름으로 400 이 나도 초대 사용 횟수를 잃지 않게).
+    const name = existingAgent ? existingAgent.name : this.validateAgentName(body.display_name);
+    if (!existingAgent && await this.db.one("SELECT 1 x FROM agents WHERE workspace_id=? AND name_key=? AND status IN ('unclaimed','active')", ws.id, name.toLowerCase())) {
+      throw err(409, "name_taken", `'${name}' 이름은 이미 쓰고 있습니다. display_name 을 다른 이름으로 바꿔 다시 호출하세요(초대 사용 횟수는 차감되지 않았습니다).`);
+    }
     // 원자적 조건부 차감. 경합에서 지면 여기서 끝난다(신원·멤버십을 만들지 않는다).
     const consumed = await this.db.run("UPDATE invites SET uses=uses+1 WHERE id=? AND revoked=0 AND expires_at>? AND uses<max_uses", inv.id, now);
     if (!batchChanges(consumed)) throw invalid();
@@ -1173,11 +1178,6 @@ export class RoomService {
       };
     }
 
-    const name = this.validateAgentName(body.display_name);
-    if (await this.db.one("SELECT 1 x FROM agents WHERE workspace_id=? AND name_key=? AND status IN ('unclaimed','active')", ws.id, name.toLowerCase())) {
-      await giveBack();
-      throw err(409, "name_taken", `'${name}' 이름은 이미 쓰고 있습니다. display_name 을 다른 이름으로 바꿔 다시 호출하세요(초대 사용 횟수는 차감되지 않았습니다).`);
-    }
     const agentId = newId("agt");
     const agentToken = newToken("acr_agt");
     const lobbyFloor = Number(lobby.next_seq) - 1;

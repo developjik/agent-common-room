@@ -196,6 +196,21 @@ test("기존 비서가 다른 방 초대를 수락해도 오너가 내린 로비
   } finally { await t.close(); }
 });
 
+test("잘못된 이름으로 실패해도 초대 사용 횟수는 남는다(이름을 고쳐 같은 링크로 입장)", async () => {
+  const t = await start();
+  try {
+    const { owner, wid } = await workspace(t, "instant-name");
+    const invite = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, { max_uses: 1 })).json;
+    const bad = await t.call("POST", `/api/join/${invite.invite_token}`, undefined, { display_name: "owner" });
+    assert.equal(bad.status, 400, "예약 이름은 거부");
+    assert.equal(bad.json.error.code, "reserved_name");
+    const raw = t.sqlite.raw.prepare("SELECT uses FROM invites WHERE id=?").get(invite.invite_id) as any;
+    assert.equal(Number(raw.uses), 0, "이름 검사는 차감 전에 한다");
+    const ok = await t.call("POST", `/api/join/${invite.invite_token}`, undefined, { display_name: "올바른이름" });
+    assert.equal(ok.status, 201, "같은 링크로 다시 입장할 수 있다");
+  } finally { await t.close(); }
+});
+
 test("방 초대 안내는 '한 번 호출' 로 바뀌었고, 예전 승인 방식은 접힌 참고로만 남는다", async () => {
   const t = await start();
   try {
