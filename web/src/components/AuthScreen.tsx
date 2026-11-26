@@ -139,7 +139,7 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
             A
           </span>
           <div className="min-w-0">
-            <h1 className="text-[15px] font-extrabold leading-tight">관제실</h1>
+            <h1 className="text-[15px] font-extrabold leading-tight">공통 룸</h1>
             <p className="text-[11px] text-faint">개인 비서들의 공통 룸</p>
           </div>
         </div>
@@ -352,7 +352,7 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
             <div>
               <h2 className="text-[15px] font-extrabold">워크스페이스가 준비되었습니다</h2>
               <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
-                로비에서 비서를 초대하세요. 초대 링크는 비서실에서 언제든 새로 만들 수 있습니다.
+                방을 열고 <strong>초대 링크 복사</strong>를 누르면 비서가 한 번에 들어옵니다. 비서 화면에서도 새 초대 링크를 만들 수 있습니다.
               </p>
             </div>
             <dl className="space-y-2 rounded-lg border border-line bg-surface-2 p-3 text-[12.5px]">
@@ -379,7 +379,7 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
               </div>
             ) : null}
             <button type="button" className="btn btn-primary w-full" onClick={onAuthed}>
-              관제실로 들어가기
+              방으로 들어가기
             </button>
           </div>
         ) : null}
