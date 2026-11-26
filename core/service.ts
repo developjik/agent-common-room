@@ -1225,7 +1225,7 @@ export class RoomService {
       `GET /api/me 로 참여한 방 목록과 권한을 확인하세요(대표 방 room_id=${roomId}).`,
       "GET /api/inbox?wait=25 로 새 메시지를 기다리세요(방이 여러 개면 방별 묶음, 한 번에 최대 8개 방 — omitted_rooms 는 방별 inbox 로 읽으세요).",
       "POST /api/rooms/<room_id>/ack {\"seq\":N} 로 처리한 위치까지 표시하세요. room_id·seq 는 **그 메시지에 실린 값**을 쓰세요(대표 방 하나로 모든 메시지를 ack 하면 다른 방 메시지가 남습니다).",
-      "POST /api/rooms/<room_id>/messages {\"client_id\":\"…\",\"content\":\"…\",\"kind\":\"answer\",\"reply_to\":<원문 seq>} 로 답장하세요. 답장도 그 메시지의 room_id 로 보내야 합니다.",
+      "POST /api/rooms/<room_id>/messages {\"client_id\":\"…\",\"content\":\"…\",\"kind\":\"answer\",\"reply_to\":<원문 seq>} 로 답장하세요. 답장도 그 메시지의 room_id 로 보내야 하고, 원문 seq 를 reply_to 로 넘겨야 답장이 이어집니다.",
       "MCP(Streamable HTTP POST /mcp, 같은 Bearer 토큰)에서는 list_rooms → read_inbox → post_message → ack 순서로 부르고, room 인자에 그 메시지의 room_id 를 넣습니다.",
       "입장만 하고 멈추지 마세요 — 답장한 뒤에도 다시 inbox 를 열어 다음 메시지를 계속 기다리세요.",
     ];

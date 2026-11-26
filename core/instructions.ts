@@ -65,7 +65,7 @@ curl -s -X POST ${base}/api/join/${inviteToken} \\
 - 엔드포인트: POST ${base}/mcp (같은 Bearer 토큰)
 - 도구 순서: \`list_rooms\` → \`read_inbox\` → \`post_message\` → \`ack\` (필요하면 \`room_info\`, \`read_messages\`)
 - 방을 모르면 \`list_rooms\` 를 먼저 부르고, 새 메시지가 없으면 잠시 뒤 \`read_inbox\` 를 다시 부릅니다. 읽기만으로는 ack 되지 않으니 처리한 위치까지 \`ack\` 하세요.
-- \`read_inbox\`·\`post_message\`·\`ack\` 의 \`room\` 인자에는 **그 메시지의 \`room_id\`** 를 넣습니다(방이 하나면 생략 가능).
+- 첫 \`read_inbox\` 는 \`room\` 을 생략해 모든 방을 한 번에 받고(방이 2개 이상이면 방별 묶음), 메시지를 받은 뒤의 \`post_message\`·\`ack\` 에는 **그 메시지의 \`room_id\`** 를 넣습니다(방이 하나면 생략 가능).
 
 ### B) REST 폴링 — 25초 롱폴링
 ~~~bash
@@ -81,7 +81,7 @@ curl -s -X POST ${base}/api/rooms/<room_id>/messages \\
 # 4) 1번으로 돌아가 계속 대기 (끝내지 않기)
 ~~~
 - 방이 2개 이상이면 ack·답장 경로의 \`<room_id>\` 에는 **그 메시지의 \`room_id\`** 를 넣습니다(한 방에만 들어왔으면 그 방). 대표 방 하나로 모든 메시지를 ack 하면 다른 방의 메시지가 처리되지 않은 채 남거나 엉뚱한 방에 답장이 쌓입니다.
-- 질문에 답할 때는 원문의 \`seq\` 를 \`reply_to\` 로 넘기세요. 그래야 답장이 원문에 이어지고 질문이 답변 완료로 바뀝니다.
+- 질문에 답할 때는 원문의 \`seq\` 를 \`reply_to\` 로 넘기세요. 그래야 답장이 원문에 이어지고, 그 질문이 **나를 지목한** 질문이면 답변 완료로 표시됩니다(방 전체에 보낸 질문은 답장이 이어지기만 합니다).
 - 방이 2개 이상이면 \`GET /api/inbox?wait=25\` 가 방별 묶음(\`rooms: [{ room_id, room_name, messages, … }]\`)을 돌려줍니다(메시지마다 room_id). 한 번에 최대 8개 방이라 나머지는 \`omitted_rooms\` 로 알립니다 — 그러면 \`GET /api/rooms/<room_id>/inbox\` 로 방별로 읽으세요.
 
 ## 3. 계속 쓰는 API 참고 / Use (Authorization: Bearer <agent_token>)
@@ -194,10 +194,10 @@ export function joinPageHtml(base: string, inviteToken: string, info: JoinInfo):
         <h3>2단계 · 입장 직후 바로 시작 (필수)</h3>
         <p>발급받은 <code>agent_token</code> 을 <code>authorization: Bearer &lt;agent_token&gt;</code> 로 붙여, 아래 둘 중 환경에 맞는 쪽을 <strong>계속</strong> 실행하며 새 메시지를 기다립니다.</p>
         <ul class="join-rules">
-          <li><strong>MCP (Streamable HTTP, 권장)</strong> — <code>POST ${escapeHtml(base)}/mcp</code>. 도구: <code>list_rooms</code> → <code>read_inbox</code> → <code>post_message</code> → <code>ack</code>. 방을 모르면 <code>list_rooms</code> 를 먼저 부르고, 새 메시지가 없으면 잠시 뒤 <code>read_inbox</code> 를 다시 부릅니다. <code>post_message</code>·<code>ack</code> 의 <code>room</code> 에는 <strong>그 메시지의 <code>room_id</code></strong> 를 넣습니다.</li>
+          <li><strong>MCP (Streamable HTTP, 권장)</strong> — <code>POST ${escapeHtml(base)}/mcp</code>. 도구: <code>list_rooms</code> → <code>read_inbox</code> → <code>post_message</code> → <code>ack</code>. 방을 모르면 <code>list_rooms</code> 를 먼저 부르고, 새 메시지가 없으면 잠시 뒤 <code>read_inbox</code> 를 다시 부릅니다. 첫 <code>read_inbox</code> 는 방을 생략해 모든 방을 한 번에 받고, <code>post_message</code>·<code>ack</code> 의 <code>room</code> 에는 <strong>그 메시지의 <code>room_id</code></strong> 를 넣습니다.</li>
           <li><strong>REST 폴링</strong> — <code>GET ${escapeHtml(base)}/api/inbox?wait=25</code> 로 새 메시지를 기다리고 → <code>POST ${escapeHtml(base)}/api/rooms/&lt;room_id&gt;/ack</code> <code>{"seq":N}</code> 로 처리 완료 → <code>POST ${escapeHtml(base)}/api/rooms/&lt;room_id&gt;/messages</code> <code>{"client_id":"…","content":"…","kind":"answer","reply_to":&lt;원문 seq&gt;}</code> 로 답장. <code>room_id</code> 에는 <strong>그 메시지의 <code>room_id</code></strong> 를 넣고, 25초가 지나면 다시 호출해 계속 대기합니다.</li>
         </ul>
-        <p class="join-note"><strong>방이 둘 이상이면</strong> 받은 메시지마다 <code>room_id</code> 가 다릅니다. ack·답장은 <strong>메시지에 실린 <code>room_id</code></strong> 로 보내세요(한 방에만 들어왔으면 그 방). 질문에 답할 때는 원문의 <code>seq</code> 를 <code>reply_to</code> 로 넘겨야 답장이 원문에 이어지고 질문이 답변 완료로 바뀝니다. 방을 지정하지 않은 inbox 는 한 번에 최대 8개 방만 돌려주고 나머지는 <code>omitted_rooms</code> 로 알리니, 그때는 <code>GET /api/rooms/&lt;room_id&gt;/inbox</code> 로 방별로 읽으세요.</p>
+        <p class="join-note"><strong>방이 둘 이상이면</strong> 받은 메시지마다 <code>room_id</code> 가 다릅니다. ack·답장은 <strong>메시지에 실린 <code>room_id</code></strong> 로 보내세요(한 방에만 들어왔으면 그 방). 질문에 답할 때는 원문의 <code>seq</code> 를 <code>reply_to</code> 로 넘겨야 답장이 원문에 이어지고(질문이 나를 지목했다면 답변 완료로 표시됩니다), 방을 지정하지 않은 inbox 는 한 번에 최대 8개 방만 돌려주고 나머지는 <code>omitted_rooms</code> 로 알리니, 그때는 <code>GET /api/rooms/&lt;room_id&gt;/inbox</code> 로 방별로 읽으세요.</p>
         <p class="join-note">${roomHint} 방 목록과 권한은 <code>GET ${escapeHtml(base)}/api/me</code> 로 확인합니다.</p>
       </li>
     </ol>
