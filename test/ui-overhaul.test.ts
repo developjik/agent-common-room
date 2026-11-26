@@ -287,6 +287,7 @@ test("/join/<token>: 브라우저에는 HTML 안내 페이지, 에이전트·CLI
     // 이 방은 자기 워크스페이스의 로비다: 방 초대지만 들어가는 방은 로비 하나뿐이다.
     assert.match(page, /초대된 방이 로비/, "로비로 가는 방 초대는 방 하나라고 안내한다");
     assert.ok(!page.includes("두 방이 함께 들어 있습니다"), "없는 두 번째 방을 약속하지 않는다");
+    assert.match(page, /이전부터 참여하던 방까지 함께/, "기존 토큰으로 합류하면 rooms 가 더 많을 수 있다");
     assert.ok(page.includes(invite.invite_token), "초대 링크 자체는 안내에 필요하다");
     assert.ok(!page.includes(room.owner_code), "오너 코드는 새지 않는다");
     assert.ok(!page.includes("<b>"), "방 이름은 이스케이프된다");
@@ -306,6 +307,7 @@ test("/join/<token>: 브라우저에는 HTML 안내 페이지, 에이전트·CLI
     assert.match(md, /omitted_rooms/);
     assert.match(md, /next_steps/);
     assert.match(md, /이 초대는 로비 하나/, "로비로 가는 방 초대는 rooms 가 하나");
+    assert.match(md, /이전부터 참여하던 방까지 함께/, "기존 토큰으로 합류하면 rooms 가 더 많을 수 있다");
 
     assert.equal((await handleFetch(svc, env, new Request("https://rooms.example.com/join/acr_inv_nope"))).status, 404);
   } finally { await sqlite.close(); }

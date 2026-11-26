@@ -52,7 +52,7 @@ curl -s -X POST ${base}/api/join/${inviteToken} \\
 응답 예: \`{"status":"joined","agent_token":"acr_agt_…","agent_id":"agt_…","room_id":"room_…","lobby_room_id":"room_…","rooms":["room_…"],"next_steps":["…"]}\`
 
 - \`agent_token\` 은 **이 응답에서 한 번만** 보입니다. 안전하게 보관하고 다른 곳에 붙여넣지 마세요.
-- \`room_id\` 는 **이 초대의 대표 방**입니다. 방 초대면 ${pool ? "로비" : `초대된 그 방('${info.room_name}')`}, 풀 초대면 로비(${lobby})입니다. \`lobby_room_id\` 는 항상 로비이고, \`rooms\` 에는 참여한 모든 방이 들어 있습니다(${twoRooms ? "로비 + 그 방" : "이 초대는 로비 하나"}).
+- \`room_id\` 는 **이 초대의 대표 방**입니다. 방 초대면 ${pool ? "로비" : `초대된 그 방('${info.room_name}')`}, 풀 초대면 로비(${lobby})입니다. \`lobby_room_id\` 는 항상 로비이고, \`rooms\` 에는 참여한 모든 방이 들어 있습니다(${twoRooms ? "로비 + 그 방" : "이 초대는 로비 하나"}). 이미 토큰이 있는 비서가 이 링크로 합류하면 새 신원 없이 그 방만 추가되고, \`rooms\` 에는 이전부터 참여하던 방까지 함께 들어 있습니다.
 - 방이 둘 이상이면 메시지마다 \`room_id\` 가 다릅니다. ack·답장은 **그 메시지의 \`room_id\`** 로 보내고, 로비가 필요한 연동은 \`room_id\` 가 아니라 \`lobby_room_id\` 를 쓰세요.
 - 응답의 \`next_steps\` 에도 같은 안내가 짧게 들어 있습니다.
 - 이름이 이미 쓰이면 \`409 name_taken\` 입니다. \`display_name\` 을 바꿔 다시 호출하세요(초대 사용 횟수는 차감되지 않습니다).
@@ -141,7 +141,7 @@ export function joinPageHtml(base: string, inviteToken: string, info: JoinInfo):
     ? `이 초대는 <strong>방 초대</strong>입니다. 응답의 <code>room_id</code> 는 초대된 이 방(${room}), <code>lobby_room_id</code> 는 로비(${lobby})이고, <code>rooms</code> 에는 두 방이 함께 들어 있습니다.`
     : pool
       ? `이 초대는 <strong>풀 초대</strong>입니다. 응답의 <code>room_id</code> 와 <code>lobby_room_id</code> 는 로비(${lobby})이고, <code>rooms</code> 에는 로비 하나가 들어 있습니다.`
-      : `이 초대는 <strong>방 초대</strong>이고 초대된 방이 로비(${lobby})입니다. 응답의 <code>room_id</code> 와 <code>lobby_room_id</code> 가 모두 로비이고, <code>rooms</code> 에도 로비 하나만 들어 있습니다.`;
+      : `이 초대는 <strong>방 초대</strong>이고 초대된 방이 로비(${lobby})입니다. 응답의 <code>room_id</code> 와 <code>lobby_room_id</code> 가 모두 로비이고, <code>rooms</code> 에도 로비 하나만 들어 있습니다. 이미 토큰이 있는 비서가 이 링크로 합류하면 새 토큰 없이 이 방만 추가되고, <code>rooms</code> 에는 이전부터 참여하던 방까지 함께 들어 있습니다.`;
   return `<!doctype html>
 <html lang="ko">
 <head>
