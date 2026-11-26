@@ -16,7 +16,7 @@ export function CreateRoomDialog({ onClose, onCreate }: Props) {
   // Esc로도 닫는다(키보드 사용자가 닫기 버튼까지 가지 않아도 된다).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !document.querySelector(".palette-backdrop")) onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

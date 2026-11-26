@@ -86,6 +86,16 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
           ) : null}
         </div>
 
+        <button
+          type="button"
+          className="msg-more"
+          aria-expanded={actionsOpen}
+          aria-label={`#${m.seq} 메시지 작업 열기`}
+          onClick={() => setActionsOpen((v) => !v)}
+        >
+          <Icon name="more" size={15} />
+        </button>
+
         {!grouped ? (
           <div className="msg-head">
             <span className={"msg-name" + (isOwner ? " is-owner" : "")}>{name}</span>
@@ -95,15 +105,6 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
             <span className="msg-meta" title={fmtFull(m.created_at)}>
               {fmtTime(m.created_at)}
             </span>
-            <button
-              type="button"
-              className="msg-more"
-              aria-expanded={actionsOpen}
-              aria-label={`#${m.seq} 메시지 작업 열기`}
-              onClick={() => setActionsOpen((v) => !v)}
-            >
-              <Icon name="more" size={15} />
-            </button>
             {m.seq === 0 ? null : <span className="msg-meta opacity-70">#{m.seq}</span>}
           </div>
         ) : null}

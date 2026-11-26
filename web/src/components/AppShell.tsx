@@ -1,6 +1,6 @@
 // 앱 껍데기: 56px 아이콘 레일(데스크톱) · 상단 바 · 뷰 전환 · ⌘K 팔레트 · 모바일 하단 탭 4개.
 // Slack식 3단(채널 목록·메시지·플렉스페인)을 버리고, 첫 화면은 관제실이다.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { MissionControl } from "./MissionControl.js";
 import { InboxView } from "./InboxView.js";
 import { RoomsView } from "./RoomsView.js";
@@ -51,7 +51,6 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
   const [jumpSeq, setJumpSeq] = useState<number | null>(null);
   const [deskFocus, setDeskFocus] = useState<{ kind: "agent" | "invite"; id?: string } | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
-  const previousRoom = useRef<string | null>(route.roomId);
 
   const rooms = useMemo(() => sortRoomCards(store.overview?.rooms ?? []), [store.overview]);
   const tab = activeTab(route);
@@ -72,14 +71,6 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
     }
     if (!store.error) setLastError(null);
   }, [store.error, store.ready, lastError, notify]);
-
-  // 방을 떠나면 이동 예약을 지운다.
-  useEffect(() => {
-    if (previousRoom.current !== route.roomId) {
-      previousRoom.current = route.roomId;
-      setJumpSeq(null);
-    }
-  }, [route.roomId]);
 
   // ⌘K / Ctrl+K
   useEffect(() => {
@@ -209,6 +200,7 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
       onOpenRoom={openRoom}
       onGoView={goView}
       onCreateRoom={() => setCreateOpen(true)}
+      onRetry={() => void store.refresh({ full: true })}
       onInvite={() => {
         setDeskFocus({ kind: "invite" });
         goView("desk");

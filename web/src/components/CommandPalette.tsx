@@ -39,6 +39,8 @@ export function CommandPalette({ rooms, agents, onClose, onPick }: Props) {
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    // 한글 조합 중 Enter는 글자 확정이지 선택이 아니다.
+    if (e.nativeEvent.isComposing || (e.nativeEvent as unknown as { keyCode?: number }).keyCode === 229) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setIndex((n) => (items.length ? (Math.min(n, items.length - 1) + 1) % items.length : 0));

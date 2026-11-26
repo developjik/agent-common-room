@@ -51,6 +51,7 @@ export function RoomView({
   const confirm = useConfirm();
   const [panel, setPanel] = useState<PanelState>(null);
   const [recipient, setRecipient] = useState("");
+  const [recipientNotice, setRecipientNotice] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [seed, setSeed] = useState<{ text: string; nonce: number } | null>(null);
   const [focusComposer, setFocusComposer] = useState(0);
@@ -108,7 +109,11 @@ export function RoomView({
     const { reset, notice } = recipientReset(agents, recipient);
     if (!reset) return;
     setRecipient("");
-    if (notice) notify(notice);
+    // 안내는 토스트로 한 번 띄우고, 초안을 보내기 전까지 칩으로 계속 보여 준다.
+    if (notice) {
+      setRecipientNotice(notice);
+      notify(notice);
+    }
   }, [agents, recipient, notify]);
 
   const flash = useCallback((seq: number) => {
@@ -188,6 +193,7 @@ export function RoomView({
         reply_to: input.reply_to,
       });
       setRecipient("");
+      setRecipientNotice(null);
       setReplyTo(null);
     } catch (e) {
       notify(e instanceof Error ? e.message : "보내지 못했습니다.");
@@ -314,7 +320,7 @@ export function RoomView({
 
         {room.paused ? <PauseBanner room={room} messages={store.messages} onResume={() => void togglePause()} /> : null}
 
-        {pinnedAgent || replyTo ? (
+        {pinnedAgent || replyTo || recipientNotice ? (
           <div className="pins" aria-label="보내는 대상">
             {pinnedAgent ? (
               <span className="pin">
@@ -329,6 +335,15 @@ export function RoomView({
               <span className="pin">
                 <Icon name="reply" size={13} />#{replyTo.seq} 에 답장
                 <button type="button" className="pin-clear" onClick={() => setReplyTo(null)} aria-label="답장 대상 해제">
+                  <Icon name="close" size={12} />
+                </button>
+              </span>
+            ) : null}
+            {recipientNotice ? (
+              <span className="pin pin-warn">
+                <Icon name="alert" size={13} />
+                {recipientNotice}
+                <button type="button" className="pin-clear" onClick={() => setRecipientNotice(null)} aria-label="안내 닫기">
                   <Icon name="close" size={12} />
                 </button>
               </span>
@@ -372,7 +387,10 @@ export function RoomView({
         <Composer
           agents={agents}
           recipient={recipient}
-          onRecipient={setRecipient}
+          onRecipient={(id) => {
+            setRecipient(id);
+            setRecipientNotice(null);
+          }}
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}
           onSend={send}

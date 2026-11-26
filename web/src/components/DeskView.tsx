@@ -327,7 +327,7 @@ function RequestCard({ store, q, rooms }: { store: WorkspaceStore; q: JoinReques
         history: history as "all" | "none",
         can_read: scope !== "wo",
         can_write: scope !== "ro",
-        name: wanted === q.display_name.trim() ? undefined : wanted,
+        name: q.existing_agent || wanted === q.display_name.trim() ? undefined : wanted,
       });
       notify(`${approved} 님을 승인했습니다. 상대가 토큰을 한 번 받아 가면 대화할 수 있습니다.`);
     } catch (e) {
@@ -382,8 +382,20 @@ function RequestCard({ store, q, rooms }: { store: WorkspaceStore; q: JoinReques
         <label className="label" htmlFor={`n-${q.id}`}>
           비서 이름
         </label>
-        <input id={`n-${q.id}`} className="field text-[12.5px]" value={name} maxLength={40} onChange={(e) => setName(e.target.value)} placeholder={q.display_name} />
-        <p className="mt-1 text-[11px] leading-relaxed text-faint">같은 이름의 비서가 이미 있으면 승인할 수 없습니다. 그때는 다른 이름으로 승인하세요.</p>
+        <input
+          id={`n-${q.id}`}
+          className="field text-[12.5px]"
+          value={name}
+          maxLength={40}
+          disabled={!!q.existing_agent}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={q.display_name}
+        />
+        <p className="mt-1 text-[11px] leading-relaxed text-faint">
+          {q.existing_agent
+            ? "이미 토큰이 있는 비서입니다. 승인하면 이름은 그대로 두고 이 방의 구성원만 추가합니다."
+            : "같은 이름의 비서가 이미 있으면 승인할 수 없습니다. 그때는 다른 이름으로 승인하세요."}
+        </p>
       </div>
       <div className="grid w-full grid-cols-2 gap-2">
         <div>
@@ -561,7 +573,7 @@ function PlaceDialog({
   // Esc로도 닫는다.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !document.querySelector(".palette-backdrop")) onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -576,12 +588,13 @@ function PlaceDialog({
     });
 
   const submit = async () => {
-    const ids = [...selected].filter(Boolean);
+    // 이미 참여 중인 방을 다시 보내면 그 방의 권한이 기본값(읽기·쓰기)으로 덮인다.
+    // 그래서 새로 넣을 방만 보내고, 기존 방의 권한은 방 인스펙터에서 따로 바꾼다.
+    const ids = [...selected].filter((id) => id && !current.has(id));
     if (!ids.length) {
-      setError("방을 하나 이상 고르세요. 로비는 항상 포함됩니다.");
+      setError("선택한 방에 이미 모두 참여하고 있습니다. 권한은 그 방의 구성원 패널에서 바꾸세요.");
       return;
     }
-    if (!ids.includes(lobbyId) && lobbyId) ids.push(lobbyId);
     setBusy(true);
     setError("");
     try {
@@ -604,7 +617,9 @@ function PlaceDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p className="panel-note mt-1">이미 있는 방은 권한만 갱신되고 읽던 위치는 그대로입니다. 새로 넣는 방은 아래 '지난 대화' 범위를 따릅니다.</p>
+        <p className="panel-note mt-1">
+          새로 넣을 방만 저장합니다. 이미 참여한 방의 권한은 바뀌지 않으니, 권한은 그 방의 구성원 패널에서 바꾸세요.
+        </p>
         <ul className="place-list">
           {rooms.map((r) => {
             const isLobby = r.id === lobbyId;

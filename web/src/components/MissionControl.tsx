@@ -15,9 +15,10 @@ interface Props {
   onGoView: (view: View) => void;
   onCreateRoom: () => void;
   onInvite: () => void;
+  onRetry: () => void;
 }
 
-export function MissionControl({ workspace, overview, ready, onOpenRoom, onGoView, onCreateRoom, onInvite }: Props) {
+export function MissionControl({ workspace, overview, ready, onOpenRoom, onGoView, onCreateRoom, onInvite, onRetry }: Props) {
   if (ready && !overview) {
     return (
       <div className="page">
@@ -26,8 +27,8 @@ export function MissionControl({ workspace, overview, ready, onOpenRoom, onGoVie
           title="워크스페이스를 불러오지 못했습니다"
           text="연결이 잠시 끊겼을 수 있습니다. 잠시 뒤 다시 시도하세요."
           action={
-            <button type="button" className="btn btn-primary" onClick={() => location.reload()}>
-              새로고침
+            <button type="button" className="btn btn-primary" onClick={onRetry}>
+              다시 시도
             </button>
           }
         />

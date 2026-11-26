@@ -132,8 +132,11 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
 
   const pullMessages = useCallback(
     async (rid: string, full: boolean, generation: number): Promise<number> => {
-      const previousLast = full ? 0 : lastSeq.current;
-      let after = nextFetchAfter(previousLast, full);
+      // 새 글 수는 '이번 조회 전의 마지막 seq'를 기준으로 센다. 전체 재조회(after=0)도
+      // 이미 보고 있던 메시지를 새 글로 세어 폴링 간격을 4초로 되돌리지 않는다.
+      const before = lastSeq.current;
+      const previousLast = before;
+      let after = full ? 0 : nextFetchAfter(before, false);
       const collected: Message[] = [];
       let lastFetched = previousLast;
       for (;;) {

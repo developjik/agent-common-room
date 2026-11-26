@@ -1661,6 +1661,15 @@ button {
 .pin-clear:hover {
   background: color-mix(in oklab, var(--acr-accent) 18%, transparent);
 }
+.pin-warn {
+  max-width: 100%;
+  white-space: normal;
+  line-height: 1.35;
+  border-color: color-mix(in oklab, var(--acr-wait) 60%, var(--acr-line));
+  background: color-mix(in oklab, var(--acr-wait) 12%, var(--acr-surface));
+  color: var(--acr-wait);
+  font-weight: 600;
+}
 .reconnect {
   display: flex;
   align-items: center;
@@ -2070,9 +2079,16 @@ button {
   background: var(--acr-surface-2);
   color: var(--acr-ink);
 }
-@media (max-width: 1023px) {
+@media (max-width: 1023px), (hover: none) {
   .msg-more {
+    position: absolute;
+    top: 4px;
+    right: 6px;
     display: inline-flex;
+    background: var(--acr-canvas);
+  }
+  .msg-body {
+    padding-right: 30px;
   }
   .msg-actions {
     display: none;

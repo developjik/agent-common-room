@@ -221,12 +221,18 @@ function RoomSettings({
   const notify = useToast();
   const [name, setName] = useState(room.name);
   const [description, setDescription] = useState(room.description);
+  const [policy, setPolicy] = useState(room.context_policy);
+  const [categories, setCategories] = useState(room.allowed_categories.join(", "));
+  const [retention, setRetention] = useState(room.retention_days ? String(room.retention_days) : "");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setName(room.name);
     setDescription(room.description);
-  }, [room.name, room.description]);
+    setPolicy(room.context_policy);
+    setCategories(room.allowed_categories.join(", "));
+    setRetention(room.retention_days ? String(room.retention_days) : "");
+  }, [room.name, room.description, room.context_policy, room.allowed_categories, room.retention_days]);
 
   const since = Date.now() - room.rate_limit.window_seconds * 1000;
   const recent = store.messages.filter((m) => m.sender.type === "agent" && new Date(m.created_at).getTime() >= since).length;
@@ -240,9 +246,20 @@ function RoomSettings({
       notify("방 이름을 입력하세요.");
       return;
     }
+    const days = retention.trim();
+    if (days && (!/^\d+$/.test(days) || Number(days) < 1 || Number(days) > 3650)) {
+      notify("보존 기간은 1~3650일 숫자이거나 비워 두세요.");
+      return;
+    }
     setBusy(true);
     try {
-      await store.patchRoom(room.id, { name: name.trim(), description });
+      await store.patchRoom(room.id, {
+        name: name.trim(),
+        description,
+        context_policy: policy,
+        allowed_categories: categories.split(",").map((c) => c.trim()).filter(Boolean),
+        retention_days: days ? Number(days) : null,
+      });
       notify("방 정보를 저장했습니다.");
     } catch (e) {
       notify(e instanceof Error ? e.message : "저장하지 못했습니다.");
@@ -305,12 +322,55 @@ function RoomSettings({
           </label>
           <input id="room-desc" className="field" maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="이 방의 용도 한 줄" />
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <div>
+          <label className="label" htmlFor="room-policy">
+            개인 맥락 정책
+          </label>
+          <textarea
+            id="room-policy"
+            className="field"
+            rows={3}
+            maxLength={1000}
+            value={policy}
+            onChange={(e) => setPolicy(e.target.value)}
+            placeholder="예: 개인 일정·업무 맥락은 이 방 안에서만 공유합니다."
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="room-categories">
+            허용 카테고리 (쉼표)
+          </label>
+          <input
+            id="room-categories"
+            className="field mono"
+            value={categories}
+            onChange={(e) => setCategories(e.target.value)}
+            placeholder="schedule, work, docs"
+          />
+          <p className="mt-1 text-[11px] leading-relaxed text-faint">소문자·밑줄 2~30자. 'none'은 항상 포함됩니다.</p>
+        </div>
+        <div>
+          <label className="label" htmlFor="room-retention">
+            보존 기간 (일, 비우면 제한 없음)
+          </label>
+          <input
+            id="room-retention"
+            className="field mono"
+            inputMode="numeric"
+            value={retention}
+            onChange={(e) => setRetention(e.target.value)}
+            placeholder="예: 30"
+          />
+        </div>
         <button type="button" className="btn w-full" onClick={() => void save()} disabled={busy}>
-          {busy ? "저장 중…" : "이름·설명 저장"}
+          {busy ? "저장 중…" : "이름·설명·정책 저장"}
         </button>
       </div>
 
-      <dl className="kv">
+      <dl className="kv border-t border-line pt-3">
         <div>
           <dt>방 ID</dt>
           <dd className="mono select-all">{room.id}</dd>
@@ -319,24 +379,11 @@ function RoomSettings({
           <dt>만든 시각</dt>
           <dd>{fmtFull(room.created_at)}</dd>
         </div>
-        <div>
-          <dt>보존 기간</dt>
-          <dd>{room.retention_days ? `${room.retention_days}일` : "제한 없음"}</dd>
-        </div>
-        <div>
-          <dt>허용 카테고리</dt>
-          <dd className="flex flex-wrap gap-1.5">
-            {room.allowed_categories.map((c) => (
-              <span key={c} className="pill">
-                {c}
-              </span>
-            ))}
-          </dd>
-        </div>
       </dl>
 
-      <p className="panel-note border-t border-line pt-3">
-        정책 문구·웹훅은 기존 콘솔(<a className="msg-link" href="/ui/">/ui/</a>)에서 그대로 설정할 수 있습니다.
+      <p className="panel-note">
+        웹훅은 기존 콘솔(<a className="msg-link" href="/ui/">/ui/</a>)에서 <strong>방 ID + 방 복구 코드</strong>로 로그인해 설정합니다.
+        v2 화면에서는 정책·보존 기간·이름까지 다룹니다.
       </p>
 
       {room.kind !== "lobby" ? (
@@ -467,11 +514,14 @@ function RoomInvites({ store, room, workspace }: { store: WorkspaceStore; room: 
         </p>
         {invites === null ? (
           <p className="panel-note mt-2">불러오는 중…</p>
-        ) : invites.length === 0 ? (
-          <p className="panel-note mt-2">아직 만든 초대가 없습니다.</p>
+        ) : invites.filter((i) => (i.kind ?? "room") === "room").length === 0 ? (
+          <p className="panel-note mt-2">아직 만든 방 초대가 없습니다. 풀 초대(비서실)는 여기에 섞이지 않습니다.</p>
         ) : (
           <ul className="invite-list mt-1">
-            {[...invites].reverse().map((inv) => (
+            {[...invites]
+              .filter((i) => (i.kind ?? "room") === "room")
+              .reverse()
+              .map((inv) => (
               <li key={inv.id} className="invite-row">
                 <div className="min-w-0 flex-1">
                   <p className="text-[12.5px] font-semibold">
