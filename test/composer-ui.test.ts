@@ -31,9 +31,16 @@ test("입력창은 1줄에서 160px까지만 자라고 제자리에서 스크롤
 });
 
 test("멘션 후보는 click으로도 고를 수 있고 전송 버튼은 이름을 가진다", () => {
-  assert.match(composer, /onMouseDown=\{\(e\) => e\.preventDefault\(\)\}/, "mousedown은 포커스만 막는다");
-  assert.match(composer, /onClick=\{\(\) => choose\(a\)\}/, "보조 기술의 click도 같은 선택으로 들어온다");
+  // 후보 버튼 블록만 잘라서 본다(툴바 `@` 버튼의 같은 코드에 걸려 통과하지 않게).
+  const item = composer.slice(composer.indexOf('className="mention-item"'), composer.indexOf("</button>", composer.indexOf('className="mention-item"')));
+  assert.match(item, /onMouseDown=\{\(e\) => e\.preventDefault\(\)\}/, "mousedown은 포커스 이동만 막는다");
+  assert.match(item, /onClick=\{\(\) => choose\(a\)\}/, "보조 기술의 click도 같은 선택으로 들어온다");
   assert.match(composer, /aria-label=\{sending \? "보내는 중" : "전송"\}/, "모바일에서 문구를 숨겨도 이름이 남는다");
+});
+
+test("다른 곳에서 지목해 포커스를 받으면 열린 자동완성을 닫는다", () => {
+  assert.match(composer, /if \(focusNonce\) \{[\s\S]{0,200}?setMention\(null\)/, "낡은 후보가 새 수신자를 덮어쓰지 않는다");
+  assert.match(composer, /rightBoundary: caret/, "@ 버튼이 넣은 멘션은 커서 뒤 본문을 삼키지 않는다");
 });
 
 test("플레이스홀더와 @ 호출·수신자 칩이 있다", () => {
