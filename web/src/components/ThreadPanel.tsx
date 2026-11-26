@@ -4,12 +4,15 @@ import { MessageRow } from "./MessageRow.js";
 import { Composer } from "./Composer.js";
 import { Icon } from "./icons.js";
 import { repliesOf, threadSummaries } from "../lib/format.js";
-import type { RoomStore } from "../hooks/useOwnerRoom.js";
 import type { Agent, Message } from "../lib/types.js";
 import { useToast } from "./Toast.js";
 
 interface Props {
-  store: RoomStore;
+  chat: {
+    messages: Message[];
+    send: (roomId: string, input: { content: string; kind?: string; recipient?: string; reply_to?: number }) => Promise<Message>;
+  };
+  roomId: string;
   rootSeq: number;
   agents: Agent[];
   onClose: () => void;
@@ -21,13 +24,13 @@ interface Props {
   onOpenThread: (seq: number) => void;
 }
 
-export function ThreadPanel({ store, rootSeq, agents, onClose, onJump, onQuoteReply, onMention, onCopy, onDelete, onOpenThread }: Props) {
+export function ThreadPanel({ chat, roomId, rootSeq, agents, onClose, onJump, onQuoteReply, onMention, onCopy, onDelete, onOpenThread }: Props) {
   const notify = useToast();
   const bodyRef = useRef<HTMLDivElement | null>(null);
-  const bySeq = new Map(store.messages.map((m) => [m.seq, m]));
+  const bySeq = new Map(chat.messages.map((m) => [m.seq, m]));
   const root = bySeq.get(rootSeq);
-  const replies = root ? repliesOf(rootSeq, store.messages, bySeq) : [];
-  const summaries = threadSummaries(store.messages, bySeq);
+  const replies = root ? repliesOf(rootSeq, chat.messages, bySeq) : [];
+  const summaries = threadSummaries(chat.messages, bySeq);
 
   return (
     <>
@@ -67,9 +70,7 @@ export function ThreadPanel({ store, rootSeq, agents, onClose, onJump, onQuoteRe
               />
             </li>
             <li aria-hidden="true" className="my-2 flex items-center gap-2 px-4">
-              <span className="text-[11px] font-bold text-muted">
-                {replies.length ? `답글 ${replies.length}개` : "첫 답글을 남겨 보세요"}
-              </span>
+              <span className="text-[11px] font-bold text-muted">{replies.length ? `답글 ${replies.length}개` : "첫 답글을 남겨 보세요"}</span>
               <span className="h-px flex-1 bg-line" />
             </li>
             {replies.map((m, i) => (
@@ -106,7 +107,7 @@ export function ThreadPanel({ store, rootSeq, agents, onClose, onJump, onQuoteRe
           onSend={async (input) => {
             try {
               // 스레드 답글은 방 전체 공개다. 중앙 입력창의 수신자를 몰래 물려받지 않는다.
-              await store.send({ ...input, recipient: undefined, reply_to: root.seq });
+              await chat.send(roomId, { ...input, recipient: undefined, reply_to: rootSeq });
               window.setTimeout(() => {
                 const el = bodyRef.current;
                 if (el) el.scrollTop = el.scrollHeight;

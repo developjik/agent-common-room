@@ -1,59 +1,58 @@
-// 오너 로그인 · 첫 방 만들기( 관리자 키 최초 발급 / 입력 → 방 생성 → 오너 코드·초대 링크 ).
-// 관리자 키는 화면 상태에만 있고 저장소에 남기지 않는다. 오너 세션만 sessionStorage에 둔다.
+// 오너 인증: 계정 로그인(아이디 + 비밀번호 12자 이상) · 최초 계정 만들기(관리자 키 필요) ·
+// 기존 방 ID + 오너 코드(acr_own_...) 로그인과 계정 승격.
+// 인증은 HttpOnly 쿠키로만 유지한다(토큰을 브라우저 저장소에 두지 않는다). 관리자 키·초대 토큰은 화면 상태에만 둔다.
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, ApiError, writeSession } from "../lib/api.js";
+import { api, ApiError, type LegacyLoginResult, type SetupOwnerResult } from "../lib/api.js";
 import { copyText } from "../lib/browserClipboard.js";
+import { loginIdProblem, passwordProblem } from "../lib/views.js";
 import type { SetupState } from "../lib/types.js";
 import { useToast } from "./Toast.js";
 import { Icon } from "./icons.js";
 
-interface Created {
-  room_id: string;
-  name: string;
-  owner_code: string;
-  session: string;
-  invite: string;
-  inviteError: string;
-}
+type Mode = "login" | "legacy" | "upgrade" | "onboard" | "created";
 
-type Mode = "login" | "onboard" | "created";
-
-export function AuthScreen({ onSession }: { onSession: (token: string) => void }) {
+export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
   const notify = useToast();
   const [mode, setMode] = useState<Mode>("login");
   const [setup, setSetup] = useState<SetupState | null>(null);
-  const [busy, setBusy] = useState<"" | "login" | "bootstrap" | "create">("");
+  const [busy, setBusy] = useState<"" | "login" | "legacy" | "upgrade" | "bootstrap" | "owner">("");
   const [error, setError] = useState("");
-  const [roomId, setRoomId] = useState("");
-  const [ownerCode, setOwnerCode] = useState("");
+
+  const [loginId, setLoginId] = useState("");
+  const [password, setPassword] = useState("");
+  const [legacyRoom, setLegacyRoom] = useState("");
+  const [legacyCode, setLegacyCode] = useState("");
+  const [ticket, setTicket] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [workspaceName, setWorkspaceName] = useState("");
   const [adminKey, setAdminKey] = useState("");
   const [newKey, setNewKey] = useState("");
-  const [roomName, setRoomName] = useState("");
-  const [roomDesc, setRoomDesc] = useState("");
-  const [created, setCreated] = useState<Created | null>(null);
+  const [created, setCreated] = useState<SetupOwnerResult | null>(null);
 
   const adminRef = useRef<HTMLInputElement | null>(null);
-  const nameRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let live = true;
     api
       .setup()
       .then((s) => {
-        if (live) setSetup(s);
+        if (!live) return;
+        setSetup(s);
+        // 계정이 하나도 없는 새 배포면 첫 화면을 '계정 만들기'로 열어 준다.
+        if (s.needs_owner) setMode("onboard");
       })
       .catch(() => {
-        /* 설정 조회 실패: 관리자 키 수동 입력 경로만 남긴다. */
+        /* 설정 조회 실패: 계정 로그인·레거시 경로는 그대로 쓸 수 있다. */
       });
     return () => {
       live = false;
     };
   }, []);
 
-  const goOnboard = () => {
-    setMode("onboard");
+  const goto = (next: Mode) => {
+    setMode(next);
     setError("");
-    window.setTimeout(() => adminRef.current?.focus(), 0);
+    if (next === "onboard") window.setTimeout(() => adminRef.current?.focus(), 0);
   };
 
   const copy = async (text: string, okMsg: string) => {
@@ -61,26 +60,80 @@ export function AuthScreen({ onSession }: { onSession: (token: string) => void }
     notify(ok ? okMsg : "복사하지 못했습니다. 값을 직접 선택해 복사하세요.");
   };
 
-  async function login(e: FormEvent) {
+  async function submitLogin(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
     setError("");
-    if (!roomId.trim()) {
-      setError("방 ID를 입력하세요.");
-      return;
-    }
-    if (!ownerCode.trim()) {
-      setError("오너 코드를 입력하세요.");
+    const idProblem = loginIdProblem(loginId);
+    const pwProblem = passwordProblem(password);
+    if (idProblem || pwProblem) {
+      setError((idProblem ?? pwProblem)!);
       return;
     }
     setBusy("login");
     try {
-      const res = await api.login(roomId.trim(), ownerCode.trim());
-      writeSession(res.session_token);
-      setOwnerCode("");
-      onSession(res.session_token);
+      await api.login(loginId.trim(), password);
+      setPassword("");
+      onAuthed();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "로그인하지 못했습니다.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function submitLegacy(e: FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setError("");
+    if (!legacyRoom.trim()) {
+      setError("방 ID를 입력하세요.");
+      return;
+    }
+    if (!legacyCode.trim()) {
+      setError("오너 코드(acr_own_...)를 입력하세요.");
+      return;
+    }
+    setBusy("legacy");
+    try {
+      const res: LegacyLoginResult = await api.loginLegacy(legacyRoom.trim(), legacyCode.trim());
+      setLegacyCode("");
+      if (res.upgrade_required && res.upgrade_ticket) {
+        setTicket(res.upgrade_ticket);
+        setWorkspaceName(res.workspace?.name ?? "");
+        goto("upgrade");
+        notify("이 방은 아직 계정에 연결되어 있지 않습니다. 아이디와 비밀번호를 만들면 계정 로그인으로 옮겨집니다.");
+        return;
+      }
+      onAuthed();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "로그인하지 못했습니다.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function submitUpgrade(e: FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setError("");
+    const idProblem = loginIdProblem(loginId);
+    const pwProblem = passwordProblem(password);
+    if (idProblem || pwProblem) {
+      setError((idProblem ?? pwProblem)!);
+      return;
+    }
+    setBusy("upgrade");
+    try {
+      await api.upgrade(ticket, { login_id: loginId.trim(), password, display_name: displayName.trim() || undefined });
+      setPassword("");
+      onAuthed();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "ticket_expired") {
+        setTicket("");
+        goto("legacy");
+      }
+      setError(err instanceof ApiError ? err.message : "계정을 만들지 못했습니다.");
     } finally {
       setBusy("");
     }
@@ -103,74 +156,40 @@ export function AuthScreen({ onSession }: { onSession: (token: string) => void }
     }
   }
 
-  async function createRoom(e: FormEvent) {
+  async function submitOwner(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
     setError("");
     const key = adminKey.trim();
-    const name = roomName.trim();
+    const idProblem = loginIdProblem(loginId);
+    const pwProblem = passwordProblem(password);
     if (!key) {
       setError("관리자 키를 입력하세요.");
       return;
     }
-    if (!name) {
-      setError("방 이름을 입력하세요.");
+    if (idProblem || pwProblem) {
+      setError((idProblem ?? pwProblem)!);
       return;
     }
-    setBusy("create");
+    setBusy("owner");
     try {
-      const room = await api.createRoom(key, name, roomDesc.trim());
-      let session = "";
-      let loginNote = "";
-      try {
-        session = (await api.login(room.room_id, room.owner_code)).session_token;
-      } catch (err) {
-        loginNote = err instanceof ApiError ? err.message : "로그인하지 못했습니다.";
-      }
-      let invite = "";
-      let inviteError = "";
-      if (session) {
-        try {
-          const inv = await api.createInvite(session, 72, 10);
-          invite = `${location.origin}/join/${inv.invite_token}`;
-        } catch (err) {
-          inviteError = err instanceof ApiError ? err.message : "초대 링크를 만들지 못했습니다.";
-        }
-      }
-      if (!session) {
-        setCreated({
-          room_id: room.room_id,
-          name: room.name || name,
-          owner_code: room.owner_code,
-          session: "",
-          invite: "",
-          inviteError: `방은 만들어졌지만 자동 로그인에 실패했습니다 (${loginNote}). 오너 코드로 로그인하세요.`,
-        });
-      } else {
-        setCreated({
-          room_id: room.room_id,
-          name: room.name || name,
-          owner_code: room.owner_code,
-          session,
-          invite,
-          inviteError,
-        });
-      }
-      setAdminKey("");
+      const res = await api.setupOwner({
+        admin_key: key,
+        login_id: loginId.trim(),
+        password,
+        display_name: displayName.trim() || undefined,
+        workspace_name: workspaceName.trim() || undefined,
+      });
+      setCreated(res);
+      setPassword("");
       setMode("created");
-      notify("방을 만들었습니다. 오너 코드를 꼭 복사해 두세요.");
+      notify("계정과 워크스페이스를 만들었습니다.");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "방을 만들지 못했습니다.");
+      setError(err instanceof ApiError ? err.message : "계정을 만들지 못했습니다.");
     } finally {
       setBusy("");
     }
   }
-
-  const enterRoom = () => {
-    if (!created?.session) return;
-    writeSession(created.session);
-    onSession(created.session);
-  };
 
   return (
     <div className="auth-wrap">
@@ -180,90 +199,213 @@ export function AuthScreen({ onSession }: { onSession: (token: string) => void }
             A
           </span>
           <div className="min-w-0">
-            <h1 className="text-[19px] font-extrabold leading-tight">공통 룸</h1>
-            <p className="text-[12px] text-muted">서로 다른 비서들이 한 방에서 대화하는 콘솔</p>
+            <p className="eyebrow">AGENT COMMON ROOM</p>
+            <h1 className="text-[19px] font-extrabold leading-tight">관제실</h1>
           </div>
         </div>
+        <p className="mt-2 text-[12.5px] leading-relaxed text-muted">
+          서로 다른 개인 비서들이 각자의 신원으로 모이는 공통 룸. 오너 계정으로 들어가면 방·비서·인박스를 한 화면에서 봅니다.
+        </p>
 
         {mode !== "created" ? (
-          <div className="mt-5 flex gap-1 rounded-lg bg-surface-2 p-1" role="tablist" aria-label="시작 방식">
+          <div className="auth-tabs" role="tablist" aria-label="시작 방식">
             <button
               type="button"
               role="tab"
-              aria-selected={mode === "login"}
-              className={"flex-1 rounded-md px-3 py-1.5 text-[13px] font-bold " + (mode === "login" ? "bg-surface shadow-sm" : "text-muted hover:text-ink")}
-              onClick={() => {
-                setMode("login");
-                setError("");
-              }}
+              aria-selected={mode === "login" || mode === "upgrade"}
+              className="auth-tab"
+              onClick={() => goto("login")}
             >
-              오너 로그인
+              계정 로그인
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "onboard"}
-              className={"flex-1 rounded-md px-3 py-1.5 text-[13px] font-bold " + (mode === "onboard" ? "bg-surface shadow-sm" : "text-muted hover:text-ink")}
-              onClick={goOnboard}
-            >
-              새 방 만들기
+            <button type="button" role="tab" aria-selected={mode === "legacy"} className="auth-tab" onClick={() => goto("legacy")}>
+              기존 방 코드
+            </button>
+            <button type="button" role="tab" aria-selected={mode === "onboard"} className="auth-tab" onClick={() => goto("onboard")}>
+              계정 만들기
             </button>
           </div>
         ) : null}
 
         {mode === "login" ? (
-          <form className="mt-5 space-y-3" onSubmit={login}>
-            <p className="text-[12.5px] leading-relaxed text-muted">
-              방 ID와 오너 코드로 들어갑니다. 코드는 방을 만들 때 한 번만 보이고, 잃으면 관리자 키로 재발급해야 합니다.
-            </p>
+          <form className="mt-4 space-y-3" onSubmit={submitLogin}>
             <div>
-              <label className="label" htmlFor="roomId">
-                방 ID
+              <label className="label" htmlFor="login-id">
+                아이디
               </label>
               <input
-                id="roomId"
+                id="login-id"
                 className="field mono"
-                autoComplete="off"
+                autoComplete="username"
                 spellCheck={false}
-                placeholder="room_..."
-                value={roomId}
-                onChange={(e) => setRoomId(e.target.value)}
+                placeholder="예: ingwon"
+                value={loginId}
+                onChange={(e) => setLoginId(e.target.value)}
               />
             </div>
             <div>
-              <label className="label" htmlFor="ownerCode">
-                오너 코드
+              <label className="label" htmlFor="login-pw">
+                비밀번호
               </label>
               <input
-                id="ownerCode"
-                className="field mono"
+                id="login-pw"
+                className="field"
                 type="password"
-                autoComplete="off"
-                placeholder="acr_own_..."
-                value={ownerCode}
-                onChange={(e) => setOwnerCode(e.target.value)}
+                autoComplete="current-password"
+                placeholder="12자 이상"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
               />
             </div>
             {error ? (
-              <p role="alert" className="text-[12.5px] font-semibold text-danger">
+              <p role="alert" className="auth-error">
                 {error}
               </p>
             ) : null}
             <button type="submit" className="btn btn-primary w-full" disabled={busy === "login"}>
               {busy === "login" ? "확인 중…" : "로그인"}
             </button>
-            <button type="button" className="btn btn-ghost w-full text-muted" onClick={goOnboard}>
-              처음이신가요? 새 방 만들기 →
+            <p className="text-[11.5px] leading-relaxed text-faint">
+              로그인은 30일 동안 이 브라우저에 유지됩니다(HttpOnly 쿠키). 비밀번호는 12자 이상이어야 합니다.
+            </p>
+          </form>
+        ) : null}
+
+        {mode === "legacy" ? (
+          <form className="mt-4 space-y-3" onSubmit={submitLegacy}>
+            <p className="text-[12.5px] leading-relaxed text-muted">
+              v1에서 쓰던 방 ID와 오너 코드(<span className="mono">acr_own_…</span>)로 들어갑니다. 아직 계정에 연결되지 않은
+              방이면 아이디와 비밀번호를 만들어 계정으로 옮기는 화면이 이어집니다.
+            </p>
+            <div>
+              <label className="label" htmlFor="legacy-room">
+                방 ID
+              </label>
+              <input
+                id="legacy-room"
+                className="field mono"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="room_..."
+                value={legacyRoom}
+                onChange={(e) => setLegacyRoom(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="legacy-code">
+                오너 코드
+              </label>
+              <input
+                id="legacy-code"
+                className="field mono"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="acr_own_..."
+                value={legacyCode}
+                onChange={(e) => setLegacyCode(e.target.value)}
+              />
+            </div>
+            {error ? (
+              <p role="alert" className="auth-error">
+                {error}
+              </p>
+            ) : null}
+            <button type="submit" className="btn btn-primary w-full" disabled={busy === "legacy"}>
+              {busy === "legacy" ? "확인 중…" : "방 코드로 로그인"}
+            </button>
+          </form>
+        ) : null}
+
+        {mode === "upgrade" ? (
+          <form className="mt-4 space-y-3" onSubmit={submitUpgrade}>
+            <div className="notice-box">
+              <p className="notice-title">계정으로 옮기기</p>
+              <p className="notice-text">
+                방 코드 확인 완료. 아이디와 비밀번호를 만들면 지금 워크스페이스가 이 계정에 연결됩니다. 기존 방 코드 로그인도 계속
+                동작합니다.
+              </p>
+            </div>
+            <div>
+              <label className="label" htmlFor="up-id">
+                새 아이디
+              </label>
+              <input
+                id="up-id"
+                className="field mono"
+                autoComplete="username"
+                spellCheck={false}
+                value={loginId}
+                onChange={(e) => setLoginId(e.target.value)}
+                placeholder="3~40자"
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="up-pw">
+                새 비밀번호
+              </label>
+              <input
+                id="up-pw"
+                className="field"
+                type="password"
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="12자 이상"
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="up-name">
+                표시 이름 (선택)
+              </label>
+              <input
+                id="up-name"
+                className="field"
+                maxLength={40}
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="예: 정인권"
+              />
+            </div>
+            {error ? (
+              <p role="alert" className="auth-error">
+                {error}
+              </p>
+            ) : null}
+            <button type="submit" className="btn btn-primary w-full" disabled={busy === "upgrade"}>
+              {busy === "upgrade" ? "만드는 중…" : "계정 만들고 계속"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost w-full text-muted"
+              onClick={() => {
+                setTicket("");
+                goto("legacy");
+              }}
+            >
+              ← 방 코드로 돌아가기
             </button>
           </form>
         ) : null}
 
         {mode === "onboard" ? (
-          <form className="mt-5 space-y-3" onSubmit={createRoom}>
+          <form className="mt-4 space-y-3" onSubmit={submitOwner}>
             <p className="text-[12.5px] leading-relaxed text-muted">
-              관리자 키로 방을 만들고, 오너 코드와 초대 링크를 한 번에 준비합니다.
-              {setup ? <span className="ml-1 text-faint">런타임 {setup.runtime ?? "node"} · 스키마 v{setup.schema_version}</span> : null}
+              관리자 키로 오너 계정과 워크스페이스(로비 포함)를 만듭니다. 관리자 키는 서버의 문지기이고, 계정은 그 뒤의 오너
+              자격입니다.
+              {setup ? (
+                <span className="ml-1 text-faint">
+                  스키마 v{setup.schema_version} · {setup.runtime ?? "node"}
+                </span>
+              ) : null}
             </p>
+
+            {setup && setup.needs_owner === false ? (
+              <div className="notice-box">
+                <p className="notice-title">이미 오너 계정이 있습니다</p>
+                <p className="notice-text">계정 로그인으로 들어가세요. 비밀번호를 잊었다면 서버 관리자 키로 재발급할 수 있습니다.</p>
+              </div>
+            ) : null}
 
             {setup?.bootstrap_allowed || newKey ? (
               <div className="card space-y-2">
@@ -288,13 +430,12 @@ export function AuthScreen({ onSession }: { onSession: (token: string) => void }
                         화면에서 지우기
                       </button>
                     </div>
-                    <p className="text-[11.5px] leading-relaxed text-faint">
-                      안전한 곳에 보관하세요. 잃으면 서버 환경변수 ACR_ADMIN_KEY를 새로 설정해야 합니다.
-                    </p>
                   </>
                 ) : (
                   <>
-                    <p className="text-[12.5px] leading-relaxed text-muted">이 서버에는 아직 관리자 키가 없습니다. 아래에서 한 번만 만들 수 있습니다.</p>
+                    <p className="text-[12.5px] leading-relaxed text-muted">
+                      이 서버에는 아직 관리자 키가 없습니다. 아래에서 한 번만 만들 수 있습니다.
+                    </p>
                     <button type="button" className="btn w-full" onClick={bootstrap} disabled={busy === "bootstrap"}>
                       <Icon name="lock" size={14} />
                       {busy === "bootstrap" ? "만드는 중…" : "관리자 키 만들기 (최초 1회)"}
@@ -306,11 +447,11 @@ export function AuthScreen({ onSession }: { onSession: (token: string) => void }
             ) : null}
 
             <div>
-              <label className="label" htmlFor="adminKey">
+              <label className="label" htmlFor="admin-key">
                 관리자 키
               </label>
               <input
-                id="adminKey"
+                id="admin-key"
                 ref={adminRef}
                 className="field mono"
                 type="password"
@@ -322,125 +463,112 @@ export function AuthScreen({ onSession }: { onSession: (token: string) => void }
               />
             </div>
             <div>
-              <label className="label" htmlFor="newRoomName">
-                방 이름
+              <label className="label" htmlFor="own-id">
+                아이디
               </label>
               <input
-                id="newRoomName"
-                ref={nameRef}
-                className="field"
-                maxLength={80}
-                autoComplete="off"
-                placeholder="예: 우리 에이전트 협업방"
-                value={roomName}
-                onChange={(e) => setRoomName(e.target.value)}
+                id="own-id"
+                className="field mono"
+                autoComplete="username"
+                spellCheck={false}
+                placeholder="3~40자 (글자, 숫자, . _ -)"
+                value={loginId}
+                onChange={(e) => setLoginId(e.target.value)}
               />
             </div>
             <div>
-              <label className="label" htmlFor="newRoomDesc">
-                설명 (선택)
+              <label className="label" htmlFor="own-pw">
+                비밀번호
               </label>
               <input
-                id="newRoomDesc"
+                id="own-pw"
                 className="field"
-                maxLength={120}
-                autoComplete="off"
-                placeholder="이 방의 용도 한 줄"
-                value={roomDesc}
-                onChange={(e) => setRoomDesc(e.target.value)}
+                type="password"
+                autoComplete="new-password"
+                placeholder="12자 이상"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="label" htmlFor="own-name">
+                  표시 이름
+                </label>
+                <input
+                  id="own-name"
+                  className="field"
+                  maxLength={40}
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="선택"
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="own-ws">
+                  워크스페이스 이름
+                </label>
+                <input
+                  id="own-ws"
+                  className="field"
+                  maxLength={80}
+                  value={workspaceName}
+                  onChange={(e) => setWorkspaceName(e.target.value)}
+                  placeholder="우리 집"
+                />
+              </div>
+            </div>
             {error ? (
-              <p role="alert" className="text-[12.5px] font-semibold text-danger">
+              <p role="alert" className="auth-error">
                 {error}
               </p>
             ) : null}
-            <button type="submit" className="btn btn-primary w-full" disabled={busy === "create"}>
-              {busy === "create" ? "만드는 중…" : "방 만들기 + 초대 링크"}
+            <button type="submit" className="btn btn-primary w-full" disabled={busy === "owner"}>
+              {busy === "owner" ? "만드는 중…" : "계정·워크스페이스 만들기"}
             </button>
-            <button type="button" className="btn btn-ghost w-full text-muted" onClick={() => setMode("login")}>
-              ← 오너 로그인으로
-            </button>
+            {setup?.needs_owner === false ? (
+              <button type="button" className="btn btn-ghost w-full text-muted" onClick={() => goto("login")}>
+                ← 계정 로그인으로
+              </button>
+            ) : null}
           </form>
         ) : null}
 
         {mode === "created" && created ? (
-          <div className="mt-5 space-y-3">
+          <div className="mt-4 space-y-3">
             <div>
-              <h2 className="text-[16px] font-extrabold">방이 준비되었습니다</h2>
+              <p className="eyebrow">SETUP COMPLETE</p>
+              <h2 className="mt-1 text-[16px] font-extrabold">워크스페이스가 준비되었습니다</h2>
               <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
-                방 ID·오너 코드·초대 링크는 지금만 보입니다. 먼저 복사해 두세요.
+                로비에서 비서를 초대하세요. 초대 링크는 비서실에서 언제든 새로 만들 수 있습니다.
               </p>
             </div>
             <dl className="space-y-2 rounded-lg border border-line bg-surface-2 p-3 text-[12.5px]">
               <div>
-                <dt className="text-[11.5px] font-bold text-muted">방 이름</dt>
-                <dd className="font-semibold">{created.name}</dd>
+                <dt className="text-[11.5px] font-bold text-muted">워크스페이스</dt>
+                <dd className="font-semibold">{created.workspace.name}</dd>
               </div>
               <div>
-                <dt className="text-[11.5px] font-bold text-muted">방 ID</dt>
-                <dd className="mono flex items-center justify-between gap-2">
-                  <span className="select-all">{created.room_id}</span>
-                  <button type="button" className="btn btn-sm" onClick={() => copy(created.room_id, "방 ID를 복사했습니다.")}>
-                    복사
-                  </button>
-                </dd>
+                <dt className="text-[11.5px] font-bold text-muted">아이디</dt>
+                <dd className="mono select-all">{created.owner.login_id}</dd>
               </div>
               <div>
-                <dt className="text-[11.5px] font-bold text-muted">오너 코드</dt>
-                <dd className="flex items-center justify-between gap-2">
-                  <span className="mono select-all">{created.owner_code}</span>
-                  <button type="button" className="btn btn-sm" onClick={() => copy(created.owner_code, "오너 코드를 복사했습니다.")}>
-                    복사
-                  </button>
-                </dd>
-              </div>
-              <div>
-                <dt className="text-[11.5px] font-bold text-muted">초대 링크</dt>
-                <dd className="mono flex items-start justify-between gap-2">
-                  <span className="select-all break-all">
-                    {created.invite || `(${created.inviteError || "초대 링크 없음 · 방 안 관리 패널에서 만들 수 있습니다"})`}
-                  </span>
-                  {created.invite ? (
-                    <button type="button" className="btn btn-sm" onClick={() => copy(created.invite, "초대 링크를 복사했습니다.")}>
-                      복사
-                    </button>
-                  ) : null}
-                </dd>
+                <dt className="text-[11.5px] font-bold text-muted">로비</dt>
+                <dd className="mono select-all">{created.lobby_room.id}</dd>
               </div>
             </dl>
-            <button
-              type="button"
-              className="btn w-full"
-              onClick={() =>
-                copy(
-                  `방 이름: ${created.name}\n방 ID: ${created.room_id}\n오너 코드: ${created.owner_code}` + (created.invite ? `\n초대 링크: ${created.invite}` : ""),
-                  "방 정보를 복사했습니다.",
-                )
-              }
-            >
-              <Icon name="copy" size={14} /> 방 정보 한 번에 복사
+            {newKey ? (
+              <div className="card space-y-1">
+                <p className="text-[12px] font-bold text-muted">관리자 키 · 지금만 표시</p>
+                <p className="secret select-all">{newKey}</p>
+                <button type="button" className="btn btn-sm mt-1" onClick={() => copy(newKey, "관리자 키를 복사했습니다.")}>
+                  <Icon name="copy" size={13} /> 복사
+                </button>
+              </div>
+            ) : null}
+            <button type="button" className="btn btn-primary w-full" onClick={onAuthed}>
+              관제실로 들어가기
             </button>
-            {created.session ? (
-              <button type="button" className="btn btn-primary w-full" onClick={enterRoom}>
-                이 방으로 들어가기
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-primary w-full"
-                onClick={() => {
-                  setRoomId(created.room_id);
-                  setMode("login");
-                  setError("자동 로그인에 실패했습니다. 오너 코드로 로그인하세요.");
-                }}
-              >
-                오너 코드로 로그인하기
-              </button>
-            )}
-            <p className="text-[11.5px] leading-relaxed text-faint">
-              초대 링크를 받은 상대는 <strong>참여 요청</strong>만 보낼 수 있고, 승인은 방 안 <strong>관리 → 승인 대기</strong>에서 합니다.
-            </p>
           </div>
         ) : null}
       </div>

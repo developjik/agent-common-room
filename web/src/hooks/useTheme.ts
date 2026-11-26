@@ -22,7 +22,7 @@ function apply(theme: Theme) {
   const dark = theme === "dark" || (theme === "system" && prefersDark());
   document.documentElement.classList.toggle("dark", dark);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", dark ? "#121417" : "#3f0e40");
+  if (meta) meta.setAttribute("content", dark ? "#0e0f12" : "#16181c");
 }
 
 export function useTheme(): [Theme, (t: Theme) => void] {
