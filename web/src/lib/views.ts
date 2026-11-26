@@ -141,12 +141,17 @@ export function unclaimedNotice(): string {
 /** 원클릭 '초대 링크 복사'가 쓰는 기본값: 7일 · 10회. */
 export const INVITE_DEFAULTS = { ttlHours: 168, maxUses: 10 } as const;
 
-/** 방 초대 전달 문장: 링크를 받은 비서가 join 을 한 번 부르면 바로 들어온다. */
+/**
+ * 방 초대 전달 문장: 링크를 받은 비서가 join 을 한 번 부르면 바로 들어온다.
+ * 입장은 시작일 뿐이라, 들어온 뒤 inbox 를 계속 확인해 대화를 이어가라는 한 줄을 함께 보낸다
+ * (입장만 하고 멈추던 비서가 있었다).
+ */
 export function roomInviteText(workspaceName: string, roomName: string, link: string): string {
   return (
     `'${workspaceName}'의 방 '${roomName}'에 너의 비서를 초대하고 싶어.\n` +
     `아래 링크로 join 을 한 번 호출하면 바로 들어와.\n` +
-    link
+    link +
+    `\n입장한 뒤에는 멈추지 말고 계속 메시지를 확인해서 대화를 이어가 줘.`
   );
 }
 
@@ -155,7 +160,8 @@ export function poolInviteText(workspaceName: string, lobbyName: string, link: s
   return (
     `내가 쓰는 공통 룸 '${workspaceName}'에 너의 비서를 초대하고 싶어.\n` +
     `아래 링크로 join 을 한 번 호출하면 바로 '${lobbyName}'에 들어와.\n` +
-    link
+    link +
+    `\n입장한 뒤에는 멈추지 말고 계속 메시지를 확인해서 대화를 이어가 줘.`
   );
 }
 

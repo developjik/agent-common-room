@@ -26,8 +26,11 @@ test("초대 링크 한 번: 신원·방 멤버십·토큰이 즉시 생기고 �
     assert.equal(joined.status, 201);
     assert.equal(joined.json.status, "joined", "승인 대기가 아니라 즉시 입장");
     assert.match(joined.json.agent_token, /^acr_agt_/, "토큰을 그 자리에서 받는다");
-    assert.equal(joined.json.room_id, lobbyId, "대표 방은 로비");
+    assert.equal(joined.json.room_id, room.id, "방 초대의 대표 방은 초대된 그 방이다(로비가 아니다)");
+    assert.equal(joined.json.lobby_room_id, lobbyId, "로비는 lobby_room_id 로 따로 알려 준다");
     assert.deepEqual([...joined.json.rooms].sort(), [lobbyId, room.id].sort(), "로비 + 초대된 방");
+    assert.ok(joined.json.next_steps.some((s: string) => /inbox/.test(s)), "응답만 읽고도 다음 행동(대화 시작)을 알 수 있다");
+    assert.ok(joined.json.next_steps.some((s: string) => /멈추지 마세요/.test(s)), "입장만 하고 멈추지 말라는 안내");
 
     // 바로 대화: 받은편지함·전송이 승인 없이 동작한다.
     assert.equal((await t.call("GET", "/api/me", joined.json.agent_token)).status, 200);
@@ -93,6 +96,23 @@ test("이름 충돌은 409 name_taken 이고 그 초대의 사용 횟수는 차�
   } finally { await t.close(); }
 });
 
+test("풀 초대는 대표 방이 로비다(방 초대와 구분된다)", async () => {
+  const t = await start();
+  try {
+    const { owner, wid, lobbyId } = await workspace(t, "instant-pool");
+    // 로비가 아닌 방도 하나 만들어, 풀 초대가 그 방을 가리키지 않는지 확인한다.
+    const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
+    const invite = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
+    assert.equal(invite.kind, "pool");
+    const joined = await t.call("POST", `/api/join/${invite.invite_token}`, undefined, { display_name: "풀비서" });
+    assert.equal(joined.status, 201);
+    assert.equal(joined.json.room_id, lobbyId, "풀 초대의 대표 방은 로비");
+    assert.equal(joined.json.lobby_room_id, lobbyId);
+    assert.deepEqual(joined.json.rooms, [lobbyId], "풀 초대는 로비 하나");
+    assert.ok(!joined.json.rooms.includes(room.id));
+  } finally { await t.close(); }
+});
+
 test("이미 토큰이 있는 비서: 새 토큰 없이 그 방의 구성원만 추가된다", async () => {
   const t = await start();
   try {
@@ -109,6 +129,7 @@ test("이미 토큰이 있는 비서: 새 토큰 없이 그 방의 구성원만 
     assert.equal(again.json.existing_agent, true);
     assert.equal(again.json.agent_id, first.json.agent_id);
     assert.equal(again.json.agent_token, undefined, "새 토큰을 발급하지 않는다");
+    assert.equal(again.json.room_id, room.id, "기존 토큰으로 방 초대를 받아도 대표 방은 초대된 그 방");
 
     const me = (await t.call("GET", "/api/me", token)).json;
     assert.deepEqual(me.rooms.map((r: any) => r.name).sort(), ["로비", "연구방"].sort());
