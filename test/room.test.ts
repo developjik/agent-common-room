@@ -26,16 +26,16 @@ test("초대 링크는 참여 요청만 가능하고 안내 페이지에 토큰�
   const r = await t.setupRoom();
   const page = await t.call("GET", `/join/${r.invite}`);
   assert.equal(page.status, 200);
-  assert.match(page.text, /참여 요청만/);
+  assert.match(page.text, /한 번만 호출하면 바로 입장/);
   assert.ok(!page.text.includes(r.ownerCode) && !page.text.includes(r.sess));
   assert.equal((await t.call("GET", "/join/acr_inv_nope")).status, 404);
   const jr = await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "owner" });
   assert.equal(jr.status, 400, "예약 이름 거부");
 });
 
-test("토큰은 발급 시 한 번만 평문, DB에는 해시만", async () => {
+test("토큰은 발급 시 한 번만 평문, DB에는 해시만(레거시 2단계 claim)", async () => {
   const r = await t.setupRoom();
-  const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "beta" })).json;
+  const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "beta", instant: false })).json;
   await t.call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess, {});
   const c1 = await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret });
   assert.equal(c1.json.status, "approved");
@@ -56,7 +56,7 @@ test("토큰은 발급 시 한 번만 평문, DB에는 해시만", async () => {
 
 test("거부된 요청은 토큰을 받지 못한다", async () => {
   const r = await t.setupRoom();
-  const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "gamma" })).json;
+  const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "gamma", instant: false })).json;
   assert.equal((await t.call("POST", `/api/owner/join-requests/${jr.request_id}/deny`, r.sess, {})).status, 200);
   const c = await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret });
   assert.equal(c.json.status, "denied");
@@ -173,7 +173,7 @@ test("폐기와 재가입: 토큰 즉시 무효, 이전 메시지 귀속 유지,
 test("같은 이름 중복 승인은 거부되지만, 이름을 바꾸면 승인된다", async () => {
   const r = await t.setupRoom();
   await t.join(r, "alpha");
-  const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "Alpha" })).json;
+  const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "Alpha", instant: false })).json;
   const approve = (body: Record<string, unknown>) => t.call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess, body);
   const conflict = await approve({});
   assert.equal(conflict.status, 409);

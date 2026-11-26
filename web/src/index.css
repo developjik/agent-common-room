@@ -2620,3 +2620,193 @@ button {
   margin: 0 8px;
   color: var(--acr-line-strong);
 }
+
+/* ---------- 3화면 단순화(2026-11-26): 방 목록 + 대화 두 칸 ---------- */
+.shell-view.is-plain {
+  overflow: hidden;
+  padding: 0;
+}
+.rooms-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.room-list-pane {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  flex: none;
+  background: var(--acr-surface);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  border-right: 1px solid var(--acr-line);
+}
+@media (min-width: 1180px) {
+  .room-list-pane {
+    width: 280px;
+    flex: none;
+  }
+}
+.room-list-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--acr-line);
+}
+.room-list-head .section-title {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+}
+.room-create {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--acr-line);
+  background: var(--acr-surface-2);
+}
+.rl-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "head side" "preview side";
+  gap: 2px 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--acr-line);
+  border-left: 3px solid transparent;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.rl-row:hover {
+  background: var(--acr-surface-hover);
+}
+.rl-row[aria-current="page"] {
+  background: var(--acr-surface-2);
+  border-left-color: var(--acr-accent);
+}
+.rl-head {
+  grid-area: head;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.rl-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--acr-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rl-meta {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--acr-faint);
+  white-space: nowrap;
+}
+.rl-preview {
+  grid-area: preview;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--acr-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rl-side {
+  grid-area: side;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rl-members {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--acr-faint);
+  font-variant-numeric: tabular-nums;
+}
+.room-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+  padding: 24px;
+  background: var(--acr-canvas);
+}
+@media (max-width: 1179px) {
+  .room-empty {
+    display: none;
+  }
+}
+.invite-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--acr-line);
+  background: var(--acr-accent-soft);
+  color: var(--acr-accent-text);
+  font-size: 12px;
+}
+.agent-card-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+@media (min-width: 900px) {
+  .agent-card-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.agent-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--acr-surface-2);
+  color: var(--acr-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.agent-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+}
+.link-btn {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--acr-accent-text);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.room-chip[aria-pressed="true"] {
+  border-color: var(--acr-accent);
+  background: var(--acr-accent-soft);
+  color: var(--acr-accent-text);
+}
+.room-chip:disabled {
+  opacity: 0.65;
+  cursor: default;
+}

@@ -1098,6 +1098,98 @@ export class RoomService {
         : "오너 승인 후 claim 엔드포인트로 토큰을 한 번 받을 수 있습니다. claim_secret은 이 응답에서만 보입니다.",
     };
   }
+  /**
+   * 1단계 즉시 입장 — 지금의 기본 경로.
+   *
+   * 유효한 초대 링크(만료 전·사용 횟수 남음)로 한 번 부르면 그 자리에서
+   * 신원(agents, status=active) · 초대된 방의 활성 멤버십 · agent_token 을 함께 만든다.
+   * 예전 2단계(requestJoin → 오너 approveJoin → claim)는 오너가 비서에게 두 번 말해야 했고
+   * 비서가 스스로 토큰을 받아 올 때까지 기다려야 했다. 오너 승인은 기본값에서 사라진다.
+   *
+   * - 이미 토큰이 있는 비서(existingAgent)가 보내면 새 신원·새 토큰 없이 그 방의 구성원만 추가한다.
+   * - 이름이 겹치면 409 name_taken. 초대 사용 횟수 차감은 같은 batch 안이라 함께 롤백된다
+   *   ("이름 충돌로 실패했는데 초대만 소진" 되지 않는다).
+   * - join_requests 에 approved·claimed 행을 남겨 오너가 누가 언제 들어왔는지 볼 수 있게 한다.
+   */
+  async joinNow(token: string, body: { display_name?: unknown; product?: unknown; note?: unknown }, existingAgent?: Agent | null) {
+    const now = this.clock.now();
+    const invalid = () => err(404, "invite_invalid", "유효하지 않거나 만료된 초대입니다. 방장에게 새 초대 링크를 받으세요.");
+    const inv = await this.inviteByToken(token);
+    if (!inv || inv.revoked || inv.expires_at <= now || inv.uses >= inv.max_uses) throw invalid();
+    const room = await this.room(inv.room_id);
+    const ws = await this.workspaceOfRoom(String(room.id));
+    const lobbyId = String(ws.lobby_room_id ?? room.id);
+    const lobby = lobbyId === String(room.id) ? room : await this.room(lobbyId);
+    // 풀 초대는 로비 하나, 방 초대는 로비 + 그 방.
+    const targets = lobbyId === String(room.id) ? [lobbyId] : [lobbyId, String(room.id)];
+    const product = typeof body.product === "string" ? body.product.trim().slice(0, 60) : "";
+    const note = typeof body.note === "string" ? body.note.trim().slice(0, 300) : "";
+    const consume = this.db.prep("UPDATE invites SET uses=uses+1 WHERE id=? AND revoked=0 AND expires_at>? AND uses<max_uses", inv.id, now);
+    const jrId = newId("jr");
+
+    if (existingAgent) {
+      if (existingAgent.workspace_id !== String(ws.id)) throw err(403, "cross_workspace", "다른 워크스페이스의 방에는 들어갈 수 없습니다.");
+      const stmts: DbStatement[] = [consume];
+      for (const rid of targets) {
+        const target = rid === lobbyId ? lobby : room;
+        stmts.push(...await this.membershipStatements(rid, existingAgent.id, {
+          status: "active", can_read: true, can_write: true, history_floor: Number(target.next_seq) - 1,
+        }));
+      }
+      stmts.push(this.db.prep(
+        "INSERT INTO join_requests(id,room_id,invite_id,display_name,product,note,status,claim_hash,claimed,agent_id,created_at,decided_at,kind,existing_agent) VALUES (?,?,?,?,?,?,'approved',?,1,?,?,?,?,1)",
+        jrId, room.id, inv.id, existingAgent.name, product, note, await hashToken(newToken("acr_clm")), existingAgent.id, now, now, inv.kind ?? "room"));
+      stmts.push(this.db.prep("INSERT INTO audit(room_id, ts, actor, action, detail) VALUES (?,?,?,?,?)",
+        room.id, now, "agent:" + existingAgent.id, "join.instant", `${jrId} existing rooms=${targets.join(",")}`));
+      const res = await this.db.batch(stmts);
+      if (batchChanges(res[0]) !== 1) throw invalid();
+      return {
+        status: "joined" as const, agent_id: existingAgent.id, name: existingAgent.name, existing_agent: true,
+        room_id: lobbyId, lobby_room_id: lobbyId, rooms: (await this.agentRooms(existingAgent.id)).map(r => r.id),
+        request_id: jrId,
+        message: "이미 쓰는 에이전트 토큰 그대로 이 방에 들어왔습니다(새 토큰 없음).",
+      };
+    }
+
+    const name = this.validateAgentName(body.display_name);
+    if (await this.db.one("SELECT 1 x FROM agents WHERE workspace_id=? AND name_key=? AND status IN ('unclaimed','active')", ws.id, name.toLowerCase())) {
+      throw err(409, "name_taken", `'${name}' 이름은 이미 쓰고 있습니다. display_name 을 다른 이름으로 바꿔 다시 호출하세요(초대 사용 횟수는 차감되지 않았습니다).`);
+    }
+    const agentId = newId("agt");
+    const agentToken = newToken("acr_agt");
+    const lobbyFloor = Number(lobby.next_seq) - 1;
+    const stmts: DbStatement[] = [
+      consume,
+      this.db.prep(
+        "INSERT INTO agents(id,room_id,workspace_id,name,name_key,product,token_hash,status,can_read,can_write,history_floor,created_at,last_seen) VALUES (?,?,?,?,?,?,?,'active',1,1,?,?,?)",
+        agentId, lobbyId, ws.id, name, name.toLowerCase(), product, await hashToken(agentToken), lobbyFloor, now, now),
+    ];
+    for (const rid of targets) {
+      const target = rid === lobbyId ? lobby : room;
+      stmts.push(...await this.membershipStatements(rid, agentId, {
+        status: "active", can_read: true, can_write: true, history_floor: rid === lobbyId ? lobbyFloor : Number(target.next_seq) - 1,
+      }));
+    }
+    stmts.push(this.db.prep(
+      "INSERT INTO join_requests(id,room_id,invite_id,display_name,product,note,status,claim_hash,claimed,agent_id,created_at,decided_at,kind,existing_agent) VALUES (?,?,?,?,?,?,'approved',?,1,?,?,?,?,0)",
+      jrId, room.id, inv.id, name, product, note, await hashToken(newToken("acr_clm")), agentId, now, now, inv.kind ?? "room"));
+    stmts.push(this.db.prep("INSERT INTO audit(room_id, ts, actor, action, detail) VALUES (?,?,?,?,?)",
+      room.id, now, "invite", "join.instant", `${jrId} agent=${agentId} rooms=${targets.join(",")}`));
+    try {
+      const res = await this.db.batch(stmts);
+      // 초대 사용이 0행이면(동시에 마지막 횟수를 누가 씀) 전체가 롤백됐다 → 같은 404.
+      if (batchChanges(res[0]) !== 1) throw invalid();
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      if (isConstraintError(e)) throw err(409, "name_taken", `'${name}' 이름은 이미 쓰고 있습니다. display_name 을 다른 이름으로 바꿔 다시 호출하세요(초대 사용 횟수는 차감되지 않았습니다).`);
+      throw e;
+    }
+    return {
+      status: "joined" as const, agent_id: agentId, name, agent_token: agentToken,
+      room_id: lobbyId, lobby_room_id: lobbyId, rooms: targets, request_id: jrId,
+      message: "바로 입장했습니다. 이 토큰은 이 응답에서 한 번만 보입니다. GET /api/me 로 방 목록을 확인하고 바로 대화하세요.",
+    };
+  }
   private joinRequestView(r: Row) {
     return { id: r.id, display_name: r.display_name, product_self_declared: r.product, note: r.note, status: r.status, claimed: !!r.claimed, agent_id: r.agent_id ?? null, created_at: iso(r.created_at), room_id: r.room_id, kind: r.kind ?? "room", existing_agent: !!r.existing_agent };
   }

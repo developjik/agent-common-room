@@ -1,38 +1,34 @@
-// v2 탈-슬랙 UI의 순수 규칙 검증: 경로 · 상태 번역 · 정렬 · 인박스 필터 · ⌘K · 전달 상태 폴링 창.
-// React 컴포넌트는 이 함수들의 결과만 그리므로, 여기서 규칙이 맞으면 화면도 같은 규칙을 따른다.
+// 3화면 단순화(방·비서·설정) 이후의 순수 규칙 검증:
+// 경로(예전 주소 호환 포함) · 방 목록 순서/표시 · 비서 방 토글 · 초대 문장 · 전달 상태 폴링 창.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { activeTab, parseRoute, routeHref } from "../web/src/lib/route.js";
 import {
+  activeAgentCount,
   agentNameConflict,
+  agentRoomToggles,
+  agentsSummary,
   awaitingDelivery,
-  countLabel,
   countNew,
-  filterActivity,
-  healthLabel,
-  inboxSummaryLine,
+  INVITE_DEFAULTS,
   loginIdProblem,
   memberToAgent,
-  needsYouRooms,
   nextFetchAfter,
-  paletteItems,
   passwordProblem,
   POLL_STEPS,
   pollDelay,
   poolInviteText,
   presenceLabel,
-  answerNeededRooms,
+  roomNeedsAnswer,
   roomInviteText,
-  roomStateText,
-  roomSummaryLine,
+  roomRowCount,
   setupLandingMode,
   sortRoomCards,
-  unreadActivityCount,
-  needsAttentionRoomIds,
-  roomNeedsAnswer,
+  toggledRoomIds,
+  unclaimedNotice,
   unreadRoomCount,
 } from "../web/src/lib/views.js";
-import type { ActivityItem, Message, RoomCard, RoomMember } from "../web/src/lib/types.js";
+import type { Message, PoolAgent, RoomCard, RoomMember } from "../web/src/lib/types.js";
 
 function card(over: Partial<RoomCard> = {}): RoomCard {
   return {
@@ -48,6 +44,19 @@ function card(over: Partial<RoomCard> = {}): RoomCard {
     last_preview: "미리보기",
     last_sender: { name: "피클", type: "agent" },
     health: "ok",
+    ...over,
+  };
+}
+
+function agent(over: Partial<PoolAgent> = {}): PoolAgent {
+  return {
+    id: "agt_1",
+    name: "피클",
+    product_self_declared: "Pickle",
+    status: "active",
+    last_seen: "2026-11-26T00:00:00.000Z",
+    created_at: "2026-11-25T00:00:00.000Z",
+    rooms: [{ room_id: "room_lobby", room_name: "로비", status: "active" }],
     ...over,
   };
 }
@@ -71,21 +80,28 @@ function message(over: Partial<Message> = {}): Message {
   };
 }
 
-test("경로: 쿼리 파라미터만 쓰고, 방 ID가 있으면 방 집중 뷰가 우선한다", () => {
-  assert.deepEqual(parseRoute(""), { view: "home", roomId: null });
-  assert.deepEqual(parseRoute("?view=inbox"), { view: "inbox", roomId: null });
-  assert.deepEqual(parseRoute("?view=desk"), { view: "desk", roomId: null });
-  assert.deepEqual(parseRoute("?room=room_50795a119a4a4b48"), { view: "home", roomId: "room_50795a119a4a4b48" });
-  assert.deepEqual(parseRoute("?view=desk&room=room_x"), { view: "home", roomId: "room_x" }, "방을 보고 있으면 뷰 파라미터는 무시");
-  assert.deepEqual(parseRoute("?view=../../etc"), { view: "home", roomId: null }, "모르는 뷰는 홈");
-  assert.deepEqual(parseRoute("?room=<script>"), { view: "home", roomId: null }, "방 ID 모양이 아니면 무시");
+test("경로: 방·비서·설정 세 화면뿐이고, 예전 주소는 막다른 길 없이 새 화면으로 간다", () => {
+  assert.deepEqual(parseRoute(""), { view: "rooms", roomId: null }, "기본은 방");
+  assert.deepEqual(parseRoute("?view=agents"), { view: "agents", roomId: null });
+  assert.deepEqual(parseRoute("?view=settings"), { view: "settings", roomId: null });
+  assert.deepEqual(parseRoute("?room=room_50795a119a4a4b48"), { view: "rooms", roomId: "room_50795a119a4a4b48" });
+  assert.deepEqual(parseRoute("?view=agents&room=room_x"), { view: "rooms", roomId: "room_x" }, "방을 보고 있으면 방 화면");
+  assert.deepEqual(parseRoute("?view=../../etc"), { view: "rooms", roomId: null }, "모르는 뷰는 방");
+  assert.deepEqual(parseRoute("?room=<script>"), { view: "rooms", roomId: null }, "방 ID 모양이 아니면 무시");
 
-  assert.equal(routeHref({ view: "home", roomId: null }), "/");
-  assert.equal(routeHref({ view: "inbox", roomId: null }), "?view=inbox");
-  assert.equal(routeHref({ view: "home", roomId: "room_a" }), "?room=room_a");
-  assert.equal(activeTab({ view: "home", roomId: "room_a" }), "rooms");
-  assert.equal(activeTab({ view: "settings", roomId: null }), "home", "설정은 레일 하단이라 홈 탭을 유지");
-  assert.equal(activeTab({ view: "desk", roomId: null }), "desk");
+  // 예전 주소(관제실·인박스·비서실) 호환
+  assert.equal(parseRoute("?view=home").view, "rooms");
+  assert.equal(parseRoute("?view=inbox").view, "rooms");
+  assert.equal(parseRoute("?view=desk").view, "agents");
+
+  assert.equal(routeHref({ view: "rooms", roomId: null }), "/");
+  assert.equal(routeHref({ view: "agents", roomId: null }), "?view=agents");
+  assert.equal(routeHref({ view: "settings", roomId: null }), "?view=settings");
+  assert.equal(routeHref({ view: "rooms", roomId: "room_a" }), "?room=room_a");
+
+  assert.equal(activeTab({ view: "rooms", roomId: "room_a" }), "rooms");
+  assert.equal(activeTab({ view: "agents", roomId: null }), "agents");
+  assert.equal(activeTab({ view: "settings", roomId: null }), "settings");
 });
 
 test("계정 만들기 규칙: 아이디 3~40자, 비밀번호 12자 이상", () => {
@@ -100,54 +116,7 @@ test("계정 만들기 규칙: 아이디 3~40자, 비밀번호 12자 이상", ()
   assert.equal(passwordProblem(" ".repeat(12)), null, "서버는 앞뒤 공백도 글자로 센다");
 });
 
-test("서버 health 를 상태 라벨로만 번역한다(정상은 침묵)", () => {
-  assert.equal(healthLabel("needs_input").label, "답변 필요");
-  assert.equal(healthLabel("needs_input").tone, "wait");
-  assert.equal(healthLabel("needs_input").quiet, false);
-  assert.equal(healthLabel("paused").label, "정지");
-  assert.equal(healthLabel("ok").label, "", "정상은 화면에 라벨을 그리지 않는다");
-  assert.equal(healthLabel("ok").quiet, true);
-  assert.equal(healthLabel("idle").label, "");
-  assert.equal(healthLabel("알수없음").quiet, true, "모르는 값은 침묵으로(추측 금지)");
-  assert.equal(roomStateText("ok"), "");
-  assert.equal(roomStateText("needs_input"), "답변 필요");
-  assert.equal(roomStateText("ok", true), "정지", "일시정지가 방 상태보다 먼저다");
-});
-
-test("`답변 필요` 수는 화면 어디서나 같은 술어(방별 답할 것 유무)를 쓴다", () => {
-  const rooms = [
-    card({ id: "a", health: "needs_input", needs_attention: true }),
-    card({ id: "b", health: "needs_input", unread: 4, needs_attention: false }),
-    card({ id: "c", unread: 2, needs_attention: true }),
-  ];
-  assert.equal(answerNeededRooms(rooms), 2, "health 기반 대체값(레거시 응답)");
-  assert.equal(needsYouRooms(rooms), 2, "예전 이름도 같은 값을 센다");
-  assert.equal(unreadRoomCount(rooms), 2);
-  assert.deepEqual([...needsAttentionRoomIds(rooms)].sort(), ["a", "c"], "서버가 준 방별 플래그를 그대로 쓴다(대기 요청만 있는 방은 제외)");
-  assert.deepEqual(
-    [...needsAttentionRoomIds([card({ id: "d", health: "needs_input" })])],
-    ["d"],
-    "플래그가 없는 응답은 health 로 대체한다",
-  );
-  assert.equal(
-    roomSummaryLine({ need: 2, unread: 2, paused: 1 }),
-    "답변 필요 2곳 · 안 읽은 방 2 · 정지 1",
-  );
-  assert.equal(roomSummaryLine({ need: 0, unread: 0, paused: 0 }), "", "0 은 쓰지 않는다");
-});
-
-test("필터 칩과 인박스 머리도 0 을 말하지 않는다", () => {
-  assert.equal(countLabel("답변 필요", 0), "답변 필요", "0이면 숫자를 붙이지 않는다");
-  assert.equal(countLabel("답변 필요", 3), "답변 필요 3");
-  assert.equal(countLabel("정지", 0), "정지");
-
-  assert.equal(inboxSummaryLine(0, 0), "", "할 일도 급도 없으면 침묵한다");
-  assert.equal(inboxSummaryLine(0, 2), "받은 글 2건", "'답변 필요 없음'이라고 크게 말하지 않는다");
-  assert.equal(inboxSummaryLine(1, 2), "답변 필요 1곳 · 2건");
-  assert.equal(inboxSummaryLine(1, 0), "답변 필요 1곳");
-});
-
-test("관제실 정렬: 답변 필요 → 정지 → 안 읽음 → 진행 중 → 조용함, 같은 순위는 최근 활동", () => {
+test("방 목록: 답변 필요 → 정지 → 안 읽음 → 진행 중 → 조용함, 같은 순위는 최근 활동", () => {
   const needs = card({ id: "a", health: "needs_input", needs_attention: true, last_message_at: "2026-11-20T00:00:00.000Z" });
   const paused = card({ id: "b", health: "paused", paused: true });
   const unread = card({ id: "c", unread: 3 });
@@ -158,41 +127,83 @@ test("관제실 정렬: 답변 필요 → 정지 → 안 읽음 → 진행 중 �
   const order = sortRoomCards([idle, fresh, unread, paused, needs, lobby]).map((r) => r.id);
   assert.deepEqual(order.slice(0, 4), ["a", "b", "c", "d"], "답변 필요·정지·안 읽음·진행 중 순");
   assert.equal(order[4], "f", "같은 조용함 순위에서는 로비가 먼저");
-  assert.equal(needsYouRooms([needs, paused, unread]), 1);
 
-  // 승인 요청만 있어 health 가 needs_input 인 방(needs_attention=false)은 답변 필요 방보다 뒤에 선다.
   const pendingOnly = card({ id: "g", health: "needs_input", needs_attention: false });
   const directedOnly = card({ id: "h", health: "ok", needs_attention: true, last_message_at: "2026-11-01T00:00:00.000Z" });
   assert.deepEqual(sortRoomCards([pendingOnly, directedOnly]).map((r) => r.id), ["h", "g"], "답변 필요 방이 승인 대기 방보다 먼저");
   assert.equal(roomNeedsAnswer(pendingOnly), false);
-  assert.equal(roomNeedsAnswer(directedOnly), true);
+  assert.equal(roomNeedsAnswer(directedOnly), true, "질문·내 앞 지목이면 답변 필요");
+
+  assert.equal(unreadRoomCount([needs, paused, unread]), 1);
+  assert.equal(roomRowCount(unread), 3, "안 읽은 수가 있으면 그 수");
+  assert.equal(roomRowCount(fresh), 2, "없으면 비서 수(방 목록과 헤더가 같은 값)");
 });
 
-test("인박스 필터: 종류(질문·나에게·시스템)와 방", () => {
-  const q = message({ seq: 1, kind: "question" });
-  const direct = message({ seq: 2, recipient: { id: "owner", name: "owner" } });
-  const sys = message({ seq: 3, sender: { type: "system", id: "system", name: "system" } });
-  const items: ActivityItem[] = [
-    { room_id: "room_a", room_name: "로비", room_kind: "lobby", message: q },
-    { room_id: "room_b", room_name: "회의실", room_kind: "room", message: direct },
-    { room_id: "room_a", room_name: "로비", room_kind: "lobby", message: sys },
+test("비서 수는 화면 어디서나 '활성' 하나로 센다(초대됨·폐기 제외)", () => {
+  const agents = [
+    { id: "1", name: "a", product: "", status: "active", last_seen: null, rooms: [] },
+    { id: "2", name: "b", product: "", status: "unclaimed", last_seen: null, rooms: [] },
+    { id: "3", name: "c", product: "", status: "revoked", last_seen: null, rooms: [] },
   ];
-  assert.equal(filterActivity(items, {}).length, 3);
-  assert.deepEqual(filterActivity(items, { kind: "question" }).map((i) => i.message.seq), [1]);
-  assert.deepEqual(filterActivity(items, { kind: "directed" }).map((i) => i.message.seq), [2]);
-  assert.deepEqual(filterActivity(items, { kind: "system" }).map((i) => i.message.seq), [3]);
-  assert.deepEqual(filterActivity(items, { roomId: "room_a" }).map((i) => i.message.seq), [1, 3]);
+  assert.equal(activeAgentCount(agents), 1);
+  assert.equal(agentsSummary(agents), "비서 1명 · 연결 대기 1명");
+  assert.equal(agentsSummary([{ id: "3", name: "c", product: "", status: "revoked", last_seen: null, rooms: [] }]), "비서 없음");
 });
 
-test("⌘K 팔레트: 이동·방·비서·명령을 한 목록에서 검색한다", () => {
-  const all = paletteItems({ rooms: [card({ id: "room_a", name: "회의실" })], agents: [{ id: "agt_1", name: "피클", product: "Pickle", status: "active", last_seen: null, rooms: [] }] }, "");
-  assert.deepEqual([...new Set(all.map((i) => i.group))], ["이동", "방", "비서", "명령"]);
-  const hit = paletteItems({ rooms: [card({ id: "room_a", name: "회의실" })], agents: [{ id: "agt_1", name: "피클", product: "Pickle", status: "active", last_seen: null, rooms: [] }] }, "회의");
-  assert.equal(hit.length, 1);
-  assert.deepEqual(hit[0].action, { type: "room", roomId: "room_a" });
-  const byProduct = paletteItems({ rooms: [], agents: [{ id: "agt_1", name: "피클", product: "Pickle", status: "active", last_seen: null, rooms: [] }] }, "pickle");
-  assert.deepEqual(byProduct[0].action, { type: "agent", agentId: "agt_1" }, "제품명으로도 찾는다");
-  assert.equal(paletteItems({ rooms: [], agents: [] }, "없는말").length, 0);
+test("비서 방 토글: 방을 누르면 넣고 빼되 로비는 고정, 다른 워크스페이스 방은 섞이지 않는다", () => {
+  const rooms = [card({ id: "room_lobby", kind: "lobby", name: "로비" }), card({ id: "room_a", name: "회의실" }), card({ id: "room_b", name: "연구방" })];
+  const a = agent();
+  const toggles = agentRoomToggles(a, rooms, "room_lobby");
+  assert.deepEqual(toggles.map((t) => [t.roomId, t.on, t.locked]), [
+    ["room_lobby", true, true],
+    ["room_a", false, false],
+    ["room_b", false, false],
+  ]);
+
+  assert.deepEqual(toggledRoomIds(a, rooms, "room_lobby", "room_a"), ["room_lobby", "room_a"], "누르면 그 방을 넣는다");
+  const both = agent({ rooms: [
+    { room_id: "room_lobby", room_name: "로비", status: "active" },
+    { room_id: "room_a", room_name: "회의실", status: "active" },
+  ] });
+  assert.deepEqual(toggledRoomIds(both, rooms, "room_lobby", "room_a"), ["room_lobby"], "다시 누르면 뺀다");
+  assert.deepEqual(toggledRoomIds(both, rooms, "room_lobby", "room_lobby").sort(), ["room_a", "room_lobby"], "로비 칩은 잠겨 있어 눌러도 빠지지 않는다");
+  assert.ok(!toggledRoomIds(agent({ rooms: [{ room_id: "room_gone", room_name: "옛 방", status: "active" }] }), rooms, "room_lobby", "room_a").includes("room_gone"), "이 워크스페이스에 없는 방은 보내지 않는다");
+  assert.match(unclaimedNotice(), /토큰을 받지 못한 비서/);
+});
+
+test("초대 문장과 기본값: 한 번 호출로 바로 입장, 7일 · 10회", () => {
+  assert.equal(INVITE_DEFAULTS.ttlHours, 168);
+  assert.equal(INVITE_DEFAULTS.maxUses, 10);
+  const room = roomInviteText("우리 집", "회의실", "https://x/join/acr_inv_2");
+  assert.match(room, /회의실/);
+  assert.match(room, /한 번 호출하면 바로 들어와/);
+  assert.ok(!/로비/.test(room), "방 초대에 로비 문구를 섞지 않는다");
+  const pool = poolInviteText("우리 집", "로비", "https://x/join/acr_inv_1");
+  assert.match(pool, /우리 집/);
+  assert.match(pool, /바로 '로비'에 들어와/);
+  assert.match(pool, /https:\/\/x\/join\/acr_inv_1/);
+});
+
+test("P1-3: 내가 보낸 최근 메시지가 답장 전이면 폴링을 4초로 유지한다", () => {
+  const now = Date.UTC(2026, 10, 26, 4, 0, 0);
+  const sent = message({
+    seq: 5,
+    sender: { type: "owner", id: "owner", name: "owner" },
+    recipient: { id: "agt_1", name: "피클" },
+    delivery: { state: "sent" },
+    created_at: new Date(now - 30_000).toISOString(),
+  });
+  assert.equal(awaitingDelivery([sent], now), true);
+  assert.equal(awaitingDelivery([{ ...sent, delivery: { state: "acked" } }], now), true, "확인함도 답장 전이면 기다린다");
+  assert.equal(awaitingDelivery([{ ...sent, delivery: { state: "replied" } }], now), false, "답장하면 끝난다");
+  assert.equal(awaitingDelivery([{ ...sent, recipient: null }], now), false, "지목 없는 글은 배지가 없다");
+  assert.equal(awaitingDelivery([{ ...sent, created_at: new Date(now - 16 * 60_000).toISOString() }], now), false, "오래된 글은 따라가지 않는다");
+
+  assert.equal(pollDelay(0, false), POLL_STEPS[0]);
+  assert.equal(pollDelay(4, false), POLL_STEPS[4], "조용하면 20초까지 늦춘다");
+  assert.equal(pollDelay(4, true), POLL_STEPS[0], "기다리는 동안은 4초 고정");
+  assert.equal(pollDelay(99, true), POLL_STEPS[0]);
+  assert.equal(pollDelay(-3, false), POLL_STEPS[0], "음수는 첫 단계로");
 });
 
 test("전달 상태 실시간 갱신: 증분 폴링도 최근 구간을 되읽는다", () => {
@@ -233,47 +244,10 @@ test("방 구성원 → 화면 참여자: 멤버십과 신원 상태를 함께 �
   assert.equal(presenceLabel("revoked", new Date().toISOString()), "폐기됨");
 });
 
-test("초대 전달 문장은 워크스페이스·방·링크를 구분해 담는다", () => {
-  const pool = poolInviteText("우리 집", "로비", "https://x/join/acr_inv_1");
-  assert.match(pool, /우리 집/);
-  assert.match(pool, /로비/);
-  assert.match(pool, /https:\/\/x\/join\/acr_inv_1/);
-  const room = roomInviteText("우리 집", "회의실", "https://x/join/acr_inv_2");
-  assert.match(room, /회의실/);
-  assert.ok(!/로비/.test(room), "방 초대에 로비 문구를 섞지 않는다");
-});
-
-test("P0-1: 오너가 없으면 계정 만들기로 열고, 이미 있으면 로그인으로 연다(방 코드 탭 없음)", () => {
+test("P0-1: 오너가 없으면 계정 만들기로 열고, 이미 있으면 로그인으로 연다", () => {
   assert.equal(setupLandingMode(null), "login");
   assert.equal(setupLandingMode({ needs_owner: false }), "login");
   assert.equal(setupLandingMode({ needs_owner: true }), "onboard", "오너가 없으면 계정 만들기가 첫 화면");
-  assert.equal(
-    setupLandingMode({ needs_owner: true, bootstrap_allowed: false, legacy_rooms: 2 } as { needs_owner?: boolean }),
-    "onboard",
-    "기존 방이 있어도 방 코드 탭을 열지 않는다",
-  );
-});
-
-test("P1-3: 내가 보낸 최근 메시지가 답장 전이면 폴링을 4초로 유지한다", () => {
-  const now = Date.UTC(2026, 10, 26, 4, 0, 0);
-  const sent = message({
-    seq: 5,
-    sender: { type: "owner", id: "owner", name: "owner" },
-    recipient: { id: "agt_1", name: "피클" },
-    delivery: { state: "sent" },
-    created_at: new Date(now - 30_000).toISOString(),
-  });
-  assert.equal(awaitingDelivery([sent], now), true);
-  assert.equal(awaitingDelivery([{ ...sent, delivery: { state: "acked" } }], now), true, "확인함도 답장 전이면 기다린다");
-  assert.equal(awaitingDelivery([{ ...sent, delivery: { state: "replied" } }], now), false, "답장하면 끝난다");
-  assert.equal(awaitingDelivery([{ ...sent, recipient: null }], now), false, "지목 없는 글은 배지가 없다");
-  assert.equal(awaitingDelivery([{ ...sent, created_at: new Date(now - 16 * 60_000).toISOString() }], now), false, "오래된 글은 따라가지 않는다");
-
-  assert.equal(pollDelay(0, false), POLL_STEPS[0]);
-  assert.equal(pollDelay(4, false), POLL_STEPS[4], "조용하면 20초까지 늦춘다");
-  assert.equal(pollDelay(4, true), POLL_STEPS[0], "기다리는 동안은 4초 고정");
-  assert.equal(pollDelay(99, true), POLL_STEPS[0]);
-  assert.equal(pollDelay(-3, false), POLL_STEPS[0], "음수는 첫 단계로");
 });
 
 test("P1-8: 승인 전에 풀의 기존 이름과 대조한다(폐기된 비서·자기 자신은 제외)", () => {
@@ -289,17 +263,4 @@ test("P1-8: 승인 전에 풀의 기존 이름과 대조한다(폐기된 비서�
   assert.equal(agentNameConflict(pool, "새비서"), null);
   assert.equal(agentNameConflict(pool, "피클", "agt_1"), null, "기존 비서의 구성원 추가는 자기 이름을 그대로 쓴다");
   assert.equal(agentNameConflict(pool, "   "), null);
-});
-
-test("P1-2: 인박스 확인 필요 수는 목록의 unread 항목 수와 같다", () => {
-  const item = (seq: number, unread: boolean): ActivityItem => ({
-    room_id: "room_1",
-    room_name: "로비",
-    room_kind: "lobby",
-    unread,
-    message: message({ seq }),
-  });
-  assert.equal(unreadActivityCount([item(1, true), item(2, false), item(3, true)]), 2);
-  assert.equal(unreadActivityCount([]), 0);
-  assert.equal(unreadActivityCount([{ ...item(1, false), unread: undefined }]), 0, "읽음 표시가 없으면 세지 않는다");
 });

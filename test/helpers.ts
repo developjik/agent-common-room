@@ -38,7 +38,12 @@ export async function start() {
       return { roomId: room.room_id as string, ownerCode: room.owner_code as string, sess, invite };
     }
     async function join(r: { sess: string; invite: string }, name: string, opts: Record<string, unknown> = {}) {
-      const jr = (await call("POST", `/api/join/${r.invite}`, undefined, { display_name: name, product: "test" })).json;
+      // 기본은 1단계 즉시 입장. 오너가 정하는 승인 옵션(지난 대화·권한)이 필요할 때만 레거시 2단계를 쓴다.
+      if (Object.keys(opts).length === 0) {
+        const j = (await call("POST", `/api/join/${r.invite}`, undefined, { display_name: name, product: "test" })).json;
+        return { token: j.agent_token as string, id: j.agent_id as string, requestId: j.request_id as string, claimSecret: "" };
+      }
+      const jr = (await call("POST", `/api/join/${r.invite}`, undefined, { display_name: name, product: "test", instant: false })).json;
       const pending = (await call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
       if (pending.status !== "pending") throw new Error("expected pending");
       const ap = await call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess, opts);
@@ -83,9 +88,13 @@ export async function start() {
     const invite = (await call("POST", "/api/owner/invites", sess, { max_uses: 20 })).json.invite_token as string;
     return { roomId: room.room_id as string, ownerCode: room.owner_code as string, sess, invite };
   }
-  /** Join an agent through the real flow. */
+  /** Join an agent through the real flow. 기본은 1단계 즉시 입장, 승인 옵션이 있으면 레거시 2단계. */
   async function join(r: { sess: string; invite: string }, name: string, opts: Record<string, unknown> = {}) {
-    const jr = (await call("POST", `/api/join/${r.invite}`, undefined, { display_name: name, product: "test" })).json;
+    if (Object.keys(opts).length === 0) {
+      const j = (await call("POST", `/api/join/${r.invite}`, undefined, { display_name: name, product: "test" })).json;
+      return { token: j.agent_token as string, id: j.agent_id as string, requestId: j.request_id as string, claimSecret: "" };
+    }
+    const jr = (await call("POST", `/api/join/${r.invite}`, undefined, { display_name: name, product: "test", instant: false })).json;
     const pending = (await call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
     if (pending.status !== "pending") throw new Error("expected pending");
     const ap = await call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess, opts);

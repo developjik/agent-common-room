@@ -1,9 +1,10 @@
-// 중앙 대화 피드: 날짜 구분선, 발신자 그룹핑, 스레드 요약 배지, 시스템 안내, 빈/로딩 상태.
+// 중앙 대화 피드: 날짜 구분선, 발신자 그룹핑, 시스템 안내, 빈/로딩 상태.
 // role="log"로 새 메시지만 낭독되고, 사용자가 바닥 근처에 있을 때만 자동 스크롤한다.
+// 스레드 요약 배지는 없앴다(답장은 본문 인용으로만 이어진다).
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { MessageRow } from "./MessageRow.js";
 import { Icon } from "./icons.js";
-import { dateSeparatorLabel, dayKey, type ThreadSummary } from "../lib/format.js";
+import { dateSeparatorLabel, dayKey } from "../lib/format.js";
 import type { Agent, Message } from "../lib/types.js";
 
 export interface ChatFeedHandle {
@@ -14,12 +15,9 @@ export interface ChatFeedHandle {
 interface Props {
   messages: Message[];
   agents: Agent[];
-  summaries: Map<number, ThreadSummary>;
-  threadOpenSeq: number | null;
   flashSeq: number | null;
   ready: boolean;
   emptyHint: React.ReactNode;
-  onOpenThread: (seq: number) => void;
   onQuoteReply: (m: Message) => void;
   onMention: (agent: Agent) => void;
   onCopy: (m: Message) => void;
@@ -47,7 +45,7 @@ function Skeleton() {
 }
 
 export const ChatFeed = forwardRef<ChatFeedHandle, Props>(function ChatFeed(
-  { messages, agents, summaries, threadOpenSeq, flashSeq, ready, emptyHint, onOpenThread, onQuoteReply, onMention, onCopy, onDelete, onJump, onSeedChain, onOpenInvite },
+  { messages, agents, flashSeq, ready, emptyHint, onQuoteReply, onMention, onCopy, onDelete, onJump, onSeedChain, onOpenInvite },
   ref,
 ) {
   const scroller = useRef<HTMLDivElement | null>(null);
@@ -134,10 +132,7 @@ export const ChatFeed = forwardRef<ChatFeedHandle, Props>(function ChatFeed(
                     prev={prev && prev.sender.type !== "system" ? prev : undefined}
                     agents={agents}
                     bySeq={bySeq}
-                    summary={summaries.get(m.seq)}
-                    threadOpen={threadOpenSeq === m.seq}
                     flash={flashSeq === m.seq}
-                    onOpenThread={onOpenThread}
                     onQuoteReply={onQuoteReply}
                     onMention={onMention}
                     onCopy={onCopy}

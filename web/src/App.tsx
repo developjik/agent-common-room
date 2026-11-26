@@ -72,16 +72,16 @@ function Boot() {
     setOwner(null);
     setWorkspaces([]);
     setPhase("auth");
-    document.title = "관제실 · 공통 룸";
+    document.title = "공통 룸";
     history.replaceState(null, "", "/");
-    setRoute({ view: "home", roomId: null });
+    setRoute({ view: "rooms", roomId: null });
   }, []);
 
   const unauthorized = useCallback(() => {
     setOwner(null);
     setWorkspaces([]);
     setPhase("auth");
-    document.title = "관제실 · 공통 룸";
+    document.title = "공통 룸";
   }, []);
 
   if (phase === "boot") {
