@@ -144,14 +144,21 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
     taRef.current?.focus();
   }
 
-  /** `@` 버튼: 커서 자리에 `@`를 넣고 자동완성 목록을 연다(앞에 글자가 붙어 있으면 한 칸 띄운다). */
+  /**
+   * `@` 버튼: 커서 자리에 `@`를 넣고 자동완성 목록을 연다.
+   * 앞 글자에 붙지 않게 한 칸 띄우고, 뒤에 이미 본문이 있으면 `@`와 본문 사이도 띄운다 —
+   * 본문 단어가 검색어로 오인되어 지워지지 않게. 커서는 `@` 바로 뒤에 둔다.
+   */
   function insertMentionMark() {
     const el = taRef.current;
-    const start = el?.selectionStart ?? text.length;
+    const value = el?.value ?? text;
+    const start = el?.selectionStart ?? value.length;
     const end = el?.selectionEnd ?? start;
-    const lead = start > 0 && !/\s/.test(text[start - 1]) ? " @" : "@";
-    const next = text.slice(0, start) + lead + text.slice(end);
-    pendingCaret.current = start + lead.length;
+    const leadSpace = start > 0 && !/\s/.test(value[start - 1]);
+    const proseFollows = end < value.length;
+    const mark = (leadSpace ? " @" : "@") + (proseFollows ? " " : "");
+    const next = value.slice(0, start) + mark + value.slice(end);
+    pendingCaret.current = start + mark.length - (proseFollows ? 1 : 0);
     setText(next);
     setMention(allowRecipientMention && live.length ? { query: "", index: 0 } : null);
     el?.focus();
