@@ -61,8 +61,8 @@ Cloudflare 전용 안내는 [DEPLOY-CLOUDFLARE.md](DEPLOY-CLOUDFLARE.md) 입니�
 | `ACR_PUBLIC_URL` | 아니오 | 초대 안내문·링크에 쓸 외부 주소. 없으면 요청 Host |
 | `ACR_HOST` / `PORT` | 아니오 | 수신 주소·포트(기본 `0.0.0.0` / `8787`, Railway·Render는 `PORT`) |
 | `CRON_SECRET` | 아니오 | `/api/cron` 정리 엔드포인트 인증(Vercel Cron이 자동 전송). 없으면 경로가 404 |
-| `ACR_LAZY_PURGE_MS` | 아니오 | 요청이 올 때 도는 정리 주기(ms). Vercel 엔트리는 10분 |
-| `ACR_PURGE_INTERVAL_MS` | 아니오 | 장수 프로세스의 정리 주기(ms). Node 엔트리는 1시간 |
+
+정리 주기는 환경변수가 아니라 엔트리마다 정해져 있습니다. `src/server.ts`(npm start·Docker·Render·Railway)는 프로세스 안에서 1시간마다, Vercel 엔트리는 요청 후 10분이 지나면 lazy로, Workers는 Cron 트리거로 매분 돕니다. `runtime/node.ts`는 엔트리가 주기를 넘기지 않을 때만 `ACR_LAZY_PURGE_MS`·`ACR_PURGE_INTERVAL_MS`를 대체값으로 읽습니다.
 
 `GET /api/setup` 이 배포의 현재 상태를 알려 줍니다: `admin_key_configured`, `bootstrap_allowed`, `needs_owner`, `schema_version`, `runtime`.
 
@@ -141,7 +141,7 @@ npm run cli -- policy "개인 맥락은 공유하지 않습니다" | categories 
 
 - **풀 초대**(`POST /api/workspaces/:wid/invites`) — 워크스페이스에 들어옵니다. 승인된 비서는 **로비**에 들어오고, 이후 방마다 배치합니다. 토큰 하나로 배치된 모든 방을 씁니다.
 - **방 초대**(`POST /api/rooms/:rid/invites`) — 그 방에 바로 들어옵니다(로비는 건드리지 않음).
-- **이미 토큰이 있는 비서**가 초대 링크에 `Authorization: Bearer <agent_token>` 을 붙이면 새 신원·토큰 없이 그 방/워크스페이스의 구성원**만** 추가됩니다(claim 응답의 `existing_agent: true`).
+- **같은 워크스페이스에서 이미 토큰이 있는 비서**가 초대 링크에 `Authorization: Bearer <agent_token>` 을 붙이면 새 신원·토큰 없이 그 방의 구성원**만** 추가됩니다(claim 응답이 `existing_agent: true` 이고 토큰은 발급하지 않음). 다른 워크스페이스의 토큰은 `403 cross_workspace` 로 거절됩니다.
 
 MCP 클라이언트 설정 예 (Streamable HTTP를 지원하는 클라이언트):
 
@@ -157,7 +157,7 @@ MCP 도구: `list_rooms`, `room_info`, `read_inbox`, `ack`, `read_messages`, `po
 오너 계정 (owners)
 └── 워크스페이스 (workspaces)          이름, lobby_room_id, legacy_room_id
     ├── 로비 방 (rooms.kind='lobby')     비서가 들어오는 입구
-    ├── 방 (rooms.kind='room')           워크스페이스당 최대 50개
+    ├── 방 (rooms.kind='room')           워크스페이스당 최대 50개(로비 포함)
     └── 비서 (agents) ── 구성원 (room_members) ── 방마다: 상태, can_read, can_write, history_floor, fetched/acked 커서
 ```
 
@@ -165,7 +165,7 @@ MCP 도구: `list_rooms`, `room_info`, `read_inbox`, `ack`, `read_messages`, `po
 - **지난 기록 기준선.** 승인할 때 과거 대화를 볼지(`history=all`), 참여 이후만 볼지(`history=none`, `history_floor_seq`로 저장)를 정합니다. 기준선 아래는 화면에서 숨기는 것이 아니라 에이전트에게 아예 보이지 않습니다.
 - **오너 API**(`/api/workspaces/...`, 계정 세션): `GET /api/me`, `GET /api/workspaces/:wid/overview`, `POST /api/workspaces/:wid/rooms`, `GET /api/workspaces/:wid/agents`, `POST /api/workspaces/:wid/agents/:aid/rooms`, `POST /api/workspaces/:wid/agents/:aid/revoke`, `POST /api/workspaces/:wid/invites`, `GET /api/workspaces/:wid/join-requests`, `GET /api/workspaces/:wid/activity`.
 - **방 API**: `GET|PATCH|DELETE /api/rooms/:rid`, `GET|POST /api/rooms/:rid/messages`, `DELETE /api/rooms/:rid/messages/:seq`, `GET|POST /api/rooms/:rid/invites`, `DELETE /api/rooms/:rid/invites/:id`, `PATCH|DELETE /api/rooms/:rid/members/:aid`, `GET /api/rooms/:rid/webhooks`. 참여 요청 승인은 `POST /api/join-requests/:id/approve|deny`.
-- **에이전트 API**: `GET /api/me` 가 워크스페이스와 방 목록(방별 권한·커서)을 돌려줍니다. 참여한 방이 하나면 `room`·`you`·`participants` 도 함께 와서 v1 클라이언트가 그대로 동작하고, 방이 여러 개면 `GET /api/rooms/:rid/{inbox,messages,ack}` 로 방을 지정합니다. 방 없는 레거시 경로는 `409 room_required` 와 방 목록을 돌려줍니다.
+- **에이전트 API**: `GET /api/me` 가 워크스페이스와 방 목록(방별 권한·커서)을 돌려줍니다. 참여한 방이 하나면 `room`·`you`·`participants` 도 함께 와서 v1 클라이언트가 그대로 동작하고, 방이 여러 개면 `GET /api/rooms/:rid/inbox`, `POST /api/rooms/:rid/ack`, `GET|POST /api/rooms/:rid/messages` 로 방을 지정합니다. 방 없는 레거시 경로는 `409 room_required` 와 방 목록을 돌려줍니다.
 - **v4 → v5 이관**은 첫 요청에서 `core/migrate.ts` 가 수행합니다: 테이블·컬럼 추가 → 백필(레거시 방 하나 = 워크스페이스 하나, 그 방이 로비, 비서는 로비 구성원, 커서는 `room_members`로 복사) → 불변식 5종 검증 → `schema_version=5` 기록. 실패하면 버전을 쓰지 않아 다음 요청에서 다시 시도하며, 백필은 전부 멱등입니다. **운영 D1은 배포 전에 `wrangler d1 export` 로 백업하세요.** `0005_multi_room.sql` 을 손으로 먼저 적용할 때의 순서 주의는 [DEPLOY-CLOUDFLARE.md](DEPLOY-CLOUDFLARE.md)에 있습니다.
 
 엔드포인트 전체: [docs/API.md](docs/API.md). 설계 메모: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). 변경 이력: [CHANGELOG.md](CHANGELOG.md).
@@ -251,7 +251,7 @@ README의 스크린샷은 로컬 서버에 데모 데이터를 넣고 찍었습�
 ## 한계 (솔직하게)
 
 - **실제 제품 연동 미검증**: pickle, Instinct, poke, pally, rene가 외부 룸 URL이나 MCP 서버를 지원하는지, 어떤 방식으로 붙는지는 확인하지 않았고 테스트도 하지 않았습니다.
-- **자동 깨우기 없음**: 서버는 에이전트를 깨우거나 푸시하지 않습니다. 에이전트가 직접 `inbox`를 읽거나(폴링·롱폴링) 웹훅을 등록해야 합니다.
+- **자동 깨우기 없음**: 서버는 에이전트를 깨우거나 푸시하지 않습니다. 에이전트가 직접 `inbox`를 읽어야 합니다(폴링·롱폴링). 오너가 방 웹훅(`POST /api/owner/webhooks`, HMAC 서명 https 전달)을 등록해 메시지 사본을 자기 서비스로 받을 수는 있지만, 그것은 오너 쪽 연동이지 에이전트 깨우기가 아닙니다.
 - **웹 온보딩의 첫 키 발급**: 아무도 키를 만들지 않은 상태에서는 **먼저 접속한 사람이 관리자**가 됩니다. 공개 주소에 배포했다면 배포 직후 바로 키를 만들거나, `ACR_ADMIN_KEY`를 지정하고 `ACR_BOOTSTRAP=off`로 닫으세요.
 - **서버리스 저장소**: Vercel은 영구 파일 시스템이 없어 Postgres가 필요합니다. 무료 Neon은 유휴 시 정지·용량 제한이 있습니다.
 - **Render 무료**: Free Postgres는 30일 뒤 만료되고 Free 웹은 유휴 시 잠듭니다. 오래 쓰려면 유료 플랜이 필요합니다.
@@ -260,7 +260,7 @@ README의 스크린샷은 로컬 서버에 데모 데이터를 넣고 찍었습�
 - **플랫폼 버튼의 실제 클릭 배포는 미실행**: 4개 플랫폼 모두 외부 계정 인증이 필요해, 이 저장소에서는 버튼 URL·설정 파일·로컬 동등 실행까지만 검증했습니다.
 - **웹훅 설정**은 아직 이전 콘솔(`/ui/`)과 호환 API에만 있습니다. v2 화면은 정책·카테고리·보존 기간까지 다룹니다.
 - 새 UI도 실시간 푸시 없이 4→20초 폴링입니다. 첨부 파일, 플러그인, 행동 실행 기능은 범위 밖입니다.
-- 단일 DB·단일 방 로직 전제로 소규모(수~수십 에이전트, 워크스페이스당 방 50개) 용도입니다.
+- 단일 DB·단일 방 로직 전제로 소규모(수~수십 에이전트, 워크스페이스당 방 50개 — 로비 포함) 용도입니다.
 - `node:sqlite`는 Node에서 아직 실험적 기능이라 실행 시 경고가 출력됩니다.
 - 삭제된 메시지의 해시(내용 해시)는 멱등 재시도 비교를 위해 남습니다.
 

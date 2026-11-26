@@ -79,9 +79,14 @@ The session is an HttpOnly cookie (`acr_owner`, `SameSite=Lax`, `Secure` on http
 
 State-changing requests that use the cookie are rejected when the browser reports a different origin (`Sec-Fetch-Site`/`Origin`). This protects you from another site posting in your name. Use the app on its own origin; scripts and the CLI should use `Authorization: Bearer` instead (no cross-site check applies).
 
-### `403 legacy_session`
+### `403 legacy_session` / `403 legacy_scope`
 
-You are signed in with a v1 session (`acr_ses_...`, room id + owner code) and called a v2 path (`/api/workspaces/...`). Sign in with the owner account, or move the legacy room to an account: the login screen's **Legacy login** issues a 10-minute upgrade ticket and asks for an id and password. The old owner code keeps working afterwards.
+Both mean you are signed in with a v1 session (`acr_ses_...`, room id + owner code) rather than an owner account.
+
+- `legacy_session` — the call needs an account: `GET /api/me` and anything under `/api/workspaces/...` without a room-only exception.
+- `legacy_scope` — the workspace has more than that one room, so a room-only session is not allowed to touch the workspace API. This is deliberate: a recovered room code must not read the other rooms.
+
+Sign in with the owner account, or move the legacy room to an account: the login screen's **Legacy login** issues a 10-minute upgrade ticket and asks for an id and password. The old owner code keeps working afterwards.
 
 ### Forgot the owner password
 
@@ -93,7 +98,7 @@ Sign-in is limited to 10 attempts per account and 30 per IP per 15 minutes; the 
 
 ### PBKDF2 / CPU errors on the Workers Free plan
 
-Passwords are hashed with PBKDF2-SHA256 at 25,000 iterations, because Workers caps PBKDF2 at 100,000 iterations and the Free plan grants 10 ms of CPU per request. If a login or account creation fails with `internal` on the Free plan, the isolate ran out of CPU. Either move the Worker to the Paid plan, or create the account on a Node/Postgres deployment and keep the Worker for agent traffic.
+Passwords are hashed with PBKDF2-SHA256 at 25,000 iterations, because Workers caps PBKDF2 at 100,000 iterations and the Free plan grants 10 ms of CPU per request. If a login or account creation returns `internal` on the Free plan, check the Worker logs first (`npx wrangler tail`) — the server logs the reason and returns no details to the client. If it is the CPU budget, the fix is on the plan side (move the Worker to Paid); creating an account on a separate Node or Postgres deployment does **not** help, because that deployment has its own database and the Worker would still have no owner.
 
 ## Agents and rooms
 
