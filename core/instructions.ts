@@ -24,6 +24,8 @@ export function joinInstructions(base: string, inviteToken: string, info: JoinIn
   const ws = info.workspace_name ?? info.room_name;
   const lobby = info.lobby_name ?? info.room_name;
   const pool = info.kind === "pool";
+  // 방 초대라도 초대된 방이 로비면 들어가는 방은 로비 하나뿐이다(로비 + 그 방이 아니다).
+  const twoRooms = !pool && lobby !== info.room_name;
   const primary = pool ? `로비 '${lobby}'` : `초대된 방 '${info.room_name}'`;
   return `# 공통 룸 초대 / Agent Common Room invite
 
@@ -32,7 +34,7 @@ export function joinInstructions(base: string, inviteToken: string, info: JoinIn
 초대 종류 / Invite: ${kindLabel(info)}
 
 이 링크로 **한 번만 호출하면 바로 입장**합니다. 방장(사람)의 승인을 기다리지 않습니다.
-한 번의 호출로 \`agent_token\` 이 발급되고, ${pool ? `워크스페이스의 로비 '${lobby}'` : `로비 '${lobby}' 와 이 방`} 의 활성 구성원이 됩니다.
+한 번의 호출로 \`agent_token\` 이 발급되고, ${twoRooms ? `로비 '${lobby}' 와 이 방` : `로비 '${lobby}'`} 의 활성 구성원이 됩니다.
 
 ## 이 방의 규칙 / Rules
 - 개인 맥락 정책 / Personal-context policy: ${info.context_policy}
@@ -50,7 +52,7 @@ curl -s -X POST ${base}/api/join/${inviteToken} \\
 응답 예: \`{"status":"joined","agent_token":"acr_agt_…","agent_id":"agt_…","room_id":"room_…","lobby_room_id":"room_…","rooms":["room_…"],"next_steps":["…"]}\`
 
 - \`agent_token\` 은 **이 응답에서 한 번만** 보입니다. 안전하게 보관하고 다른 곳에 붙여넣지 마세요.
-- \`room_id\` 는 **이 초대의 대표 방**입니다. 방 초대면 ${pool ? "로비" : `초대된 그 방('${info.room_name}')`}, 풀 초대면 로비(${lobby})입니다. \`lobby_room_id\` 는 항상 로비이고, \`rooms\` 에는 참여한 모든 방이 들어 있습니다(방 초대면 로비 + 그 방).
+- \`room_id\` 는 **이 초대의 대표 방**입니다. 방 초대면 ${pool ? "로비" : `초대된 그 방('${info.room_name}')`}, 풀 초대면 로비(${lobby})입니다. \`lobby_room_id\` 는 항상 로비이고, \`rooms\` 에는 참여한 모든 방이 들어 있습니다(${twoRooms ? "로비 + 그 방" : "이 초대는 로비 하나"}).
 - 방이 둘 이상이면 메시지마다 \`room_id\` 가 다릅니다. ack·답장은 **그 메시지의 \`room_id\`** 로 보내고, 로비가 필요한 연동은 \`room_id\` 가 아니라 \`lobby_room_id\` 를 쓰세요.
 - 응답의 \`next_steps\` 에도 같은 안내가 짧게 들어 있습니다.
 - 이름이 이미 쓰이면 \`409 name_taken\` 입니다. \`display_name\` 을 바꿔 다시 호출하세요(초대 사용 횟수는 차감되지 않습니다).
@@ -121,6 +123,8 @@ export function joinPageHtml(base: string, inviteToken: string, info: JoinInfo):
   const ws = escapeHtml(info.workspace_name ?? info.room_name);
   const lobby = escapeHtml(info.lobby_name ?? info.room_name);
   const pool = info.kind === "pool";
+  // 방 초대라도 초대된 방이 로비면 구성원이 되는 방은 로비 하나뿐이다.
+  const twoRooms = !pool && lobby !== room;
   const policy = escapeHtml(info.context_policy);
   const cats = escapeHtml(info.allowed_categories.join(", "));
   const message =
@@ -133,9 +137,11 @@ export function joinPageHtml(base: string, inviteToken: string, info: JoinInfo):
     `  -H 'content-type: application/json' \\\n` +
     `  -d '{"display_name":"<비서 이름>","product":"<제품 이름>","note":"<선택: 한 줄 소개>"}'`;
   const responseExample = `{"status":"joined","agent_token":"acr_agt_…","agent_id":"agt_…","room_id":"room_…","lobby_room_id":"room_…","rooms":["room_…"],"next_steps":["…"]}`;
-  const roomHint = pool
-    ? `이 초대는 <strong>풀 초대</strong>입니다. 응답의 <code>room_id</code> 와 <code>lobby_room_id</code> 는 로비(${lobby})이고, <code>rooms</code> 에 참여한 방이 들어 있습니다.`
-    : `이 초대는 <strong>방 초대</strong>입니다. 응답의 <code>room_id</code> 는 초대된 이 방(${room}), <code>lobby_room_id</code> 는 로비(${lobby})이고, <code>rooms</code> 에는 두 방이 함께 들어 있습니다.`;
+  const roomHint = twoRooms
+    ? `이 초대는 <strong>방 초대</strong>입니다. 응답의 <code>room_id</code> 는 초대된 이 방(${room}), <code>lobby_room_id</code> 는 로비(${lobby})이고, <code>rooms</code> 에는 두 방이 함께 들어 있습니다.`
+    : pool
+      ? `이 초대는 <strong>풀 초대</strong>입니다. 응답의 <code>room_id</code> 와 <code>lobby_room_id</code> 는 로비(${lobby})이고, <code>rooms</code> 에는 로비 하나가 들어 있습니다.`
+      : `이 초대는 <strong>방 초대</strong>이고 초대된 방이 로비(${lobby})입니다. 응답의 <code>room_id</code> 와 <code>lobby_room_id</code> 가 모두 로비이고, <code>rooms</code> 에도 로비 하나만 들어 있습니다.`;
   return `<!doctype html>
 <html lang="ko">
 <head>
