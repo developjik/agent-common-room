@@ -15,7 +15,7 @@ import { useToast } from "./Toast.js";
 import { useWorkspace } from "../hooks/useWorkspace.js";
 import { useMediaQuery, type Theme } from "../hooks/useTheme.js";
 import { activeTab, type Route, type Tab } from "../lib/route.js";
-import { needsAttentionRoomIds, sortRoomCards, unreadRoomCount } from "../lib/views.js";
+import { sortRoomCards, unreadRoomCount } from "../lib/views.js";
 import type { Owner, RoomDetail, Workspace } from "../lib/types.js";
 
 interface Props {
@@ -57,8 +57,7 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
   const liveAgents = store.overview?.agents.filter((a) => a.status === "active").length ?? 0;
   // "답변 필요"는 어디서나 같은 값(인박스와 같은 기준의 고유 방 수)을 쓴다.
   // 상단바·레일·탭·문서 제목·홈 상태줄·방 목록 필터가 모두 이 수를 쓴다.
-  const needRoomIds = useMemo(() => needsAttentionRoomIds(store.overview?.rooms ?? []), [store.overview]);
-  const needRooms = store.overview?.counts.needs_you_rooms ?? needRoomIds.size;
+  const needRooms = store.overview?.counts.needs_you_rooms ?? store.overview?.rooms.filter((r) => r.needs_attention ?? r.health === "needs_input").length ?? 0;
   const unreadRooms = store.overview ? unreadRoomCount(store.overview.rooms) : 0;
   const viewTitle = route.roomId
     ? store.room?.name ?? "방"
@@ -185,7 +184,7 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
     <RoomsView
       rooms={rooms}
       agents={liveAgents}
-      needRoomIds={needRoomIds}
+      needCount={needRooms}
       ready={store.ready}
       onOpenRoom={openRoom}
       onCreateRoom={() => setCreateOpen(true)}
@@ -214,7 +213,6 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
     <MissionControl
       workspace={workspace}
       overview={store.overview}
-      needRoomIds={needRoomIds}
       ready={store.ready}
       onOpenRoom={openRoom}
       onGoView={goView}

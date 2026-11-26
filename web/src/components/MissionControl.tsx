@@ -4,15 +4,13 @@ import { Avatar } from "./Avatar.js";
 import { Icon } from "./icons.js";
 import { EmptyState } from "./ui.js";
 import { plainPreview, relTime, senderLabel } from "../lib/format.js";
-import { agentRoomNames, presenceTone, roomSummaryLine, sortRoomCards, unreadRoomCount } from "../lib/views.js";
+import { agentRoomNames, presenceTone, roomNeedsAnswer, roomSummaryLine, sortRoomCards, unreadRoomCount } from "../lib/views.js";
 import type { Overview, Workspace } from "../lib/types.js";
 import type { View } from "../lib/route.js";
 
 interface Props {
   workspace: Workspace;
   overview: Overview | null;
-  /** 인박스에 아직 읽지 않은 글이 있는 방(상단바의 "답변 필요 n곳"과 같은 기준). */
-  needRoomIds: Set<string>;
   ready: boolean;
   onOpenRoom: (roomId: string, seq?: number) => void;
   onGoView: (view: View) => void;
@@ -21,7 +19,7 @@ interface Props {
   onRetry: () => void;
 }
 
-export function MissionControl({ overview, needRoomIds, ready, onOpenRoom, onGoView, onCreateRoom, onInvite, onRetry }: Props) {
+export function MissionControl({ overview, ready, onOpenRoom, onGoView, onCreateRoom, onInvite, onRetry }: Props) {
   if (ready && !overview) {
     return (
       <div className="page">
@@ -54,7 +52,7 @@ export function MissionControl({ overview, needRoomIds, ready, onOpenRoom, onGoV
   const rooms = sortRoomCards(overview.rooms);
   const live = overview.agents.filter((a) => a.status === "active");
   const waiting = overview.agents.filter((a) => a.status === "unclaimed");
-  const need = Math.max(overview.counts.needs_you_rooms ?? 0, needRoomIds.size);
+  const need = overview.counts.needs_you_rooms ?? rooms.filter(roomNeedsAnswer).length;
   const summary = roomSummaryLine({
     need,
     unread: unreadRoomCount(overview.rooms),
@@ -94,13 +92,13 @@ export function MissionControl({ overview, needRoomIds, ready, onOpenRoom, onGoV
                   <li key={r.id}>
                     <button
                       type="button"
-                      className={"room-row" + (needRoomIds.has(r.id) ? " is-need" : "")}
+                      className={"room-row" + (roomNeedsAnswer(r) ? " is-need" : "")}
                       onClick={() => onOpenRoom(r.id)}
                     >
                       <span className="min-w-0 flex-1">
                         <span className="room-row-head">
                           <span className="room-row-name">{r.name}</span>
-                                                    {r.paused || needRoomIds.has(r.id) ? (
+                                                    {r.paused || roomNeedsAnswer(r) ? (
                             <span className="room-state" data-tone={r.paused ? "paused" : "wait"}>
                               {r.paused ? "정지" : "답변 필요"}
                             </span>

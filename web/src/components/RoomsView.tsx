@@ -3,14 +3,14 @@ import { useMemo, useState } from "react";
 import { Icon } from "./icons.js";
 import { EmptyState } from "./ui.js";
 import { plainPreview, relTime, senderLabel } from "../lib/format.js";
-import { sortRoomCards } from "../lib/views.js";
+import { roomNeedsAnswer, sortRoomCards } from "../lib/views.js";
 import type { RoomCard } from "../lib/types.js";
 
 interface Props {
   rooms: RoomCard[];
   agents: number;
-  /** 안 읽은 답할 것이 있는 방(홈·상단바와 같은 기준). */
-  needRoomIds: Set<string>;
+  /** 답변 필요 방 수(상단바 배지와 같은 값). */
+  needCount: number;
   ready: boolean;
   onOpenRoom: (roomId: string) => void;
   onCreateRoom: () => void;
@@ -19,12 +19,11 @@ interface Props {
 
 type Filter = "all" | "unread" | "paused" | "needs";
 
-export function RoomsView({ rooms, agents, needRoomIds, ready, onOpenRoom, onCreateRoom, onGoHome }: Props) {
+export function RoomsView({ rooms, agents, needCount, ready, onOpenRoom, onCreateRoom, onGoHome }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const sorted = useMemo(() => sortRoomCards(rooms), [rooms]);
-  const needCount = needRoomIds.size;
   const shown = sorted.filter((r) =>
-    filter === "unread" ? r.unread > 0 : filter === "paused" ? r.paused : filter === "needs" ? needRoomIds.has(r.id) : true,
+    filter === "unread" ? r.unread > 0 : filter === "paused" ? r.paused : filter === "needs" ? roomNeedsAnswer(r) : true,
   );
 
   return (
@@ -80,13 +79,13 @@ export function RoomsView({ rooms, agents, needRoomIds, ready, onOpenRoom, onCre
             <li key={r.id}>
               <button
                 type="button"
-                className={"room-row" + (needRoomIds.has(r.id) ? " is-need" : "")}
+                className={"room-row" + (roomNeedsAnswer(r) ? " is-need" : "")}
                 onClick={() => onOpenRoom(r.id)}
               >
                 <span className="min-w-0 flex-1">
                   <span className="room-row-head">
                     <span className="room-row-name">{r.name}</span>
-                                        {r.paused || needRoomIds.has(r.id) ? (
+                                        {r.paused || roomNeedsAnswer(r) ? (
                       <span className="room-state" data-tone={r.paused ? "paused" : "wait"}>
                         {r.paused ? "정지" : "답변 필요"}
                       </span>

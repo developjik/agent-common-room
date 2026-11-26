@@ -27,6 +27,7 @@ import {
   sortRoomCards,
   unreadActivityCount,
   needsAttentionRoomIds,
+  roomNeedsAnswer,
   unreadRoomCount,
 } from "../web/src/lib/views.js";
 import type { ActivityItem, Message, RoomCard, RoomMember } from "../web/src/lib/types.js";
@@ -134,7 +135,7 @@ test("`답변 필요` 수는 화면 어디서나 같은 술어(방별 답할 것
 });
 
 test("관제실 정렬: 답변 필요 → 정지 → 안 읽음 → 진행 중 → 조용함, 같은 순위는 최근 활동", () => {
-  const needs = card({ id: "a", health: "needs_input", last_message_at: "2026-11-20T00:00:00.000Z" });
+  const needs = card({ id: "a", health: "needs_input", needs_attention: true, last_message_at: "2026-11-20T00:00:00.000Z" });
   const paused = card({ id: "b", health: "paused", paused: true });
   const unread = card({ id: "c", unread: 3 });
   const fresh = card({ id: "d", last_message_at: "2026-11-25T00:00:00.000Z" });
@@ -142,9 +143,16 @@ test("관제실 정렬: 답변 필요 → 정지 → 안 읽음 → 진행 중 �
   const lobby = card({ id: "f", kind: "lobby", health: "idle", last_message_at: null });
 
   const order = sortRoomCards([idle, fresh, unread, paused, needs, lobby]).map((r) => r.id);
-  assert.deepEqual(order.slice(0, 4), ["a", "b", "c", "d"], "확인 필요·정지·안 읽음·진행 중 순");
+  assert.deepEqual(order.slice(0, 4), ["a", "b", "c", "d"], "답변 필요·정지·안 읽음·진행 중 순");
   assert.equal(order[4], "f", "같은 조용함 순위에서는 로비가 먼저");
   assert.equal(needsYouRooms([needs, paused, unread]), 1);
+
+  // 승인 요청만 있어 health 가 needs_input 인 방(needs_attention=false)은 답변 필요 방보다 뒤에 선다.
+  const pendingOnly = card({ id: "g", health: "needs_input", needs_attention: false });
+  const directedOnly = card({ id: "h", health: "ok", needs_attention: true, last_message_at: "2026-11-01T00:00:00.000Z" });
+  assert.deepEqual(sortRoomCards([pendingOnly, directedOnly]).map((r) => r.id), ["h", "g"], "답변 필요 방이 승인 대기 방보다 먼저");
+  assert.equal(roomNeedsAnswer(pendingOnly), false);
+  assert.equal(roomNeedsAnswer(directedOnly), true);
 });
 
 test("인박스 필터: 종류(질문·나에게·시스템)와 방", () => {

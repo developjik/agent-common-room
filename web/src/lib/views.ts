@@ -78,7 +78,7 @@ export function healthLabel(health: RoomHealth | string): HealthLabel {
   return HEALTH[health] ?? HEALTH.idle;
 }
 
-/** 방 행에 붙는 상태 한 단어. 정상이면 빈 문자열. */
+/** 방 health 를 상태 한 단어로 옮긴다(정상이면 빈 문자열). 화면 행은 roomNeedsAnswer 를 쓴다. */
 export function roomStateText(health: RoomHealth | string, paused = false): string {
   return paused || health === "paused" ? "정지" : health === "needs_input" ? "답변 필요" : "";
 }
@@ -88,10 +88,19 @@ export function answerNeededRooms(rooms: RoomCard[]): number {
   return rooms.filter((r) => r.health === "needs_input").length;
 }
 
+/**
+ * 이 방에 내가 아직 답할 것(안 읽은 질문·나에게 온 글·시스템 안내)이 있는가.
+ * 서버가 준 방별 플래그를 쓰고, 플래그가 없는 응답(레거시 세션)만 health 로 대체한다.
+ * 행 막대·`답변 필요` 단어·정렬·방 전환 메뉴가 모두 이 판정 하나를 쓴다.
+ */
+export function roomNeedsAnswer(r: RoomCard): boolean {
+  return r.needs_attention ?? r.health === "needs_input";
+}
+
 /** "답변 필요" 행 표시: 서버가 준 방별 답할 것(없으면 health 로 대체). */
 export function needsAttentionRoomIds(rooms: RoomCard[]): Set<string> {
   const out = new Set<string>();
-  for (const r of rooms) if (r.needs_attention ?? r.health === "needs_input") out.add(r.id);
+  for (const r of rooms) if (roomNeedsAnswer(r)) out.add(r.id);
   return out;
 }
 
@@ -115,12 +124,12 @@ export function roomSummaryLine(counts: { need: number; unread: number; paused: 
 }
 
 /**
- * 관제실 방 타일 순서: 확인 필요 → 정지 → 안 읽음 → 진행 중 → 조용함.
+ * 관제실 방 목록 순서: 답변 필요 → 정지 → 안 읽음 → 진행 중 → 조용함.
  * 같은 순위에서는 최근 활동이 위, 로비는 같은 순위에서 먼저(정체성).
  */
 export function sortRoomCards(rooms: RoomCard[]): RoomCard[] {
   const rank = (r: RoomCard): number =>
-    r.health === "needs_input" ? 0 : r.paused || r.health === "paused" ? 1 : r.unread > 0 ? 2 : r.health === "ok" ? 3 : 4;
+    roomNeedsAnswer(r) ? 0 : r.paused || r.health === "paused" ? 1 : r.unread > 0 ? 2 : r.health === "ok" ? 3 : 4;
   return [...rooms].sort((a, b) => {
     const d = rank(a) - rank(b);
     if (d !== 0) return d;
@@ -234,7 +243,7 @@ export function paletteItems(
     group: "방",
     label: r.name,
     icon: "rooms",
-    hint: r.kind === "lobby" ? "로비" : r.unread ? `새 글 ${r.unread}` : roomStateText(r.health, r.paused) || undefined,
+    hint: r.kind === "lobby" ? "로비" : r.unread ? `새 글 ${r.unread}` : roomNeedsAnswer(r) ? "답변 필요" : undefined,
     action: { type: "room", roomId: r.id },
   }));
   const agents: PaletteItem[] = input.agents.map((a) => ({

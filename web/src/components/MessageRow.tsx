@@ -33,8 +33,10 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
   const parent = m.reply_to ? bySeq.get(m.reply_to) : undefined;
   const name = senderName(m);
   const notice = deliveryNotice(m);
-  // 받는 사람 표시: 다른 비서에게만 → `@이름에게만`, 나에게만 → `나에게만`(서버는 오너를 'owner'로 적는다).
-  const dm = m.recipient ? (m.recipient.id === "owner" ? "나" : m.recipient.name) : null;
+  // 받는 사람 표시: 오너에게 온 글은 `나에게만`, 비서에게 간 글은 `@이름에게만`.
+  // '나'라는 이름의 비서가 있을 수 있으므로 이름이 아니라 수신자 ID 로 구분한다.
+  const toMe = m.recipient?.id === "owner";
+  const dm = m.recipient ? (toMe ? "나" : m.recipient.name) : null;
 
   // Esc: 열린 메뉴만 닫고 이벤트를 소비한다(방 화면·스레드 패널의 문서 핸들러가 함께 닫히면 초안이 사라진다).
   useEffect(() => {
@@ -78,7 +80,7 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
           )}
           {dm ? (
             <span className="msg-dm" title={`${dm}에게만`}>
-              {dm === "나" ? "나에게만" : `@${dm}에게만`}
+              {toMe ? "나에게만" : `@${dm}에게만`}
             </span>
           ) : null}
           {m.kind !== "message" ? <span className="msg-kind">{KIND_LABEL[m.kind] ?? m.kind}</span> : null}

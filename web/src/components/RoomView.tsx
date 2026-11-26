@@ -10,7 +10,7 @@ import { useToast } from "./Toast.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { copyText } from "../lib/browserClipboard.js";
 import { durationLabel, recipientReset, threadRootOf, threadSummaries } from "../lib/format.js";
-import { roomStateText } from "../lib/views.js";
+import { roomNeedsAnswer } from "../lib/views.js";
 import type { WorkspaceStore } from "../hooks/useWorkspace.js";
 import type { Message, RoomCard, RoomDetail, Workspace } from "../lib/types.js";
 import type { View } from "../lib/route.js";
@@ -437,7 +437,9 @@ export function RoomView({
                       <span className="min-w-0 flex-1">
                         <span className="switch-name">{r.name}</span>
                         <span className="switch-meta">
-                          {[roomStateText(r.health, r.paused), `비서 ${r.member_count}`].filter(Boolean).join(" · ")}
+                          {[r.paused ? "정지" : roomNeedsAnswer(r) ? "답변 필요" : "", `비서 ${r.member_count}`]
+                            .filter(Boolean)
+                            .join(" · ")}
                         </span>
                       </span>
                       {r.unread ? <span className="tile-unread">{r.unread}</span> : null}
