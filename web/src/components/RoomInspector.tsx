@@ -13,6 +13,19 @@ import type { Invite, RoomDetail, Webhook, Workspace } from "../lib/types.js";
 
 type Tab = "members" | "room" | "invite";
 
+/**
+ * 웹훅 카드의 상태 한 줄. pending 만 보여 주면 "시험 직후 대기"가 정상인지 실패인지 알 수 없어서
+ * 전달됨·실패·대기를 구분하고 시도 횟수를 덧붙인다.
+ */
+function webhookStatus(h: Webhook): string {
+  if (!h.last_kind) return "아직 전달 기록 없음";
+  const what = h.last_kind === "ping" ? "시험" : "새 글";
+  const tries = h.last_attempts && h.last_attempts > 1 ? ` · 시도 ${h.last_attempts}회` : "";
+  if (h.last_status === "ok") return `${what} · 전달됨${tries}`;
+  if (h.last_status === "failed") return `${what} · 전달 실패${tries}`;
+  return `${what} · 전달 대기${tries}`;
+}
+
 interface Props {
   store: WorkspaceStore;
   room: RoomDetail;
@@ -99,7 +112,7 @@ function MemberList({
 
   const remove = async (agentId: string, name: string) => {
     const ok = await confirm({
-      title: `${name} 을(를) 이 방에서 내보낼까요?`,
+      title: `"${name}" 비서를 이 방에서 내보낼까요?`,
       text: "토큰은 그대로라 다른 방에서는 계속 활동합니다. 다시 넣으려면 비서실에서 방에 배치하세요.",
       ok: "내보내기",
       danger: true,
@@ -107,7 +120,7 @@ function MemberList({
     if (!ok) return;
     try {
       await store.removeMember(room.id, agentId);
-      notify(`${name} 을(를) 이 방에서 내보냈습니다.`);
+      notify(`"${name}" 비서를 이 방에서 내보냈습니다.`);
     } catch (e) {
       notify(e instanceof Error ? e.message : "내보내지 못했습니다.");
     }
@@ -228,13 +241,17 @@ function RoomSettings({
 
   // allowed_categories 는 폴링마다 새 배열이라 그대로 의존성에 두면 4초마다 입력이 서버 값으로 되돌아간다.
   const catsKey = room.allowed_categories.join(",");
+  // 저장 범위를 둘로 나눠 두었으므로(이름·설명 / 고급) 서버 값 동기화도 같은 범위로 나눈다.
+  // 이름만 저장했을 때 접힌 고급 설정의 편집 중인 초안이 조용히 호기지 않게 한다.
   useEffect(() => {
     setName(room.name);
     setDescription(room.description);
+  }, [room.name, room.description]);
+  useEffect(() => {
     setPolicy(room.context_policy);
     setCategories(catsKey.replace(/,/g, ", "));
     setRetention(room.retention_days ? String(room.retention_days) : "");
-  }, [room.name, room.description, room.context_policy, catsKey, room.retention_days]);
+  }, [room.context_policy, catsKey, room.retention_days]);
 
   const since = Date.now() - room.rate_limit.window_seconds * 1000;
   const recent = store.messages.filter((m) => m.sender.type === "agent" && new Date(m.created_at).getTime() >= since).length;
@@ -246,12 +263,31 @@ function RoomSettings({
   const nearLimit = depthRatio >= 0.8 || rateRatio >= 0.8;
   const warning = depthRatio >= 0.8 ? `답장 체인 ${depth}/${room.max_chain_depth}` : `최근 ${durationLabel(room.rate_limit.window_seconds)} ${recent}/${room.rate_limit.count}`;
 
-  const save = async () => {
+  /**
+   * 기본 저장: 이름·설명만 보낸다.
+   * 예전에는 한 저장 버튼이 맥락 정책·카테고리·보존 기간까지 함께 보냈는데, 고급 설정을 접어 두면
+   * 보이지 않는 입력값이 함께 적용돼 이름만 바꿔도 메시지가 삭제될 수 있었다(보존 기간 축소).
+   */
+  const saveBasic = async () => {
     if (busy) return;
     if (!name.trim()) {
       notify("방 이름을 입력하세요.");
       return;
     }
+    setBusy(true);
+    try {
+      await store.patchRoom(room.id, { name: name.trim(), description });
+      notify("방 이름과 설명을 저장했습니다.");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "저장하지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 고급 저장: 맥락 정책·허용 카테고리·보존 기간만. */
+  const saveAdvanced = async () => {
+    if (busy) return;
     const days = retention.trim();
     if (days && (!/^\d+$/.test(days) || Number(days) < 1 || Number(days) > 3650)) {
       notify("보존 기간은 1~3650일 숫자이거나 비워 두세요.");
@@ -260,13 +296,11 @@ function RoomSettings({
     setBusy(true);
     try {
       await store.patchRoom(room.id, {
-        name: name.trim(),
-        description,
         context_policy: policy,
         allowed_categories: categories.split(",").map((c) => c.trim()).filter(Boolean),
         retention_days: days ? Number(days) : null,
       });
-      notify("방 정보를 저장했습니다.");
+      notify("고급 설정을 저장했습니다.");
     } catch (e) {
       notify(e instanceof Error ? e.message : "저장하지 못했습니다.");
     } finally {
@@ -331,20 +365,6 @@ function RoomSettings({
         <p className="panel-note mt-1">{paused ? "비서는 읽기만 합니다. 내 메시지는 그대로 전달됩니다." : "비서가 답장할 수 있습니다"}</p>
       </div>
 
-      <details className="limit-box" open={nearLimit || paused}>
-        <summary>
-          한도{nearLimit ? ` · ${warning}` : ""}
-        </summary>
-        <div className="limit-rows">
-          <span>
-            답장 체인 <strong>{depth}/{room.max_chain_depth}</strong>
-          </span>
-          <span>
-            최근 {durationLabel(room.rate_limit.window_seconds)} <strong>{recent}/{room.rate_limit.count}</strong>
-          </span>
-        </div>
-      </details>
-
       <div className="space-y-2">
         <div>
           <label className="label" htmlFor="room-name">
@@ -358,149 +378,169 @@ function RoomSettings({
           </label>
           <input id="room-desc" className="field" maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="이 방의 용도 한 줄" />
         </div>
-      </div>
-
-      <div className="space-y-2">
-        <div>
-          <label className="label" htmlFor="room-policy">
-            개인 맥락 정책
-          </label>
-          <textarea
-            id="room-policy"
-            className="field"
-            rows={3}
-            maxLength={1000}
-            value={policy}
-            onChange={(e) => setPolicy(e.target.value)}
-            placeholder="예: 개인 일정·업무 맥락은 이 방 안에서만 공유합니다."
-          />
-        </div>
-        <div>
-          <label className="label" htmlFor="room-categories">
-            허용 카테고리 (쉼표)
-          </label>
-          <input
-            id="room-categories"
-            className="field mono"
-            value={categories}
-            onChange={(e) => setCategories(e.target.value)}
-            placeholder="schedule, work, docs"
-          />
-          <p className="mt-1 text-[11px] leading-relaxed text-faint">소문자·밑줄 2~30자. 'none'은 항상 포함됩니다.</p>
-        </div>
-        <div>
-          <label className="label" htmlFor="room-retention">
-            보존 기간 (일, 비우면 제한 없음)
-          </label>
-          <input
-            id="room-retention"
-            className="field mono"
-            inputMode="numeric"
-            value={retention}
-            onChange={(e) => setRetention(e.target.value)}
-            placeholder="예: 30"
-          />
-        </div>
-        <button type="button" className="btn w-full" onClick={() => void save()} disabled={busy}>
+        <button type="button" className="btn w-full" onClick={() => void saveBasic()} disabled={busy}>
           {busy ? "저장 중…" : "저장"}
         </button>
       </div>
 
-      <details className="more-box">
-        <summary>고급</summary>
-        <dl className="kv mt-2">
-          <div>
-            <dt>방 ID</dt>
-            <dd className="mono select-all">{room.id}</dd>
-          </div>
-          <div>
-            <dt>만든 시각</dt>
-            <dd>{fmtFull(room.created_at)}</dd>
-          </div>
-        </dl>
-      </details>
+      {/* 웹훅·한도·맥락 정책은 매일 쓰는 화면이 아니라 '고급 설정' 하나로 접는다.
+          평소 방 화면은 초대·구성원·대화만 보이게 둔다. */}
+      <details className="more-box" open={nearLimit || paused}>
+        <summary>고급 설정{nearLimit ? ` · ${warning}` : ""}</summary>
+        <div className="mt-3 space-y-4">
+          <section>
+            <p className="label">한도</p>
+            <div className="limit-rows">
+              <span>
+                답장 체인 <strong>{depth}/{room.max_chain_depth}</strong>
+              </span>
+              <span>
+                최근 {durationLabel(room.rate_limit.window_seconds)} <strong>{recent}/{room.rate_limit.count}</strong>
+              </span>
+            </div>
+          </section>
 
-      <details className="more-box">
-        <summary>웹훅</summary>
-        <div className="space-y-2 mt-2">
-        <div className="flex gap-2">
-          <input
-            id="room-hook-url"
-            className="field mono text-[12px]"
-            value={hookUrl}
-            onChange={(e) => setHookUrl(e.target.value)}
-            placeholder="https://example.com/acr-hook"
-            spellCheck={false}
-            aria-label="웹훅 URL"
-          />
-          <button type="button" className="btn btn-sm" onClick={() => void addHook()} disabled={hookBusy}>
-            {hookBusy ? "등록 중…" : "등록"}
-          </button>
-        </div>
-        {freshHook ? (
-          <div className="fresh-invite">
-            <p className="text-[12px] font-bold text-muted">서명 시크릿 · 지금만 표시</p>
-            <p className="mono break-all select-all">{freshHook.secret}</p>
-            <button
-              type="button"
-              className="btn btn-sm mt-1"
-              onClick={async () => {
-                const ok = await copyText(freshHook.secret);
-                notify(ok ? "시크릿을 복사했습니다." : "복사하지 못했습니다. 값을 직접 선택해 복사하세요.");
-              }}
-            >
-              <Icon name="copy" size={13} /> 복사
+          <section className="space-y-2">
+            <div>
+              <label className="label" htmlFor="room-policy">
+                개인 맥락 정책
+              </label>
+              <textarea
+                id="room-policy"
+                className="field"
+                rows={3}
+                maxLength={1000}
+                value={policy}
+                onChange={(e) => setPolicy(e.target.value)}
+                placeholder="예: 개인 일정·업무 맥락은 이 방 안에서만 공유합니다."
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="room-categories">
+                허용 카테고리 (쉼표)
+              </label>
+              <input
+                id="room-categories"
+                className="field mono"
+                value={categories}
+                onChange={(e) => setCategories(e.target.value)}
+                placeholder="schedule, work, docs"
+              />
+              <p className="mt-1 text-[11px] leading-relaxed text-faint">소문자·밑줄 2~30자. 'none'은 항상 포함됩니다.</p>
+            </div>
+            <div>
+              <label className="label" htmlFor="room-retention">
+                보존 기간 (일, 비우면 제한 없음)
+              </label>
+              <input
+                id="room-retention"
+                className="field mono"
+                inputMode="numeric"
+                value={retention}
+                onChange={(e) => setRetention(e.target.value)}
+                placeholder="예: 30"
+              />
+            </div>
+            <button type="button" className="btn w-full" onClick={() => void saveAdvanced()} disabled={busy}>
+              {busy ? "저장 중…" : "고급 설정 저장"}
             </button>
-          </div>
-        ) : null}
-        {hooks === null ? (
-          <p className="panel-note">불러오는 중…</p>
-        ) : hooks.filter((h) => h.active).length === 0 ? (
-          <p className="panel-note">등록된 웹훅이 없습니다.</p>
-        ) : (
-          <ul className="invite-list">
-            {hooks
-              .filter((h) => h.active)
-              .map((h) => (
-                <li key={h.id} className="invite-row">
-                  <div className="min-w-0 flex-1">
-                    <p className="mono break-all text-[11px]">{h.url}</p>
-                    <p className="text-[11px] text-faint">{h.last_kind ? `${h.last_kind} · ${h.last_status ?? "대기"}` : "아직 전달 기록 없음"}</p>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={async () => {
-                      try {
-                        const r = await roomApi.testWebhook(room.id, h.id);
-                        notify(`시험 전달: ${r.delivery.status}${r.delivery.http_status ? ` (HTTP ${r.delivery.http_status})` : ""}`);
-                        await loadHooks();
-                      } catch (e) {
-                        notify(e instanceof Error ? e.message : "시험 전달을 보내지 못했습니다.");
-                      }
-                    }}
-                  >
-                    시험
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-danger"
-                    onClick={async () => {
-                      try {
-                        await roomApi.revokeWebhook(room.id, h.id);
-                        await loadHooks();
-                        notify("웹훅을 폐기했습니다.");
-                      } catch (e) {
-                        notify(e instanceof Error ? e.message : "폐기하지 못했습니다.");
-                      }
-                    }}
-                  >
-                    폐기
-                  </button>
-                </li>
-              ))}
-          </ul>
-        )}
+          </section>
+
+          <section className="space-y-2">
+            <p className="label">웹훅</p>
+            <p className="panel-note">
+              비서를 받는 사람으로 지정한 글(@지목)을 외부 서비스로 알립니다. 등록하면 서명 시크릿을 한 번 보여 줍니다(수신측 검증용).
+            </p>
+            <div className="flex gap-2">
+              <input
+                id="room-hook-url"
+                className="field mono text-[12px]"
+                value={hookUrl}
+                onChange={(e) => setHookUrl(e.target.value)}
+                placeholder="https://example.com/acr-hook"
+                spellCheck={false}
+                aria-label="웹훅 URL"
+              />
+              <button type="button" className="btn btn-sm" onClick={() => void addHook()} disabled={hookBusy}>
+                {hookBusy ? "등록 중…" : "등록"}
+              </button>
+            </div>
+            {freshHook ? (
+              <div className="fresh-invite">
+                <p className="text-[12px] font-bold text-muted">서명 시크릿 · 지금만 표시</p>
+                <p className="mono break-all select-all">{freshHook.secret}</p>
+                <button
+                  type="button"
+                  className="btn btn-sm mt-1"
+                  onClick={async () => {
+                    const ok = await copyText(freshHook.secret);
+                    notify(ok ? "시크릿을 복사했습니다." : "복사하지 못했습니다. 값을 직접 선택해 복사하세요.");
+                  }}
+                >
+                  <Icon name="copy" size={13} /> 복사
+                </button>
+              </div>
+            ) : null}
+            {hooks === null ? (
+              <p className="panel-note">불러오는 중…</p>
+            ) : hooks.filter((h) => h.active).length === 0 ? (
+              <p className="panel-note">등록된 웹훅이 없습니다.</p>
+            ) : (
+              <ul className="invite-list">
+                {hooks
+                  .filter((h) => h.active)
+                  .map((h) => (
+                    <li key={h.id} className="invite-row">
+                      <div className="min-w-0 flex-1">
+                        <p className="mono break-all text-[11px]">{h.url}</p>
+                        <p className="text-[11px] text-faint">{webhookStatus(h)}</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={async () => {
+                          try {
+                            const r = await roomApi.testWebhook(room.id, h.id);
+                            notify(`시험 전달: ${r.delivery.status}${r.delivery.http_status ? ` (HTTP ${r.delivery.http_status})` : ""}`);
+                            await loadHooks();
+                          } catch (e) {
+                            notify(e instanceof Error ? e.message : "시험 전달을 보내지 못했습니다.");
+                          }
+                        }}
+                      >
+                        시험
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-danger"
+                        onClick={async () => {
+                          try {
+                            await roomApi.revokeWebhook(room.id, h.id);
+                            await loadHooks();
+                            notify("웹훅을 폐기했습니다.");
+                          } catch (e) {
+                            notify(e instanceof Error ? e.message : "폐기하지 못했습니다.");
+                          }
+                        }}
+                      >
+                        폐기
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            )}
+          </section>
+
+          <dl className="kv">
+            <div>
+              <dt>방 ID</dt>
+              <dd className="mono select-all">{room.id}</dd>
+            </div>
+            <div>
+              <dt>만든 시각</dt>
+              <dd>{fmtFull(room.created_at)}</dd>
+            </div>
+          </dl>
         </div>
       </details>
 

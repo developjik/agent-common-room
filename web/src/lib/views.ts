@@ -112,8 +112,7 @@ export function unreadRoomCount(rooms: RoomCard[]): number {
 /**
  * 관제실 상태 한 줄. 0 은 쓰지 않고, 할 일이 없으면 빈 문자열이다(정상은 침묵).
  * need 는 인박스와 같은 기준의 고유 방 수(서버 counts.needs_you_rooms).
- */
-export function roomSummaryLine(counts: { need: number; unread: number; paused: number }): string {
+ */export function roomSummaryLine(counts: { need: number; unread: number; paused: number }): string {
   return [
     counts.need ? `답변 필요 ${counts.need}곳` : "",
     counts.unread ? `안 읽은 방 ${counts.unread}` : "",
@@ -138,6 +137,20 @@ export function sortRoomCards(rooms: RoomCard[]): RoomCard[] {
     const bt = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
     return bt - at;
   });
+}
+
+/** 필터 칩 라벨: 값이 0이면 숫자를 쓰지 않는다(관제실 요약의 '0은 말하지 않는다'와 같은 규칙). */
+export function countLabel(label: string, count: number): string {
+  return count > 0 ? `${label} ${count}` : label;
+}
+
+/**
+ * 인박스 머리 한 줄. 답할 것이 있을 때만 그 사실을 말하고,
+ * 없으면 '답변 필요 없음' 대신 조용히 받은 글 수만 적는다(없으면 빈 문자열).
+ */
+export function inboxSummaryLine(needRooms: number, items: number): string {
+  if (needRooms) return `답변 필요 ${needRooms}곳${items ? ` · ${items}건` : ""}`;
+  return items ? `받은 글 ${items}건` : "";
 }
 
 /** 확인이 필요한 방 수(타일에서 바로 쓰는 값). */

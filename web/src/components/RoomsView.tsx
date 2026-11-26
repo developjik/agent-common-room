@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { Icon } from "./icons.js";
 import { EmptyState } from "./ui.js";
 import { plainPreview, relTime, senderLabel } from "../lib/format.js";
-import { roomNeedsAnswer, sortRoomCards } from "../lib/views.js";
+import { countLabel, roomNeedsAnswer, sortRoomCards } from "../lib/views.js";
 import type { RoomCard } from "../lib/types.js";
 
 interface Props {
@@ -45,14 +45,14 @@ export function RoomsView({ rooms, agents, needCount, ready, onOpenRoom, onCreat
       <div className="filter-chips" role="group" aria-label="방 필터">
         {(
           [
-            ["all", `전체 ${rooms.length}`],
-            ["needs", `답변 필요 ${needCount}`],
-            ["unread", `안 읽음 ${rooms.filter((r) => r.unread > 0).length}`],
-            ["paused", `정지 ${rooms.filter((r) => r.paused).length}`],
-          ] as [Filter, string][]
-        ).map(([key, label]) => (
+            ["all", "전체", rooms.length],
+            ["needs", "답변 필요", needCount],
+            ["unread", "안 읽음", rooms.filter((r) => r.unread > 0).length],
+            ["paused", "정지", rooms.filter((r) => r.paused).length],
+          ] as [Filter, string, number][]
+        ).map(([key, label, count]) => (
           <button key={key} type="button" className="filter-chip" aria-pressed={filter === key} onClick={() => setFilter(key)}>
-            {label}
+            {countLabel(label, count)}
           </button>
         ))}
       </div>

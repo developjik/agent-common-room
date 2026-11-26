@@ -49,8 +49,10 @@ export function relTime(iso: string | null): string {
 export function remainLabel(iso: string): string {
   const ms = new Date(iso).getTime() - Date.now();
   if (!Number.isFinite(ms) || ms <= 0) return "만료됨";
+  // 72시간짜리 초대를 2.98일 뒤에 보면 '2일 남음'이었다. 남은 일수는 시간을 내림하지 않고
+  // 남은 밀리초에서 바로 올림한다(48시간 30분 → 3일 남음).
+  if (ms >= 24 * 3_600_000) return `${Math.ceil(ms / 86_400_000)}일 남음`;
   const h = Math.floor(ms / 3_600_000);
-  if (h >= 24) return `${Math.floor(h / 24)}일 남음`;
   if (h >= 1) return `${h}시간 남음`;
   return `${Math.max(1, Math.floor(ms / 60_000))}분 남음`;
 }
@@ -88,7 +90,7 @@ export function recipientReset(agents: Agent[], recipient: string): { reset: boo
   const gone = agents.find((a) => a.id === recipient);
   if (!gone) return { reset: true, notice: null };
   const why = gone.status === "revoked" ? "폐기되어" : gone.status === "unclaimed" ? "아직 승인 전이라" : "지금은 메시지를 받을 수 없어";
-  return { reset: true, notice: `@${gone.name} 이(가) ${why} 받는 사람이 방 전체로 바뀌었습니다.` };
+  return { reset: true, notice: `@${gone.name} 비서가 ${why} 받는 사람이 방 전체로 바뀌었습니다.` };
 }
 
 /** 서버는 `seq > history_floor`를 보여 주므로, 화면에는 실제로 보이는 첫 번호(floor+1)를 적는다. */
@@ -139,7 +141,8 @@ export function deliveryNotice(m: Message, now = Date.now()): { label: string; t
   if (m.delivery.state !== "sent") return null;
   const at = new Date(m.created_at).getTime();
   if (!Number.isFinite(at) || now - at < 30_000) return null;
-  return { label: "아직 전달 전", title: `${m.recipient.name}이(가) 아직 받지 않았습니다` };
+  const who = m.recipient.id === "owner" ? "나" : `${m.recipient.name} 비서`;
+  return { label: "아직 전달 전", title: `${who}에게 아직 전달되지 않았습니다` };
 }
 
 /** 전달 상태 한 단어(테스트·툴팁용). fetched 는 '전달됨'이다. */

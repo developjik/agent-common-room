@@ -108,6 +108,9 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
   const viewRef = useRef<View>(view);
   const gen = useRef(0);
   const messagesRef = useRef<Message[]>([]);
+  // 이 세션에서 지운 방. 화면 경로가 아직 그 방을 가리키는 짧은 사이에 다시 읽어
+  // 404(방을 찾을 수 없습니다)를 만들지 않는다.
+  const removedRooms = useRef<Set<string>>(new Set());
   const loopRef = useRef<() => void>(() => {});
   const timerRef = useRef<number | undefined>(undefined);
 
@@ -176,10 +179,11 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
       let self: Promise<number>;
       const run = async (): Promise<number> => {
         try {
-          const [ov, detail] = await Promise.all([wsApi.overview(wid), rid ? roomApi.get(rid) : Promise.resolve(null)]);
+          const gone = rid ? removedRooms.current.has(rid) : false;
+          const [ov, detail] = await Promise.all([wsApi.overview(wid), rid && !gone ? roomApi.get(rid) : Promise.resolve(null)]);
           if (!alive.current || generation !== gen.current) return 0;
           setOverview(ov);
-          if (rid) setRoom(detail);
+          if (rid && detail) setRoom(detail);
           setError(null);
 
           const wantDesk = opts.desk || currentView === "desk";
@@ -198,7 +202,7 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
 
           tick.current += 1;
           let added = 0;
-          if (rid) {
+          if (rid && !gone) {
             // 30번째 폴링·방 진입은 전체를 다시 읽어 오래된 메시지의 전달 상태와 삭제도 맞춘다.
             added = await pullMessages(rid, !!opts.full || tick.current % 30 === 0, generation);
           }
@@ -406,6 +410,16 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
   const deleteRoom = useCallback(
     async (rid: string) => {
       await roomApi.remove(rid);
+      removedRooms.current.add(rid);
+      // 삭제한 방은 다시 조회하지 않는다. 예전에는 삭제 직후 폴링이 그 방을 한 번 더 읽어
+      // 404와 '방을 찾을 수 없습니다.' 오류 토스트가 성공 안내와 함께 떴다.
+      if (rid === roomRef.current) {
+        gen.current += 1; // 진행 중이던 이 방 응답은 버린다.
+        roomRef.current = null;
+        lastSeq.current = 0;
+        setRoom(null);
+        setMessages([]);
+      }
       await refresh({ full: true });
     },
     [refresh],

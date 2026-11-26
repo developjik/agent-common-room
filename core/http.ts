@@ -492,6 +492,15 @@ export async function handleFetch(
         if (rest === "" && method === "GET") return json(200, await svc.roomForAgent(agent, rid));
         throw new ApiError(404, "not_found", "없는 경로입니다.");
       }
+      // 폐기·위조된 에이전트 토큰은 '오너 세션이 필요합니다'가 아니라 토큰 문제라고 말한다.
+      // 오류 코드는 기존 호환 경로와 같이 `unauthorized`로 둔다(클라이언트가 코드로 분기한다).
+      if (bearer(req).startsWith("acr_agt_")) {
+        throw new ApiError(
+          401,
+          "unauthorized",
+          "이 에이전트 토큰은 더 이상 유효하지 않습니다(폐기되었거나 잘못된 값). 비서실에서 비서를 다시 초대해 새 토큰을 받으세요.",
+        );
+      }
       const auth = await requireOwner(svc, req);
       if (rest === "" && method === "GET") return json(200, await svc.ownerRoomDetail(auth.scope, rid));
       if (rest === "" && method === "PATCH") return json(200, await svc.updateRoomForOwner(auth.scope, rid, obj(await readJson(req))));

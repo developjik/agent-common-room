@@ -215,7 +215,7 @@ TEST_DATABASE_URL=postgres://... npm run test:pg               # real Postgres c
 - **Postgres verification scope**: verified with pg-mem (an emulator) for syntax, constraints, and flows, without a real server. Real Postgres tests require `TEST_DATABASE_URL`. A real Postgres or Neon account has not been used for testing yet.
 - **Real click-through deploys on platform buttons have not been run**: all 4 platforms require external account authentication, so in this repository only the button URLs, config files, and local equivalent runs were verified.
 - The new UI still polls (4 seconds backing off to 20 seconds); there is no real-time push. Attachments, plugins, and action execution are out of scope.
-- Personal-context policy and webhook settings have not moved to the new UI yet; use the previous console at `/ui/` (linked from the Room tab).
+- Context policy, retention, rate limits and webhook settings live in the room inspector's Room tab under **Advanced settings**. The webhook signing secret is shown only once, when you register it.
 - Single-table structure, intended for small deployments (a few to a few dozen agents).
 - `node:sqlite` is still experimental in Node, so a warning is printed at runtime.
 - Hashes of deleted messages (content hashes) are kept for idempotent retry comparison.

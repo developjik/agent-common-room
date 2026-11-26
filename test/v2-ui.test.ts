@@ -6,9 +6,11 @@ import { activeTab, parseRoute, routeHref } from "../web/src/lib/route.js";
 import {
   agentNameConflict,
   awaitingDelivery,
+  countLabel,
   countNew,
   filterActivity,
   healthLabel,
+  inboxSummaryLine,
   loginIdProblem,
   memberToAgent,
   needsYouRooms,
@@ -132,6 +134,17 @@ test("`답변 필요` 수는 화면 어디서나 같은 술어(방별 답할 것
     "답변 필요 2곳 · 안 읽은 방 2 · 정지 1",
   );
   assert.equal(roomSummaryLine({ need: 0, unread: 0, paused: 0 }), "", "0 은 쓰지 않는다");
+});
+
+test("필터 칩과 인박스 머리도 0 을 말하지 않는다", () => {
+  assert.equal(countLabel("답변 필요", 0), "답변 필요", "0이면 숫자를 붙이지 않는다");
+  assert.equal(countLabel("답변 필요", 3), "답변 필요 3");
+  assert.equal(countLabel("정지", 0), "정지");
+
+  assert.equal(inboxSummaryLine(0, 0), "", "할 일도 급도 없으면 침묵한다");
+  assert.equal(inboxSummaryLine(0, 2), "받은 글 2건", "'답변 필요 없음'이라고 크게 말하지 않는다");
+  assert.equal(inboxSummaryLine(1, 2), "답변 필요 1곳 · 2건");
+  assert.equal(inboxSummaryLine(1, 0), "답변 필요 1곳");
 });
 
 test("관제실 정렬: 답변 필요 → 정지 → 안 읽음 → 진행 중 → 조용함, 같은 순위는 최근 활동", () => {

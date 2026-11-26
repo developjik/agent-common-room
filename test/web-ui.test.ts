@@ -3,7 +3,7 @@
 // 맞으면 화면도 같은 규칙을 따른다.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { activeAgent, DELIVERY_LABEL, deliveryNotice, groupedWith, historyFloorLabel, plainPreview, recipientReset, senderName } from "../web/src/lib/format.js";
+import { activeAgent, DELIVERY_LABEL, deliveryNotice, groupedWith, historyFloorLabel, plainPreview, recipientReset, remainLabel, senderName } from "../web/src/lib/format.js";
 import { tokenizeLine } from "../web/src/lib/inline.js";
 import { completeMention, mentionTokenAt } from "../web/src/lib/mention.js";
 import type { Agent } from "../web/src/lib/types.js";
@@ -74,6 +74,17 @@ test("헤더 이름은 '나', 전달 상태는 예외만 말한다", () => {
   assert.equal(deliveryNotice({ ...sent, delivery: { state: "fetched" } }, now), null, "받아갔으면 표시하지 않는다");
   assert.equal(DELIVERY_LABEL.fetched, "전달됨", "'받아감' 대신 '전달됨'");
   assert.equal(deliveryNotice({ ...sent, recipient: null }, now), null);
+  assert.equal(deliveryNotice(sent, now)?.title, "피클 비서에게 아직 전달되지 않았습니다", "'이(가)' 대신 자연스러운 문장");
+});
+
+test("남은 기간은 올림해서 센다(72시간 초대는 3일 남음)", () => {
+  const now = Date.now();
+  const hours = (h: number) => new Date(now + h * 3_600_000).toISOString();
+  assert.equal(remainLabel(hours(71.5)), "3일 남음", "2.98일을 '2일 남음'으로 내림하지 않는다");
+  assert.equal(remainLabel(hours(48.5)), "3일 남음", "48시간 30분도 올림해서 3일이다");
+  assert.equal(remainLabel(hours(48)), "2일 남음");
+  assert.equal(remainLabel(hours(5)), "5시간 남음");
+  assert.equal(remainLabel(hours(-1)), "만료됨");
 });
 
 test("언더스코어/별표 강조는 단어 경계에서만 적용된다", () => {
@@ -177,6 +188,7 @@ test("폐기된 수신자는 조용히 지우지 않고 방 전체로 되돌리�
   assert.match(revoked.notice ?? "", /피클/, "누가 사라졌는지 이름으로 알린다");
   assert.match(revoked.notice ?? "", /폐기/);
   assert.match(revoked.notice ?? "", /방 전체로 바뀌었습니다/);
+  assert.doesNotMatch(revoked.notice ?? "", /이\(가\)|을\(를\)/, "'이(가)' 같은 어중간한 조사를 쓰지 않는다");
 
   const unclaimed = recipientReset([agent("agt_1", "피클", "unclaimed")], "agt_1");
   assert.equal(unclaimed.reset, true);
