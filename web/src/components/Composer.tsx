@@ -136,8 +136,14 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
     const caret = el?.selectionStart ?? text.length;
     const done = completeMention(text, caret, a.name);
     if (done.replaced) {
-      pendingCaret.current = done.caret;
-      setText(done.text);
+      if (done.text === text) {
+        // 뒤 공백을 그대로 쓴 경우처럼 본문이 그대로면, 재렌더가 없으니 커서를 바로 옮긴다.
+        el?.focus();
+        el?.setSelectionRange(done.caret, done.caret);
+      } else {
+        pendingCaret.current = done.caret;
+        setText(done.text);
+      }
     }
     onRecipient(a.id);
     setMention(null);
