@@ -40,8 +40,7 @@ test("멘션 후보는 click으로도 고를 수 있고 전송 버튼은 이름�
 
 test("다른 곳에서 지목해 포커스를 받으면 열린 자동완성을 닫는다", () => {
   assert.match(composer, /if \(focusNonce\) \{[\s\S]{0,200}?setMention\(null\)/, "낡은 후보가 새 수신자를 덮어쓰지 않는다");
-  assert.match(composer, /proseAfterMark\.current = text\.slice\(end\)/, "버튼 뒤 본문을 기억한다");
-  assert.match(composer, /rightBoundary: boundary/, "그 자리를 넘어 본문을 지우지 않는다");
+  assert.match(composer, /completeMention\(text, caret, a\.name\)/, "완성은 본문·커서만 넘긴다");
 });
 
 test("플레이스홀더와 @ 호출·수신자 칩이 있다", () => {

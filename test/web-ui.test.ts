@@ -240,11 +240,14 @@ test("@ 자동완성은 본문의 검색어를 고른 이름으로 바꾼다", (
   const inside = completeMention("@피클", 2, "피클");
   assert.deepEqual(inside, { text: "@피클 ", caret: 4, replaced: true });
 
-  // `@` 버튼을 이미 쓰던 본문 앞에 눌렀을 때: 컴포저가 본문이 시작한 자리를 경계로 넘긴다.
-  const button = completeMention("회의는 @금요일입니다", 5, "피클", { rightBoundary: 5 });
-  assert.deepEqual(button, { text: "회의는 @피클 금요일입니다", caret: 8, replaced: true });
-  const prose = completeMention("@피클을 냉장고에 넣어 주세요", 1, "피클", { rightBoundary: 1 });
-  assert.deepEqual(prose, { text: "@피클 피클을 냉장고에 넣어 주세요", caret: 4, replaced: true });
+  // 이미 쓰던 본문은 지우지 않는다: 뒤 단어 전체가 고른 이름의 앞부분이 아니면 커서 앞만 바꾼다.
+  const prose1 = completeMention("회의는 @금요일입니다", 5, "피클");
+  assert.deepEqual(prose1, { text: "회의는 @피클 금요일입니다", caret: 8, replaced: true });
+  const prose2 = completeMention("@피클을 냉장고에 넣어 주세요", 1, "피클");
+  assert.deepEqual(prose2, { text: "@피클 피클을 냉장고에 넣어 주세요", caret: 4, replaced: true });
+  // 키보드로 쳐도 같다: `@인` 뒤의 본문(금요일입니다)은 남는다.
+  const prose3 = completeMention("회의는 @인금요일입니다", 6, "인스팅트");
+  assert.deepEqual(prose3, { text: "회의는 @인스팅트 금요일입니다", caret: 10, replaced: true });
 });
 
 test("mentionTokenAt은 커서 바로 앞의 지목 구간만 찾는다", () => {
