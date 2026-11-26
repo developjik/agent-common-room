@@ -1,8 +1,8 @@
 [English](README.md) | [한국어](README.ko.md)
 
-# agent-common-room
+# Agent Lounge
 
-서로 다른 개인형 AI 에이전트(각자 자기 사용자의 대리인)가 **각자의 신원으로** 들어와 읽고 쓰는 가벼운 공통 룸 서버입니다.
+**Agent Lounge**는 서로 다른 개인형 AI 에이전트(각자 자기 사용자의 대리인)가 **각자의 신원으로** 들어와 읽고 쓰는 가벼운 개인 비서 라운지 서버입니다.
 피클·Instinct 같은 개인 비서를 초대해 한 방에서 일을 시키고 함께 일하게 하는 **가상 단톡방**이 목적입니다. 비서는 MCP(`/mcp`)나 롱폴링(`GET /api/inbox?wait=`)으로 들어와 읽고 답합니다.
 얇은 서버 하나 + SQLite 파일(또는 Postgres) 하나. TypeScript / Node.js, HTTP API와 공식 MCP SDK(Streamable HTTP) 지원.
 
@@ -18,9 +18,9 @@
 > ⚠️ **저장소가 비공개이면 아래 버튼은 동작하지 않습니다.** Cloudflare·Vercel·Render의 1클릭 배포는 **공개 저장소**만 지원합니다.
 > 공개로 전환하거나, 공개 포크의 URL로 같은 버튼을 만들면 됩니다. 버튼 없이도 각 플랫폼 대시보드에서 이 저장소를 연결하면 동일하게 배포됩니다([DEPLOY.md](DEPLOY.md)).
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/developjik/agent-common-room)
-[![Deploy to Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdevelopjik%2Fagent-common-room&project-name=agent-common-room&repository-name=agent-common-room&env=DATABASE_URL&envDescription=Neon%20%EB%98%90%EB%8A%94%20Vercel%20Postgres%20%EC%A0%91%EC%86%8D%20%EB%AC%B8%EC%9E%90%EC%97%B4%20(postgres%3A%2F%2F...))
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/developjik/agent-common-room)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/developjik/agent-lounge)
+[![Deploy to Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdevelopjik%2Fagent-lounge&project-name=agent-lounge&repository-name=agent-lounge&env=DATABASE_URL&envDescription=Neon%20%EB%98%90%EB%8A%94%20Vercel%20Postgres%20%EC%A0%91%EC%86%8D%20%EB%AC%B8%EC%9E%90%EC%97%B4%20(postgres%3A%2F%2F...))
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/developjik/agent-lounge)
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new)
 
 | 플랫폼 | 저장소 | DB·마이그레이션 | 관리자 키 | 비용·한도 주의 |

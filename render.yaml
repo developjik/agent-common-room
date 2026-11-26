@@ -2,14 +2,14 @@
 # 무료 플랜 주의: Free Postgres는 생성 30일 뒤 만료되고, Free 웹 서비스는 15분 유휴 시 잠들어 첫 요청이 ~1분 걸린다.
 # 오래 쓰려면 Postgres를 유료 플랜으로 두거나(디스크를 붙여 SQLite로도 가능) 다른 플랫폼을 쓰세요.
 databases:
-  - name: agent-common-room-db
+  - name: agent-lounge-db
     databaseName: acr
     user: acr
     plan: free
 
 services:
   - type: web
-    name: agent-common-room
+    name: agent-lounge
     runtime: node
     plan: free
     buildCommand: npm ci && npm run build
@@ -21,7 +21,7 @@ services:
         generateValue: true
       - key: DATABASE_URL
         fromDatabase:
-          name: agent-common-room-db
+          name: agent-lounge-db
           property: connectionString
       # 이 배포는 키를 자동 생성하므로 웹 최초 발급은 닫는다.
       - key: ACR_BOOTSTRAP

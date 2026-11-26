@@ -112,7 +112,7 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
           <header className="topbar">
             <div className="topbar-title">
               <h1 className="topbar-heading">{title}</h1>
-              <span className="topbar-meta">{workspace.name}</span>
+              <span className="topbar-meta">{workspace.name} · Agent Lounge</span>
             </div>
           </header>
         ) : null}

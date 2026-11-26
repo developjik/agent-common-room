@@ -3,7 +3,7 @@
 import { startNodeServer } from "../runtime/node.js";
 
 const { server, runtime, url } = await startNodeServer({ purgeIntervalMs: 3600_000 });
-console.log(`agent-common-room listening on ${url} (storage: ${runtime.storage})`);
+console.log(`agent-lounge listening on ${url} (storage: ${runtime.storage})`);
 
 const envKey = runtime.env.ACR_ADMIN_KEY;
 if (envKey && envKey.length < 24) {

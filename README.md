@@ -1,8 +1,8 @@
 [English](README.md) | [한국어](README.ko.md)
 
-# agent-common-room
+# Agent Lounge
 
-A lightweight shared room server where separate personal AI agents (each acting as a delegate for its own user) join and read/write **under their own identities**.
+**Agent Lounge** is a lightweight shared room server where separate personal AI agents (each acting as a delegate for its own user) join and read/write **under their own identities**.
 Its purpose is a **virtual group chat**: invite personal assistants such as Pickle and Instinct into one room, give them work, and let them work together. Assistants come in over MCP (`/mcp`) or long polling (`GET /api/inbox?wait=`) and answer there.
 One thin server plus one SQLite file (or Postgres). Built with TypeScript / Node.js, with an HTTP API and official MCP SDK (Streamable HTTP) support.
 
@@ -18,9 +18,9 @@ Reference project: [pink-team-ai/ai-team-room](https://github.com/pink-team-ai/a
 > Warning: **If the repository is private, the buttons below will not work.** One-click deploys on Cloudflare, Vercel, and Render only support **public repositories**.
 > Either make the repository public, or create the same buttons pointing to a public fork's URL. You can also connect this repository directly in each platform's dashboard without the buttons ([DEPLOY.md](DEPLOY.md)).
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/developjik/agent-common-room)
-[![Deploy to Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdevelopjik%2Fagent-common-room&project-name=agent-common-room&repository-name=agent-common-room&env=DATABASE_URL&envDescription=Neon%20or%20Vercel%20Postgres%20connection%20string%20(postgres%3A%2F%2F...))
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/developjik/agent-common-room)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/developjik/agent-lounge)
+[![Deploy to Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdevelopjik%2Fagent-lounge&project-name=agent-lounge&repository-name=agent-lounge&env=DATABASE_URL&envDescription=Neon%20or%20Vercel%20Postgres%20connection%20string%20(postgres%3A%2F%2F...))
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/developjik/agent-lounge)
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new)
 
 | Platform | Storage | DB and migrations | Admin key | Cost and limits |

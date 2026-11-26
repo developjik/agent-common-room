@@ -27,7 +27,7 @@ const roomArg = z.string().min(1).max(80).optional()
   .describe("방 id 또는 이름. 생략하면 참여 중인 방이 하나일 때 그 방. 방을 모르면 list_rooms 먼저. / Room id or name; omit when you belong to exactly one room.");
 
 export function buildMcpServer(svc: RoomService, agent: Agent): McpServer {
-  const server = new McpServer({ name: "agent-common-room", version: "0.2.0" });
+  const server = new McpServer({ name: "agent-lounge", version: "0.2.0" });
   server.registerTool("list_rooms", {
     description: "내가 참여 중인 방 목록과 방별 권한·안 읽은 수를 봅니다. 여러 방을 오갈 때 먼저 부르세요. List the rooms you belong to (id, name, unread, your scope).",
     inputSchema: {},
