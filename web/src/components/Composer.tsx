@@ -1,12 +1,13 @@
-// 슬랙형 컴포저: @멘션 자동완성(키보드 선택), 답장 대상 칩, Enter 전송 / Shift+Enter 줄바꿈,
-// IME(한글) 조합 중 Enter는 전송하지 않는다. 보내는 동안은 중복 전송을 막는다.
-// 기본 화면은 입력 + 받는 사람 + 전송만 둔다. 메시지 종류는 `＋` 옵션을 열어야 고르고,
-// 보내면 항상 기본(일반)으로 돌아간다(종류가 남아 다음 글이 잘못 라벨링되던 문제).
+// 초단순 모던 컴포저.
+// - 입력한 만큼 1줄에서 최대 6줄(160px)까지 자라고, 그 위로는 내부 스크롤. 전송하면 1줄로 돌아온다.
+// - 받는 사람은 네이티브 select 대신 `@` 버튼(커서 자리에 @ 삽입 + 자동완성)과
+//   선택된 비서 칩(`@이름 ×`)으로만 다룬다. 메시지 종류는 고르지 않고 항상 message로 보낸다.
+// - Enter 전송 / Shift+Enter 줄바꿈, IME(한글) 조합 중 Enter는 보내지 않는다. 보내는 동안 중복 전송을 막는다.
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Avatar } from "./Avatar.js";
 import { Icon } from "./icons.js";
 import { completeMention, mentionTokenAt } from "../lib/mention.js";
-import { activeAgent, KIND_LABEL, plainPreview, senderName } from "../lib/format.js";
+import { activeAgent, plainPreview, senderName } from "../lib/format.js";
 import type { Agent, Message } from "../lib/types.js";
 
 export interface SendInput {
@@ -32,25 +33,26 @@ interface Props {
   autoFocus?: boolean;
 }
 
-/** 기본 화면에서 쓰는 종류 이름. `메시지`는 이 화면에서 '일반'으로 부른다. */
-const KIND_CHOICES: { value: string; label: string }[] = [
-  { value: "message", label: "일반" },
-  { value: "question", label: "질문" },
-  { value: "answer", label: "답변" },
-  { value: "status", label: "상태" },
-];
-const kindLabel = (kind: string) => KIND_CHOICES.find((k) => k.value === kind)?.label ?? KIND_LABEL[kind] ?? kind;
+/** 한 줄 높이부터 이 높이까지만 자란다(약 6줄). 넘으면 textarea 안에서 스크롤한다. */
+export const MAX_TEXTAREA_HEIGHT = 160;
+/** 이 컴포저가 보내는 유일한 메시지 종류. 종류 선택 UI는 없앴다. */
+const SEND_KIND = "message";
+
+/** 내용 높이에 맞춰 textarea 높이를 다시 잡는다(1줄 → 최대 160px, 그 위는 스크롤). */
+function autoSize(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = "auto";
+  const full = el.scrollHeight;
+  el.style.height = `${Math.min(full, MAX_TEXTAREA_HEIGHT)}px`;
+  el.style.overflowY = full > MAX_TEXTAREA_HEIGHT ? "auto" : "hidden";
+}
 
 export function Composer({ agents, recipient, onRecipient, replyTo, onCancelReply, onSend, seed, focusNonce, allowRecipientMention = true, placeholder, compact, autoFocus }: Props) {
   const [text, setText] = useState("");
-  const [kind, setKind] = useState("message");
-  const [kindOpen, setKindOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [mention, setMention] = useState<{ query: string; index: number } | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
-  // 보조 옵션(종류) 칩 묶음. 키보드로 열었을 때는 칩으로 바로 들어갈 수 있게 포커스를 옮긴다.
-  const extrasRef = useRef<HTMLDivElement | null>(null);
-  // 본문 끝에 이름을 넣은 뒤 커서를 이름 뒤로 옮긴다(React 재렌더 후에 적용).
+  // 본문에 이름을 넣은 뒤 커서를 그 뒤로 옮긴다(React 재렌더 후에 적용).
   const pendingCaret = useRef<number | null>(null);
 
   useEffect(() => {
@@ -62,6 +64,18 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
     el.focus();
     el.setSelectionRange(at, at);
   }, [text]);
+
+  // 내용이 바뀔 때마다 높이를 다시 잰다. 전송으로 비면 1줄로 돌아온다.
+  useEffect(() => {
+    autoSize(taRef.current);
+  }, [text]);
+
+  // 화면 폭이 바뀌면(회전·창 크기) 줄바꿈 위치가 달라져 높이도 달라진다.
+  useEffect(() => {
+    const onResize = () => autoSize(taRef.current);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     if (seed) {
@@ -117,17 +131,27 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
     taRef.current?.focus();
   }
 
+  /** `@` 버튼: 커서 자리에 `@`를 넣고 자동완성 목록을 연다(앞에 글자가 붙어 있으면 한 칸 띄운다). */
+  function insertMentionMark() {
+    const el = taRef.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? start;
+    const lead = start > 0 && !/\s/.test(text[start - 1]) ? " @" : "@";
+    const next = text.slice(0, start) + lead + text.slice(end);
+    pendingCaret.current = start + lead.length;
+    setText(next);
+    setMention(allowRecipientMention && live.length ? { query: "", index: 0 } : null);
+    el?.focus();
+  }
+
   async function submit() {
     const content = text.trim();
     if (!content || sending) return;
     setSending(true);
     try {
-      await onSend({ content, kind, recipient, reply_to: replyTo?.seq });
+      await onSend({ content, kind: SEND_KIND, recipient, reply_to: replyTo?.seq });
       setText("");
       setMention(null);
-      // 받는 사람과 마찬가지로 종류도 기본(일반)으로 돌린다. 남겨 두면 다음 글이 엉뚱한 라벨로 나간다.
-      setKind("message");
-      setKindOpen(false);
     } catch {
       // 호출부가 오류를 알린다. 입력 내용은 남겨 두어 다시 보낼 수 있게 한다.
     } finally {
@@ -167,16 +191,26 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
   }
 
   const recipientAgent = activeAgent(agents, recipient);
+  const canMention = allowRecipientMention && !compact;
+  const hint =
+    placeholder ??
+    (compact
+      ? "답글 입력"
+      : recipientAgent
+        ? `@${recipientAgent.name}에게만 보내기`
+        : canMention && live.length
+          ? "메시지 입력 (@로 비서 호출)"
+          : "메시지 입력");
+  const empty = !text.trim();
 
   return (
     <form
-      className={compact ? "composer px-3 pb-3 pt-1" : "composer border-t border-line pt-2"}
+      className={compact ? "composer composer-compact px-3 pb-3 pt-1" : "composer border-t border-line pt-2"}
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
       }}
     >
-      {/* 받는 사람(@비서에게만)은 방 헤더 아래 핀에서 보여 주고 해제한다 — 같은 말을 두 번 하지 않는다. */}
       {replyTo ? (
         <div className="composer-chip">
           <Icon name="reply" size={14} />
@@ -216,7 +250,7 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
           ref={taRef}
           rows={1}
           maxLength={4000}
-          placeholder={placeholder ?? "오너로 메시지 보내기"}
+          placeholder={hint}
           aria-label="메시지 내용"
           value={text}
           onChange={(e) => {
@@ -227,73 +261,51 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
           onBlur={() => window.setTimeout(() => setMention(null), 120)}
         />
 
-        {!compact && kindOpen ? (
-          <div className="composer-extras" id="composer-extras" ref={extrasRef} role="group" aria-label="보내는 종류">
-            {KIND_CHOICES.map((k) => (
-              <button
-                key={k.value}
-                type="button"
-                className="filter-chip"
-                aria-pressed={kind === k.value}
-                onClick={() => setKind(k.value)}
-              >
-                {k.label}
-              </button>
-            ))}
-            <span className="composer-extras-hint">보내는 글의 종류입니다. 기본은 일반.</span>
-          </div>
-        ) : null}
-
         {compact ? (
-          <div className="composer-toolbar justify-end">
-            <button type="submit" className="btn btn-primary btn-sm" disabled={!text.trim() || sending} aria-label="스레드에 보내기">
-              <Icon name="send" size={14} /> 보내기
+          <div className="composer-toolbar composer-toolbar-compact">
+            <span className="flex-1" />
+            <button type="submit" className="composer-send" disabled={empty || sending} aria-label="스레드에 보내기">
+              <Icon name="send" size={14} />
+              <span className="composer-send-text">보내기</span>
             </button>
           </div>
         ) : (
           <div className="composer-toolbar">
-            <label className="sr-only" htmlFor="composer-recipient">
-              받는 사람
-            </label>
-            <select
-              id="composer-recipient"
-              className="field"
-              value={recipientAgent ? recipient : ""}
-              onChange={(e) => onRecipient(e.target.value)}
-            >
-              <option value="">방 전체</option>
-              {live.map((a) => (
-                <option key={a.id} value={a.id}>
-                  @{a.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="btn-icon composer-opt"
-              aria-expanded={kindOpen}
-              aria-controls="composer-extras"
-              aria-label="보내기 옵션 (메시지 종류)"
-              title="보내기 옵션 (메시지 종류)"
-              onClick={(e) => {
-                const opening = !kindOpen;
-                setKindOpen(opening);
-                // e.detail === 0 은 키보드(Enter/Space) 활성화다. 칩은 이 버튼보다 DOM 앞이라
-                // Tab으로는 지나쳐 버리므로, 열자마자 지금 종류로 포커스를 옮긴다.
-                if (opening && e.detail === 0) {
-                  window.setTimeout(() => extrasRef.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus(), 0);
-                }
-              }}
-            >
-              <Icon name="plus" size={15} />
-              {kind !== "message" ? <span className="composer-opt-text">{kindLabel(kind)}</span> : null}
-            </button>
+            {canMention && live.length ? (
+              <button
+                type="button"
+                className="composer-at"
+                aria-label="비서 호출 (@)"
+                title="비서 호출 (@)"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={insertMentionMark}
+              >
+                <Icon name="at" size={15} />
+              </button>
+            ) : null}
+
+            {recipientAgent ? (
+              <span className="composer-recipient">
+                <strong className="truncate">@{recipientAgent.name}</strong>
+                <button
+                  type="button"
+                  className="composer-recipient-x"
+                  onClick={() => onRecipient("")}
+                  aria-label="받는 사람 해제 (방 전체로)"
+                  title="방 전체로"
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              </span>
+            ) : null}
+
             <span className="composer-hint hidden sm:inline">
               <strong>Enter</strong> 전송 · <strong>Shift+Enter</strong> 줄바꿈
             </span>
             <span className="flex-1" />
-            <button type="submit" className="btn btn-primary btn-sm" disabled={!text.trim() || sending}>
-              <Icon name="send" size={14} /> 전송
+            <button type="submit" className="composer-send" disabled={empty || sending}>
+              <Icon name="send" size={14} />
+              <span className="composer-send-text">{sending ? "보내는 중" : "전송"}</span>
             </button>
           </div>
         )}

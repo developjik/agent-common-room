@@ -100,7 +100,6 @@ export function ThreadPanel({ chat, roomId, rootSeq, agents, onClose, onJump, on
           onRecipient={() => {}}
           allowRecipientMention={false}
           compact
-          placeholder="스레드에 답글 남기기 (방 전체에 공개)"
           onSend={async (input) => {
             try {
               // 스레드 답글은 방 전체 공개다. 중앙 입력창의 수신자를 몰래 물려받지 않는다.
