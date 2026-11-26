@@ -245,6 +245,9 @@ test("@ 자동완성은 본문의 검색어를 고른 이름으로 바꾼다", (
   assert.deepEqual(prose1, { text: "회의는 @피클 금요일입니다", caret: 8, replaced: true });
   const prose2 = completeMention("@피클을 냉장고에 넣어 주세요", 1, "피클");
   assert.deepEqual(prose2, { text: "@피클 피클을 냉장고에 넣어 주세요", caret: 4, replaced: true });
+  // 이름 뒤 마침표는 문장부호로 두고, 이름이 중복되지 않는다.
+  const dot = completeMention("@피클.", 2, "피클");
+  assert.deepEqual(dot, { text: "@피클 .", caret: 4, replaced: true });
   // 키보드로 쳐도 같다: `@인` 뒤의 본문(금요일입니다)은 남는다.
   const prose3 = completeMention("회의는 @인금요일입니다", 6, "인스팅트");
   assert.deepEqual(prose3, { text: "회의는 @인스팅트 금요일입니다", caret: 10, replaced: true });

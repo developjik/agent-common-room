@@ -34,6 +34,8 @@ export function completeMention(text: string, caret: number, name: string): { te
   let end = token.end;
   let wordEnd = end;
   while (wordEnd < text.length && word.test(text[wordEnd])) wordEnd += 1;
+  // 이름 뒤 문장부호(`@클.`)는 비교에서 뺀다 — 마침표 때문에 이름이 중복되지 않게.
+  while (wordEnd > end && text[wordEnd - 1] === ".") wordEnd -= 1;
   const typed = text.slice(token.start + 1, wordEnd).toLowerCase();
   if (typed.length > 0 && name.toLowerCase().startsWith(typed)) end = wordEnd;
   const inserted = `@${name} `;
