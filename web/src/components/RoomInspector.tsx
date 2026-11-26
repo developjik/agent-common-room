@@ -226,13 +226,15 @@ function RoomSettings({
   const [retention, setRetention] = useState(room.retention_days ? String(room.retention_days) : "");
   const [busy, setBusy] = useState(false);
 
+  // allowed_categories 는 폴링마다 새 배열이라 그대로 의존성에 두면 4초마다 입력이 서버 값으로 되돌아간다.
+  const catsKey = room.allowed_categories.join(",");
   useEffect(() => {
     setName(room.name);
     setDescription(room.description);
     setPolicy(room.context_policy);
-    setCategories(room.allowed_categories.join(", "));
+    setCategories(catsKey.replace(/,/g, ", "));
     setRetention(room.retention_days ? String(room.retention_days) : "");
-  }, [room.name, room.description, room.context_policy, room.allowed_categories, room.retention_days]);
+  }, [room.name, room.description, room.context_policy, catsKey, room.retention_days]);
 
   const since = Date.now() - room.rate_limit.window_seconds * 1000;
   const recent = store.messages.filter((m) => m.sender.type === "agent" && new Date(m.created_at).getTime() >= since).length;
