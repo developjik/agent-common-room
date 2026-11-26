@@ -210,6 +210,25 @@ test("삭제는 tombstone, 재시도 멱등 유지; 보존기간은 내용을 �
   }
 });
 
+test("웹훅을 걷어낸 뒤에도 옛 전달 기록의 원문 사본은 7일 뒤 지운다", async () => {
+  if (EXTERNAL) return; // DB 직접 조작이 필요한 검사
+  const r = await t.setupRoom();
+  const now = t.clock.now();
+  const raw = t.sqlite.raw;
+  raw.prepare("INSERT INTO webhooks(id, room_id, url, secret, active, created_at) VALUES ('whk_legacy',?,?,? ,1,?)")
+    .run(r.roomId, "https://example.com/hook", "whsec_legacy", now);
+  const ins = raw.prepare(
+    "INSERT INTO webhook_deliveries(id, webhook_id, room_id, kind, message_id, payload, status, attempts, next_attempt_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+  );
+  ins.run("whd_old", "whk_legacy", r.roomId, "message", null, '{"content":"옛 원문"}', "ok", 1, now, now - 8 * 86400_000);
+  ins.run("whd_recent", "whk_legacy", r.roomId, "message", null, '{"content":"최근 원문"}', "failed", 1, now, now - 6 * 86400_000);
+  ins.run("whd_pending", "whk_legacy", r.roomId, "message", null, '{"content":"대기 원문"}', "pending", 0, now, now - 30 * 86400_000);
+  await t.svc.purgeExpired();
+  const left = raw.prepare("SELECT id FROM webhook_deliveries ORDER BY id").all().map((x: any) => x.id);
+  // 7일 지난 완료·실패 기록만 지운다(최근 기록·미전송 대기는 남긴다).
+  assert.deepEqual(left, ["whd_pending", "whd_recent"]);
+});
+
 test("루프 상한: 답장 체인 깊이는 서버가 계산하고 오너 메시지가 체인을 재시작한다", async () => {
   const r = await t.setupRoom();
   const a = await t.join(r, "alpha", { history: "all" });

@@ -1844,6 +1844,9 @@ export class RoomService {
     await this.db.run("DELETE FROM sessions WHERE expires_at<=?", now);
     await this.db.run("DELETE FROM owner_sessions WHERE expires_at<=?", now);
     await this.db.run("DELETE FROM upgrade_tickets WHERE expires_at<=?", now);
+    // 레거시 웹훅 전달 기록 정리: 새 행은 더 만들지 않지만, 옛 DB의 행에는 지정 수신 메시지 원문 사본이
+    // payload 로 남아 있다. 이전 버전과 같은 7일 보관을 유지해 사본이 무기한 쌓이지 않게 한다.
+    await this.db.run("DELETE FROM webhook_deliveries WHERE status IN ('ok','failed') AND created_at<?", now - 7 * 86400_000);
     await this.db.run("DELETE FROM login_fails WHERE ? - first >= 900000", now);
     await this.db.run("DELETE FROM auth_fails WHERE ? - first >= 900000", now);
     let n = 0;

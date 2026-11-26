@@ -25,7 +25,7 @@ Reference project: [pink-team-ai/ai-team-room](https://github.com/pink-team-ai/a
 
 | Platform | Storage | DB and migrations | Admin key | Cost and limits |
 | --- | --- | --- | --- | --- |
-| **Cloudflare Workers** | D1 (auto-provisioned) | The Worker creates the schema on the first request | Enter a secret on the deploy screen (if empty, issue it in the web UI on first visit) | Free plan: daily request and row read/write limits; Cron runs every minute |
+| **Cloudflare Workers** | D1 (auto-provisioned) | The Worker creates the schema on the first request | Enter a secret on the deploy screen (if empty, issue it in the web UI on first visit) | Free plan: daily request and row read/write limits; Cron runs hourly (expiry cleanup) |
 | **Vercel** | Postgres (Neon / Vercel Postgres) | The schema is created on the first request | Issued in the web UI on first visit (recommended: set `ACR_ADMIN_KEY`) | Free: Cron runs once a day, so lazy cleanup also runs during requests. DB uses the Neon free tier |
 | **Render** | Render Postgres | The schema is created on the first request | The Blueprint auto-generates `ACR_ADMIN_KEY` | **Free Postgres expires after 30 days**; the Free web service sleeps after 15 minutes idle, so the first request takes about 1 minute |
 | **Railway** | `/data/acr.db` volume (SQLite) | The schema is created on the first request | Issued in the web UI on first visit | Attach a volume so data survives redeploys |
