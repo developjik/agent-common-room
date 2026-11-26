@@ -5,10 +5,11 @@ import { Icon } from "./icons.js";
 import { useToast } from "./Toast.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { copyText } from "../lib/browserClipboard.js";
+import { room as roomApi } from "../lib/api.js";
 import { agentTone, durationLabel, fmtFull, remainLabel, seenLabel } from "../lib/format.js";
 import { memberToAgent, roomInviteText } from "../lib/views.js";
 import type { WorkspaceStore } from "../hooks/useWorkspace.js";
-import type { Invite, RoomCard, RoomDetail, Workspace } from "../lib/types.js";
+import type { Invite, RoomCard, RoomDetail, Webhook, Workspace } from "../lib/types.js";
 
 type Tab = "members" | "room" | "invite";
 
@@ -225,6 +226,10 @@ function RoomSettings({
   const [categories, setCategories] = useState(room.allowed_categories.join(", "));
   const [retention, setRetention] = useState(room.retention_days ? String(room.retention_days) : "");
   const [busy, setBusy] = useState(false);
+  const [hooks, setHooks] = useState<Webhook[] | null>(null);
+  const [hookUrl, setHookUrl] = useState("");
+  const [hookBusy, setHookBusy] = useState(false);
+  const [freshHook, setFreshHook] = useState<{ id: string; url: string; secret: string } | null>(null);
 
   // allowed_categories 는 폴링마다 새 배열이라 그대로 의존성에 두면 4초마다 입력이 서버 값으로 되돌아간다.
   const catsKey = room.allowed_categories.join(",");
@@ -276,6 +281,40 @@ function RoomSettings({
       notify(paused ? "방을 재개했습니다." : "방을 일시정지했습니다. 비서는 읽기만 할 수 있습니다.");
     } catch (e) {
       notify(e instanceof Error ? e.message : "상태를 바꾸지 못했습니다.");
+    }
+  };
+
+  const loadHooks = useCallback(async () => {
+    try {
+      setHooks((await roomApi.webhooks(room.id)).webhooks);
+    } catch {
+      setHooks([]);
+    }
+  }, [room.id]);
+
+  useEffect(() => {
+    void loadHooks();
+  }, [loadHooks]);
+
+  // 웹훅은 v2 인스펙터에서 직접 다룬다(예전에는 /ui/ + 방 복구 코드가 필요했는데 v2 에서 코드를 보여 주지 않았다).
+  const addHook = async () => {
+    if (hookBusy) return;
+    const url = hookUrl.trim();
+    if (!/^https:\/\//i.test(url)) {
+      notify("https:// 로 시작하는 URL을 넣으세요.");
+      return;
+    }
+    setHookBusy(true);
+    try {
+      const created = await roomApi.createWebhook(room.id, url);
+      setFreshHook({ id: created.id, url: created.url, secret: created.secret });
+      setHookUrl("");
+      await loadHooks();
+      notify("웹훅을 등록했습니다. 서명 시크릿은 지금만 보입니다.");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "웹훅을 등록하지 못했습니다.");
+    } finally {
+      setHookBusy(false);
     }
   };
 
@@ -384,9 +423,96 @@ function RoomSettings({
       </dl>
 
       <p className="panel-note">
-        웹훅은 기존 콘솔(<a className="msg-link" href="/ui/">/ui/</a>)에서 <strong>방 ID + 방 복구 코드</strong>로 로그인해 설정합니다.
-        v2 화면에서는 정책·보존 기간·이름까지 다룹니다.
+        방 정책·보존 기간·이름은 여기서 저장합니다. 웹훅은 아래에서 바로 등록합니다(서명 시크릿은 등록할 때 한 번만 보입니다).
       </p>
+
+      <div className="card space-y-2">
+        <p className="text-[12px] font-extrabold">웹훅</p>
+        <p className="panel-note">
+          이 방에 새 메시지가 생기면 지정한 https URL로 POST합니다. 수신 서버는 <span className="mono">X-Acr-Signature</span>
+          (sha256=HMAC) 로 검증하세요.
+        </p>
+        <div className="flex gap-2">
+          <input
+            id="room-hook-url"
+            className="field mono text-[12px]"
+            value={hookUrl}
+            onChange={(e) => setHookUrl(e.target.value)}
+            placeholder="https://example.com/acr-hook"
+            spellCheck={false}
+            aria-label="웹훅 URL"
+          />
+          <button type="button" className="btn btn-sm" onClick={() => void addHook()} disabled={hookBusy}>
+            {hookBusy ? "등록 중…" : "등록"}
+          </button>
+        </div>
+        {freshHook ? (
+          <div className="fresh-invite">
+            <p className="text-[12px] font-bold text-muted">서명 시크릿 · 지금만 표시</p>
+            <p className="mono break-all select-all">{freshHook.secret}</p>
+            <button
+              type="button"
+              className="btn btn-sm mt-1"
+              onClick={async () => {
+                const ok = await copyText(freshHook.secret);
+                notify(ok ? "시크릿을 복사했습니다." : "복사하지 못했습니다. 값을 직접 선택해 복사하세요.");
+              }}
+            >
+              <Icon name="copy" size={13} /> 복사
+            </button>
+          </div>
+        ) : null}
+        {hooks === null ? (
+          <p className="panel-note">불러오는 중…</p>
+        ) : hooks.filter((h) => h.active).length === 0 ? (
+          <p className="panel-note">등록된 웹훅이 없습니다.</p>
+        ) : (
+          <ul className="invite-list">
+            {hooks
+              .filter((h) => h.active)
+              .map((h) => (
+                <li key={h.id} className="invite-row">
+                  <div className="min-w-0 flex-1">
+                    <p className="mono break-all text-[11.5px]">{h.url}</p>
+                    <p className="text-[11px] text-faint">
+                      {h.last_kind ? `${h.last_kind} · ${h.last_status ?? "대기"}` : "아직 전달 기록 없음"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={async () => {
+                      try {
+                        const r = await roomApi.testWebhook(room.id, h.id);
+                        notify(`시험 전달: ${r.delivery.status}${r.delivery.http_status ? ` (HTTP ${r.delivery.http_status})` : ""}`);
+                        await loadHooks();
+                      } catch (e) {
+                        notify(e instanceof Error ? e.message : "시험 전달을 보내지 못했습니다.");
+                      }
+                    }}
+                  >
+                    시험
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-danger"
+                    onClick={async () => {
+                      try {
+                        await roomApi.revokeWebhook(room.id, h.id);
+                        await loadHooks();
+                        notify("웹훅을 폐기했습니다.");
+                      } catch (e) {
+                        notify(e instanceof Error ? e.message : "폐기하지 못했습니다.");
+                      }
+                    }}
+                  >
+                    폐기
+                  </button>
+                </li>
+              ))}
+          </ul>
+        )}
+      </div>
 
       {room.kind !== "lobby" ? (
         <div className="danger-box">

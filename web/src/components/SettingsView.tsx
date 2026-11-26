@@ -118,7 +118,11 @@ export function SettingsView({ owner, workspace, theme, onTheme, onLogout, synce
           마지막 동기화 {syncedAt ? relTime(new Date(syncedAt).toISOString()) : "아직 없음"} · 관제실은 4~20초 간격으로 개요를 다시 읽습니다.
         </p>
         <p className="panel-note mt-2">
-          방 정책 문구·웹훅·보존 기간은 기존 콘솔(<a className="msg-link" href="/ui/">/ui/</a>)에서 그대로 설정할 수 있습니다.
+          방 이름·설명·개인 맥락 정책·허용 카테고리·보존 기간은 각 방의 <strong>이 방 → 방</strong> 탭에서 저장합니다.
+        </p>
+        <p className="panel-note mt-2">
+          웹훅도 같은 탭에서 URL을 등록해 바로 쓸 수 있습니다(서명 시크릿은 등록할 때 한 번만 보입니다). v1 콘솔(
+          <a className="msg-link" href="/ui/">/ui/</a>)도 그대로 열립니다.
         </p>
       </section>
 

@@ -9,7 +9,7 @@ import { useToast } from "./Toast.js";
 import { copyText } from "../lib/browserClipboard.js";
 import { ApiError } from "../lib/api.js";
 import { fmtFull, remainLabel, relTime } from "../lib/format.js";
-import { poolInviteText, presenceLabel, presenceTone } from "../lib/views.js";
+import { agentNameConflict, poolInviteText, presenceLabel, presenceTone } from "../lib/views.js";
 import type { WorkspaceStore } from "../hooks/useWorkspace.js";
 import type { Invite, JoinRequest, PoolAgent, RoomCard, Workspace } from "../lib/types.js";
 
@@ -307,11 +307,17 @@ function RequestCard({ store, q, rooms }: { store: WorkspaceStore; q: JoinReques
   const [scope, setScope] = useState("rw");
   const [name, setName] = useState(q.display_name);
   const [busy, setBusy] = useState(false);
+  // 입력하는 순간 풀의 기존 이름과 대조한다(승인 버튼을 누른 뒤 409 로 알게 되던 것을 앞당긴다).
+  const conflict = q.existing_agent ? null : agentNameConflict(store.pool, name, q.agent_id);
 
   const approve = async () => {
     const wanted = name.trim();
     if (!wanted) {
       notify("비서 이름을 입력하세요.");
+      return;
+    }
+    if (conflict) {
+      notify(`'${conflict}' 이름은 이미 쓰고 있습니다. 다른 이름으로 승인하세요.`);
       return;
     }
     const target = rooms.find((r) => r.id === q.room_id);
@@ -394,8 +400,15 @@ function RequestCard({ store, q, rooms }: { store: WorkspaceStore; q: JoinReques
         <p className="mt-1 text-[11px] leading-relaxed text-faint">
           {q.existing_agent
             ? "이미 토큰이 있는 비서입니다. 승인하면 이름은 그대로 두고 이 방의 구성원만 추가합니다."
-            : "같은 이름의 비서가 이미 있으면 승인할 수 없습니다. 그때는 다른 이름으로 승인하세요."}
+            : conflict
+              ? "이름을 바꾸면 바로 승인할 수 있습니다."
+              : "같은 이름의 비서가 이미 있으면 승인할 수 없습니다. 그때는 다른 이름으로 승인하세요."}
         </p>
+        {conflict ? (
+          <p className="mt-1 text-[11px] leading-relaxed auth-error" role="alert">
+            '{conflict}' 이름의 비서가 이미 있습니다. 다른 이름으로 승인하세요.
+          </p>
+        ) : null}
       </div>
       <div className="grid w-full grid-cols-2 gap-2">
         <div>
@@ -420,7 +433,7 @@ function RequestCard({ store, q, rooms }: { store: WorkspaceStore; q: JoinReques
       </div>
       <p className="w-full rounded-md bg-surface px-2 py-1.5 text-[11.5px] leading-relaxed text-muted">{requestPreview(scope, history)}</p>
       <div className="flex w-full gap-2">
-        <button type="button" className="btn btn-primary btn-sm flex-1" onClick={() => void approve()} disabled={busy}>
+        <button type="button" className="btn btn-primary btn-sm flex-1" onClick={() => void approve()} disabled={busy || !!conflict}>
           승인
         </button>
         <button type="button" className="btn btn-danger btn-sm" onClick={() => void deny()} disabled={busy}>

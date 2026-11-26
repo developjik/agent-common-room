@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type LegacyLoginResult, type SetupOwnerResult } from "../lib/api.js";
 import { copyText } from "../lib/browserClipboard.js";
-import { loginIdProblem, passwordProblem } from "../lib/views.js";
+import { loginIdProblem, passwordProblem, setupLandingMode } from "../lib/views.js";
 import type { SetupState } from "../lib/types.js";
 import { useToast } from "./Toast.js";
 import { Icon } from "./icons.js";
@@ -38,8 +38,10 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
       .then((s) => {
         if (!live) return;
         setSetup(s);
-        // 계정이 하나도 없는 새 배포면 첫 화면을 '계정 만들기'로 열어 준다.
-        if (s.needs_owner) setMode("onboard");
+        // 계정이 하나도 없는 새 배포면 '계정 만들기'로, 관리자 키를 모르는 상황에서 기존 방이 있으면
+        // '기존 방 코드'로 연다. 관리자 키 입력창만 있는 화면은 막다른 길이다.
+        const landing = setupLandingMode(s);
+        if (landing !== "login") setMode(landing);
       })
       .catch(() => {
         /* 설정 조회 실패: 계정 로그인·레거시 경로는 그대로 쓸 수 있다. */
@@ -273,6 +275,16 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
 
         {mode === "legacy" ? (
           <form className="mt-4 space-y-3" onSubmit={submitLegacy}>
+            {setup?.needs_owner && setup.legacy_rooms ? (
+              <div className="notice-box">
+                <p className="notice-title">계정이 아직 없습니다 · 기존 방 {setup.legacy_rooms}개</p>
+                <p className="notice-text">
+                  관리자 키가 없어도 지금 쓰던 방의 오너 코드로 들어와 계정을 만들 수 있습니다. 방 ID와 오너 코드를 넣으면
+                  계정으로 옮기는 화면이 이어집니다. 계정을 만들지 않고 v1 콘솔(<a className="msg-link" href="/ui/">/ui/</a>)을
+                  계속 쓰셔도 됩니다.
+                </p>
+              </div>
+            ) : null}
             <p className="text-[12.5px] leading-relaxed text-muted">
               v1에서 쓰던 방 ID와 오너 코드(<span className="mono">acr_own_…</span>)로 들어갑니다. 아직 계정에 연결되지 않은
               방이면 아이디와 비밀번호를 만들어 계정으로 옮기는 화면이 이어집니다.
@@ -322,8 +334,8 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
             <div className="notice-box">
               <p className="notice-title">계정으로 옮기기</p>
               <p className="notice-text">
-                방 코드 확인 완료. 아이디와 비밀번호를 만들면 지금 워크스페이스가 이 계정에 연결됩니다. 기존 방 코드 로그인도 계속
-                동작합니다.
+                방 코드 확인 완료. 아이디와 비밀번호를 만들면 지금 워크스페이스가 이 계정에 연결되고 관제실이 열립니다. 계정을
+                만든 뒤에도 v1 콘솔(<span className="mono">/ui/</span>)의 방 코드 로그인은 계속 쓸 수 있습니다.
               </p>
             </div>
             <div>
@@ -385,6 +397,9 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
             >
               ← 방 코드로 돌아가기
             </button>
+            <a className="btn btn-ghost w-full text-muted" href="/ui/" target="_blank" rel="noopener noreferrer">
+              계정 없이 v1 콘솔(/ui/)에서 계속 쓰기
+            </a>
           </form>
         ) : null}
 
@@ -404,6 +419,26 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
               <div className="notice-box">
                 <p className="notice-title">이미 오너 계정이 있습니다</p>
                 <p className="notice-text">계정 로그인으로 들어가세요. 비밀번호를 잊었다면 서버 관리자 키로 재발급할 수 있습니다.</p>
+              </div>
+            ) : null}
+
+            {setup && setup.needs_owner !== false && !setup.bootstrap_allowed && !newKey ? (
+              <div className="notice-box">
+                <p className="notice-title">관리자 키를 알아야 계정을 만들 수 있습니다</p>
+                <p className="notice-text">
+                  이 서버는 관리자 키가 이미 설정되어 있어 웹에서 새 키를 만들 수 없습니다. 키를 모르면 계정을 만들 수 없으니,
+                  아래 길로 가세요.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {setup.legacy_rooms ? (
+                    <button type="button" className="btn btn-sm" onClick={() => goto("legacy")}>
+                      기존 방 코드로 계정 만들기 ({setup.legacy_rooms}개)
+                    </button>
+                  ) : null}
+                  <a className="btn btn-sm" href="/ui/" target="_blank" rel="noopener noreferrer">
+                    v1 콘솔(/ui/)에서 계속 쓰기
+                  </a>
+                </div>
               </div>
             ) : null}
 
@@ -570,6 +605,12 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
               관제실로 들어가기
             </button>
           </div>
+        ) : null}
+
+        {mode !== "created" ? (
+          <p className="mt-4 text-center text-[11px] leading-relaxed text-faint">
+            계정 없이 쓰던 예전 콘솔은 <a className="msg-link" href="/ui/">/ui/</a> 에서 그대로 열립니다.
+          </p>
         ) : null}
       </div>
     </div>

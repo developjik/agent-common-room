@@ -139,14 +139,22 @@ export class RoomService {
   }
 
   // ---------- 최초 설정 (웹 온보딩) ----------
-  /** 공개 정보: 관리자 키가 이미 있는지, 웹에서 최초 키를 만들 수 있는지, 오너 계정이 아직 없어서 발급 가능한지. 비밀은 담지 않는다. */
+  /**
+   * 공개 정보: 관리자 키가 이미 있는지, 웹에서 최초 키를 만들 수 있는지, 오너 계정이 아직 없어서 발급 가능한지.
+   * 비밀은 담지 않는다. legacy_rooms 는 "아직 계정에 연결되지 않은 기존 방(로비) 수"로, 첫 화면이
+   * 관리자 키를 모르는 사람에게 막다른 길을 보여 주지 않도록 방 코드 경로를 안내하는 데만 쓴다.
+   */
   async setupState(opts: { envKeyConfigured?: boolean; bootstrapAllowed?: boolean } = {}) {
     const configured = !!opts.envKeyConfigured || (await this.adminKeyConfigured());
     const owners = await this.db.one("SELECT count(*) c FROM owners");
+    const legacy = await this.db.one(
+      "SELECT count(*) c FROM workspaces w JOIN rooms r ON r.id=w.legacy_room_id WHERE w.owner_id IS NULL",
+    );
     return {
       admin_key_configured: configured,
       bootstrap_allowed: !!opts.bootstrapAllowed && !configured,
       needs_owner: Number(owners?.c ?? 0) === 0,
+      legacy_rooms: Number(legacy?.c ?? 0),
       schema_version: SCHEMA_VERSION,
     };
   }
@@ -561,8 +569,13 @@ export class RoomService {
   // ---------- 워크스페이스 홈(개요) ----------
   /**
    * 방 N개를 방마다 폴링하지 않도록 한 번에 돌려준다(Free 플랜 D1 쿼리 50/호출).
-   * 지금 쿼리 수: 워크스페이스 1 + 방 1 + 구성원 1 + 에이전트 1 + 대기 요청 1 + 질문 1 + 읽음 1 = 7.
+   * 지금 쿼리 수: 워크스페이스 1 + 방 1 + 구성원 1 + 에이전트 1 + 대기 요청 1 + 질문 1 + 읽음 1
+   *   + 인박스 건수 1 = 8.
    * health 는 서버가 정하고 화면은 번역만 한다(paused / needs_input / idle / ok).
+   *
+   * counts.needs_you 는 인박스 목록과 같은 기준(내가 아직 읽지 않은 질문·내 앞 지목 메시지 수)이다.
+   * 승인 대기 참여 요청은 pending_requests 로 따로 세어 비서실 배지가 맡는다(예전에는 needs_you 에
+   * 더해져 배지 3 / 목록 1건처럼 숫자가 어긋났다).
    */
   async workspaceOverview(scope: OwnerScope, workspaceId: string) {
     const ws = await this.assertOwnerWorkspace(scope, workspaceId);
@@ -635,9 +648,22 @@ export class RoomService {
       rooms: agentRooms.get(String(a.id)) ?? [],
     }));
     const pendingTotal = pending.reduce((n, p) => n + Number(p.c), 0);
+    // 인박스 목록(workspaceActivity)과 같은 술어로 "아직 안 읽은" 건수만 센다. 목록은 방을 가로질러
+    // 최근 50건을 보여 주고, 배지는 그중 내가 아직 읽지 않은 수다(질문·내 앞 지목·시스템 안내).
+    const attention = scope.ownerId
+      ? await this.db.one(
+        `SELECT count(*) c FROM messages m JOIN rooms r ON r.id=m.room_id
+           LEFT JOIN owner_reads o ON o.owner_id=? AND o.room_id=m.room_id
+          WHERE r.workspace_id=? AND m.deleted_at IS NULL
+            AND ((m.sender_type='agent' AND m.kind='question') OR m.recipient_id='owner' OR m.sender_type='system')
+            AND m.seq > COALESCE(o.last_read_seq, 0)`,
+        scope.ownerId, workspaceId)
+      : null;
+    // 레거시 방 세션은 owner_reads 가 없어 읽음 위치를 알 수 없다 → 방 단위 개수(기존 기준)로 둔다.
+    const needsYouCount = scope.ownerId ? Number(attention?.c ?? 0) : needsYou;
     return {
       workspace: { id: ws.id, name: ws.name, lobby_room_id: ws.lobby_room_id ?? null },
-      counts: { needs_you: needsYou + pendingTotal, unread_rooms: unreadRooms, paused_rooms: pausedRooms },
+      counts: { needs_you: needsYouCount, unread_rooms: unreadRooms, paused_rooms: pausedRooms },
       rooms: roomViews,
       agents: agentViews,
       pending_requests: pendingTotal,
@@ -658,6 +684,10 @@ export class RoomService {
 
   // ---------- 워크스페이스·방 관리(오너) ----------
   async createRoomForWorkspace(scope: OwnerScope, workspaceId: string, input: { name?: unknown; description?: unknown }) {
+    // 방 전용(레거시) 세션은 워크스페이스 단위 쓰기 권한이 없다. 예전에는 여기서 막지 않아
+    // INSERT 후 응답 조립(assertOwnerRoom)에서야 403 이 나, 호출자는 실패로 보는데 DB 에는
+    // 아무도 열 수 없는 빈 방이 남고 그 워크스페이스의 레거시 세션이 통째로 잠겼다.
+    if (scope.legacyRoomId) throw err(403, "legacy_scope", "방 전용(레거시) 세션으로는 워크스페이스에 방을 만들 수 없습니다. 오너 계정으로 로그인하세요.");
     const ws = await this.assertOwnerWorkspace(scope, workspaceId);
     const name = typeof input.name === "string" ? input.name.trim() : "";
     if (!name || name.length > 80) throw err(400, "bad_name", "방 이름은 1~80자여야 합니다.");
@@ -666,6 +696,8 @@ export class RoomService {
     if (count >= MAX_ROOMS_PER_WORKSPACE) throw err(409, "room_limit", `워크스페이스당 방은 최대 ${MAX_ROOMS_PER_WORKSPACE}개입니다.`);
     await this.assertRoomNameFree(String(ws.id), name);
     const id = newId("room");
+    // 권한은 INSERT 전에 끝난다(예전에는 쓰기 커밋 뒤 응답 조립에서 403 이 나 빈 방이 남았다).
+    // 아래 상세 조회는 이미 확인한 권한을 다시 검사하지 않는 내부 경로를 쓴다.
     const now = this.clock.now();
     const ownerCode = newToken("acr_own");
     await this.db.run(
@@ -673,7 +705,7 @@ export class RoomService {
       id, name, description, now, await hashToken(ownerCode), ws.id,
     );
     await this.audit(id, `owner:${scope.ownerId ?? "legacy"}`, "room.create", name);
-    return await this.ownerRoomDetail(scope, id);
+    return await this.roomDetailById(id);
   }
   private async assertRoomNameFree(workspaceId: string, name: string, exceptId = "") {
     const rows = await this.db.all("SELECT id, name FROM rooms WHERE workspace_id=? AND id<>?", workspaceId, exceptId);
@@ -681,7 +713,12 @@ export class RoomService {
     if (rows.some(r => String(r.name).trim().toLowerCase() === key)) throw err(409, "room_name_taken", "같은 이름의 방이 이미 있습니다.");
   }
   async ownerRoomDetail(scope: OwnerScope, roomId: string) {
-    const room = await this.assertOwnerRoom(scope, roomId);
+    await this.assertOwnerRoom(scope, roomId);
+    return this.roomDetailById(roomId);
+  }
+  /** 권한 검사를 마친 뒤의 방 상세. 호출자가 이미 권한을 확인한 경우에만 쓴다(쓰기 응답 조립용). */
+  private async roomDetailById(roomId: string) {
+    const room = await this.room(roomId);
     const members = await this.db.all(
       `SELECT m.agent_id, m.status, m.can_read, m.can_write, m.history_floor, m.fetched_seq, m.acked_seq, m.invited_at, m.joined_at,
               a.name, a.product, a.status AS agent_status, a.last_seen
@@ -861,8 +898,17 @@ export class RoomService {
         ORDER BY m.created_at DESC, m.seq DESC LIMIT ?`,
       workspaceId, lim);
     const messages = await this.toPublicMany(rows);
+    // unread 는 개요의 counts.needs_you 와 같은 기준(방별 owner_reads.last_read_seq)이다.
+    const reads = scope.ownerId
+      ? await this.db.all("SELECT room_id, last_read_seq FROM owner_reads WHERE owner_id=?", scope.ownerId)
+      : [];
+    const readByRoom = new Map(reads.map(r => [String(r.room_id), Number(r.last_read_seq)]));
     return {
-      items: messages.map((m, i) => ({ room_id: rows[i].room_id, room_name: rows[i].room_name, room_kind: rows[i].room_kind ?? "room", message: m })),
+      items: messages.map((m, i) => ({
+        room_id: rows[i].room_id, room_name: rows[i].room_name, room_kind: rows[i].room_kind ?? "room",
+        unread: Number(rows[i].seq) > (readByRoom.get(String(rows[i].room_id)) ?? 0),
+        message: m,
+      })),
       notice: UNTRUSTED_NOTICE,
     };
   }

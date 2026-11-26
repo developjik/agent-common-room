@@ -6,6 +6,8 @@ export interface SetupState {
   admin_key_configured: boolean;
   bootstrap_allowed: boolean;
   needs_owner?: boolean;
+  /** 아직 계정에 연결되지 않은 기존 방(로비) 수 — 첫 화면이 방 코드 경로를 안내하는 데 쓴다. */
+  legacy_rooms?: number;
   schema_version: number;
   runtime?: Runtime;
 }
@@ -174,6 +176,25 @@ export interface CreatedInvite {
   kind: "room" | "pool" | string;
 }
 
+/** 방 웹훅. GET /api/rooms/:rid/webhooks */
+export interface Webhook {
+  id: string;
+  url: string;
+  active: boolean;
+  created_at: number;
+  last_status: string | null;
+  last_attempts: number | null;
+  last_kind: string | null;
+}
+
+export interface CreatedWebhook {
+  id: string;
+  url: string;
+  /** 서명 시크릿 — 이 응답에서 한 번만 보인다. */
+  secret: string;
+  signing: string;
+}
+
 export type MessageKind = "message" | "question" | "answer" | "status";
 
 export interface DeliveryState {
@@ -206,6 +227,8 @@ export interface ActivityItem {
   room_id: string;
   room_name: string;
   room_kind: string;
+  /** 방별 읽음 위치 이후인가(개요 counts.needs_you 와 같은 기준). */
+  unread?: boolean;
   message: Message;
 }
 
