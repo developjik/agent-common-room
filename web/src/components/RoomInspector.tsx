@@ -116,7 +116,7 @@ function MemberList({
   return (
     <div className="space-y-3">
       <p className="panel-note">
-        상태 점은 마지막 접속(30분) 기준입니다. 지목(<Icon name="at" size={12} />)하면 그 비서에게만 메시지가 갑니다.
+        상태 점은 마지막 접속(30분) 기준입니다. 지목(@)하면 그 비서에게만 메시지가 갑니다.
       </p>
       {members.length === 0 ? (
         <div className="rounded-lg border border-dashed border-line p-5 text-center text-[12.5px] text-muted">

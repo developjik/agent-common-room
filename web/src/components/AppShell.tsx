@@ -163,6 +163,7 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
       onGoView={goView}
       onCreateRoom={() => setCreateOpen(true)}
       onDeleteRoom={(room) => void deleteRoom(room)}
+      onOpenPalette={() => setPaletteOpen(true)}
     />
   ) : route.view === "inbox" ? (
     <InboxView

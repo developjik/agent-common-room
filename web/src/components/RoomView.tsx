@@ -30,6 +30,7 @@ interface Props {
   onGoView: (view: View) => void;
   onCreateRoom: () => void;
   onDeleteRoom: (room: RoomDetail) => void;
+  onOpenPalette: () => void;
 }
 
 export function RoomView({
@@ -44,6 +45,7 @@ export function RoomView({
   onGoView,
   onCreateRoom,
   onDeleteRoom,
+  onOpenPalette,
 }: Props) {
   const notify = useToast();
   const confirm = useConfirm();
@@ -288,6 +290,9 @@ export function RoomView({
             <span className="mono">#{room.last_seq}</span>
           </div>
           <div className="room-head-actions">
+            <button type="button" className="btn-icon" onClick={onOpenPalette} aria-label="검색·이동 (⌘K)" title="검색·이동 (⌘K)">
+              <Icon name="search" size={16} />
+            </button>
             <button type="button" className="btn btn-sm" onClick={() => void togglePause()}>
               <Icon name={room.paused ? "play" : "pause"} size={13} />
               <span className="hidden sm:inline">{room.paused ? "재개" : "일시정지"}</span>

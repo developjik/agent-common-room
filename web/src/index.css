@@ -497,7 +497,7 @@ button {
   align-items: center;
   width: 56px;
   flex: none;
-  padding: 10px 0;
+  padding: 10px 0 14px;
   background: var(--acr-rail);
   color: var(--acr-rail-ink);
 }
@@ -586,6 +586,9 @@ button {
   flex: 1;
   min-height: 0;
 }
+.topbar.is-room {
+  display: none;
+}
 .topbar {
   display: flex;
   align-items: center;
@@ -656,9 +659,6 @@ button {
   .shell {
     flex-direction: column;
   }
-  .topbar.is-room {
-    display: none;
-  }
 }
 .mobile-tabs {
   position: sticky;
@@ -710,6 +710,7 @@ button {
 
 /* ---------- 페이지 공통 ---------- */
 .page {
+  width: 100%;
   max-width: 1180px;
   margin: 0 auto;
   padding: 16px 16px 40px;

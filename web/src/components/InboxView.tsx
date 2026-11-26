@@ -108,7 +108,7 @@ export function InboxView({ items, rooms, ready, onOpenRoom, onGoRooms }: Props)
                       <span className="inbox-dot" aria-hidden="true">
                         ·
                       </span>
-                      <Avatar name={m.sender.type === "owner" ? "오너" : m.sender.name} small />
+                      {m.sender.type !== "system" ? <Avatar name={m.sender.type === "owner" ? "오너" : m.sender.name} small /> : null}
                       <span className="inbox-sender">{m.sender.type === "owner" ? "오너 (나)" : m.sender.type === "system" ? "시스템" : m.sender.name}</span>
                       <span className="tag">{ACTIVITY_LABEL[k]}</span>
                       {m.kind === "question" && k !== "question" ? <span className="tag">질문</span> : null}

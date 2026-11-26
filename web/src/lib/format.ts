@@ -102,7 +102,7 @@ export function seenLabel(a: Agent): string {
   if (!a.last_seen) return "접속 기록 없음";
   const d = Math.max(0, Date.now() - new Date(a.last_seen).getTime());
   if (d < 3 * 60_000) return "방금 확인함";
-  if (d < 30 * 60_000) return `${Math.floor(d / 60_000)}분 전 확인`;
+  if (d < 60 * 60_000) return `${Math.max(1, Math.floor(d / 60_000))}분 전 확인`;
   if (d < 24 * 3_600_000) return `${Math.floor(d / 3_600_000)}시간 전 확인`;
   return `${relTime(a.last_seen)} 확인`;
 }
