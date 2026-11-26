@@ -21,22 +21,29 @@ export function mentionTokenAt(text: string, caret: number): MentionToken | null
 /**
  * `@검색어`를 `@이름 `로 바꾸고 커서를 이름 뒤로 옮긴다(뒤에 공백을 두어 자동완성을 닫는다).
  * 해당 구간이 없으면 본문을 그대로 돌려준다.
- * 커서가 검색어 중간에 있어도(`@Ins|t`) 이름 뒤쪽 글자까지 가져가 `@Instinct t`가 되지 않게 한다.
- * 다만 오른쪽 글자까지 이름의 앞부분일 때만 가져간다 — `@|금요일`처럼 이미 쓰던 단어가
- * 고른 이름과 무관하면(=`@` 버튼을 단어 앞에 누른 경우) 그 단어를 지우지 않는다.
+ *
+ * 커서 뒤쪽 처리: 이어지는 같은 단어 전체가 고른 이름의 앞부분일 때만 그 단어를 이름으로
+ * 흡수한다(`@Ins|t` → `@Instinct `, `@피|클` → `@피클 `). 그 밖에는 커서 앞 `@검색어`만
+ * 바꾸므로, 이미 쓰던 본문(`@피클을 냉장고에…`, `@인금요일입니다`)은 지워지지 않는다.
+ * 버튼이든 키보드든 같은 규칙이라, 본문이 이름과 겹치는지로만 판단한다.
+ * 문장부호를 떼고 비교하지는 않는다: 마침표 앞 단어가 이름과 겹칠 때 그것을 지우는 쪽보다
+ * 사용자가 쓴 글자를 남기는 쪽을 택한다(남은 글자는 눈에 보이고 지울 수 있다).
  */
 export function completeMention(text: string, caret: number, name: string): { text: string; caret: number; replaced: boolean } {
   const token = mentionTokenAt(text, caret);
   if (!token) return { text, caret, replaced: false };
   const word = /[\p{L}\p{N}_.-]/u;
-  const typedFrom = token.start + 1;
-  const lowered = name.toLowerCase();
   let end = token.end;
-  // 이어지는 글자가 이름의 앞부분과 같을 때만 흡수한다(`@피|클` → `@피클 `).
-  while (end < text.length && word.test(text[end]) && lowered.startsWith(text.slice(typedFrom, end + 1).toLowerCase())) end += 1;
+  let wordEnd = end;
+  while (wordEnd < text.length && word.test(text[wordEnd])) wordEnd += 1;
+  const typed = text.slice(token.start + 1, wordEnd).toLowerCase();
+  if (typed.length > 0 && name.toLowerCase().startsWith(typed)) end = wordEnd;
   const inserted = `@${name} `;
+  // 이름 뒤에 이미 공백이 있으면(=`@` 버튼이 본문과 띄우려고 넣은 공백) 하나만 남긴다.
+  const rest = text.slice(end);
+  const tail = rest.startsWith(" ") ? rest.slice(1) : rest;
   return {
-    text: text.slice(0, token.start) + inserted + text.slice(end),
+    text: text.slice(0, token.start) + inserted + tail,
     caret: token.start + inserted.length,
     replaced: true,
   };
