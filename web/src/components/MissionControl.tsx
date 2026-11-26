@@ -88,7 +88,7 @@ export function MissionControl({ workspace, overview, ready, onOpenRoom, onGoVie
         <button type="button" className="stat" onClick={() => onGoView("inbox")} data-tone={overview.counts.needs_you ? "wait" : "ok"}>
           <span className="stat-label">확인 필요</span>
           <span className="stat-value">{overview.counts.needs_you}</span>
-          <span className="stat-hint">{overview.counts.needs_you ? "질문·승인·지목" : "내가 할 일 없음"}</span>
+          <span className="stat-hint">{overview.counts.needs_you ? "안 읽은 질문·지목" : "내가 할 일 없음"}</span>
         </button>
         <button type="button" className="stat" onClick={() => onGoView("rooms")} data-tone={overview.counts.unread_rooms ? "ok" : "idle"}>
           <span className="stat-label">안 읽은 방</span>

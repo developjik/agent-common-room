@@ -4,22 +4,27 @@ import { Avatar } from "./Avatar.js";
 import { Icon } from "./icons.js";
 import { EmptyState, SectionHead } from "./ui.js";
 import { fmtFull, plainPreview, relTime } from "../lib/format.js";
-import { ACTIVITY_KINDS, ACTIVITY_LABEL, activityKind, filterActivity, type ActivityKind } from "../lib/views.js";
+import { ACTIVITY_KINDS, ACTIVITY_LABEL, activityKind, filterActivity, unreadActivityCount, type ActivityKind } from "../lib/views.js";
 import type { ActivityItem, RoomCard } from "../lib/types.js";
 
 interface Props {
   items: ActivityItem[];
   rooms: RoomCard[];
   ready: boolean;
+  /** 승인 대기 참여 요청 수(인박스 목록에는 넣지 않고 비서실로 보낸다). */
+  pendingCount: number;
   onOpenRoom: (roomId: string, seq?: number) => void;
   onGoRooms: () => void;
+  onGoDesk: () => void;
 }
 
-export function InboxView({ items, rooms, ready, onOpenRoom, onGoRooms }: Props) {
+export function InboxView({ items, rooms, ready, pendingCount, onOpenRoom, onGoRooms, onGoDesk }: Props) {
   const [kind, setKind] = useState<ActivityKind>("all");
   const [roomId, setRoomId] = useState("");
 
   const filtered = useMemo(() => filterActivity(items, { roomId, kind }), [items, roomId, kind]);
+  // 배지(인박스 숫자)와 같은 기준: 목록 중 아직 읽지 않은 항목.
+  const unread = useMemo(() => unreadActivityCount(items), [items]);
   const counts = useMemo(() => {
     const byKind: Record<string, number> = { all: items.length, question: 0, directed: 0, system: 0 };
     for (const it of items) byKind[activityKind(it)] = (byKind[activityKind(it)] ?? 0) + 1;
@@ -32,8 +37,8 @@ export function InboxView({ items, rooms, ready, onOpenRoom, onGoRooms }: Props)
         title="통합 인박스"
         hint={
           items.length
-            ? `방 ${new Set(items.map((i) => i.room_id)).size}곳에서 ${items.length}건 · 최신순`
-            : "내가 답할 질문과 승인 요청이 여기에 모입니다"
+            ? `방 ${new Set(items.map((i) => i.room_id)).size}곳에서 ${items.length}건 · 확인 필요 ${unread}건`
+            : "내가 답할 질문과 내 앞 지목이 여기에 모입니다"
         }
         action={
           <button type="button" className="btn btn-sm" onClick={onGoRooms}>
@@ -70,6 +75,26 @@ export function InboxView({ items, rooms, ready, onOpenRoom, onGoRooms }: Props)
         </label>
       </div>
 
+      {pendingCount ? (
+        <button type="button" className="inbox-item mb-2" data-approvals onClick={onGoDesk}>
+          <span className="inbox-kind" data-kind="system">
+            <Icon name="bot" size={15} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="inbox-head">
+              <span className="inbox-room">비서실</span>
+              <span className="inbox-dot" aria-hidden="true">
+                ·
+              </span>
+              <span className="inbox-sender">승인 대기</span>
+              <span className="tag tag-wait">{pendingCount}건</span>
+            </span>
+            <span className="inbox-text">새 비서의 참여 요청이 기다리고 있습니다. 비서실에서 승인·거절하세요.</span>
+          </span>
+          <span className="inbox-time">열기 →</span>
+        </button>
+      ) : null}
+
       {!ready ? (
         <div className="inbox-list" aria-busy="true">
           {[0, 1, 2].map((i) => (
@@ -98,7 +123,7 @@ export function InboxView({ items, rooms, ready, onOpenRoom, onGoRooms }: Props)
             const m = it.message;
             return (
               <li key={`${it.room_id}:${m.seq}`}>
-                <button type="button" className="inbox-item" onClick={() => onOpenRoom(it.room_id, m.seq)}>
+                <button type="button" className="inbox-item" data-unread={it.unread ? "true" : undefined} onClick={() => onOpenRoom(it.room_id, m.seq)}>
                   <span className={"inbox-kind"} data-kind={k}>
                     <Icon name={k === "system" ? "alert" : k === "directed" ? "at" : "bolt"} size={15} />
                   </span>
@@ -112,6 +137,7 @@ export function InboxView({ items, rooms, ready, onOpenRoom, onGoRooms }: Props)
                       <span className="inbox-sender">{m.sender.type === "owner" ? "오너 (나)" : m.sender.type === "system" ? "시스템" : m.sender.name}</span>
                       <span className="tag">{ACTIVITY_LABEL[k]}</span>
                       {m.kind === "question" && k !== "question" ? <span className="tag">질문</span> : null}
+                      {it.unread ? <span className="tag tag-wait">확인 필요</span> : null}
                     </span>
                     <span className="inbox-text">{m.deleted ? "삭제된 메시지입니다" : plainPreview(m.content, 180)}</span>
                   </span>

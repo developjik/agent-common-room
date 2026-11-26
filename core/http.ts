@@ -13,10 +13,10 @@
 //   관리자    /api/admin/rooms… · /api/admin/owners/:id/rotate-secret
 //   오너 계정 /api/auth/login · /api/auth/logout · /api/auth/legacy · /api/auth/upgrade
 //   오너 v2   /api/me · /api/workspaces/:wid/{overview,rooms,agents,invites,join-requests,activity}
-//             /api/rooms/:rid{,/messages,/invites,/members/:aid} · /api/join-requests/:jid/{approve,deny}
+//             /api/rooms/:rid{,/messages,/invites,/webhooks,/members/:aid} · /api/join-requests/:jid/{approve,deny}
 //   호환      /api/owner/login · /api/owner/*  (방 1개 워크스페이스로 해석, 1~2 릴리스 유지)
 //   에이전트  /mcp · /api/me · /api/room · /api/inbox · /api/ack · /api/messages
-//             /api/rooms/:rid/{inbox,ack,messages}
+//             /api/rooms/:rid/{inbox,ack,messages}  (방 없는 /api/inbox 는 방이 여러 개면 방별 묶음)
 import { joinInstructions, joinPageHtml } from "./instructions.js";
 import { handleMcp } from "./mcp.js";
 import { hashToken, safeEqualHex } from "./crypto.js";
@@ -510,6 +510,19 @@ export async function handleFetch(
       if ((m = /^\/members\/([^/]+)$/.exec(rest)) && method === "PATCH") return json(200, await svc.updateMembership(auth.scope, rid, m[1], obj(await readJson(req))));
       if ((m = /^\/members\/([^/]+)$/.exec(rest)) && method === "DELETE") return json(200, await svc.removeMembership(auth.scope, rid, m[1]));
       if (rest === "/webhooks" && method === "GET") { await svc.assertOwnerRoom(auth.scope, rid); return json(200, await svc.listWebhooks(rid)); }
+      if (rest === "/webhooks" && method === "POST") {
+        await svc.assertOwnerRoom(auth.scope, rid);
+        return json(201, await svc.createWebhook(rid, obj(await readJson(req)).url));
+      }
+      if ((m = /^\/webhooks\/(whk_[A-Za-z0-9]+)$/.exec(rest)) && method === "DELETE") {
+        await svc.assertOwnerRoom(auth.scope, rid);
+        await svc.revokeWebhook(rid, m[1]);
+        return json(200, { revoked: true });
+      }
+      if ((m = /^\/webhooks\/(whk_[A-Za-z0-9]+)\/test$/.exec(rest)) && method === "POST") {
+        await svc.assertOwnerRoom(auth.scope, rid);
+        return json(200, { delivery: await svc.testWebhook(rid, m[1]) });
+      }
       throw new ApiError(404, "not_found", "없는 경로입니다.");
     }
 
@@ -533,7 +546,16 @@ export async function handleFetch(
         return res;
       }
       if (path === "/api/room" && method === "GET") return json(200, await svc.roomForAgent(agent));
-      if (path === "/api/inbox" && method === "GET") return json(200, await svc.inbox(agent, url.searchParams.get("limit") ?? undefined, url.searchParams.get("wait") ?? undefined, bearer(req)));
+      if (path === "/api/inbox" && method === "GET") {
+        // 참여 중인 방이 2개 이상이면 방 없는 inbox 는 방별 묶음(MCP read_inbox 와 같은 계약)을 돌려준다.
+        // 예전에는 409 room_required 로 떨어져, 새 방에 배치된 비서의 기존 호출이 통째로 실패했다.
+        // ack·messages 는 seq 가 방마다 독립이라 여전히 방을 지정해야 한다.
+        const limit = url.searchParams.get("limit") ?? undefined;
+        const rooms = await svc.agentRooms(agent.id);
+        // wait 도 단일 방과 같은 계약으로 넘긴다(집계 경로가 즉시 반환하면 롱폴링 클라이언트가 폭주한다).
+        if (rooms.length > 1) return json(200, await svc.inboxMany(agent, limit, url.searchParams.get("wait") ?? undefined, bearer(req)));
+        return json(200, await svc.inbox(agent, limit, url.searchParams.get("wait") ?? undefined, bearer(req)));
+      }
       if (path === "/api/ack" && method === "POST") return json(200, await svc.ack(agent, obj(await readJson(req)).seq));
       if (path === "/api/messages" && method === "GET") return json(200, await svc.readMessages(agent, Number(url.searchParams.get("after") ?? 0), url.searchParams.get("limit") ?? undefined));
       if (path === "/api/messages" && method === "POST") { const r = await svc.postAsAgent(agent, obj(await readJson(req))); if (!r.duplicate) ctx?.waitUntil?.(svc.processDueDeliveries(agent.room_id).catch(() => {})); return json(r.duplicate ? 200 : 201, r); }

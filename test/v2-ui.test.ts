@@ -4,6 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { activeTab, parseRoute, routeHref } from "../web/src/lib/route.js";
 import {
+  agentNameConflict,
+  awaitingDelivery,
   countNew,
   filterActivity,
   healthLabel,
@@ -13,10 +15,14 @@ import {
   nextFetchAfter,
   paletteItems,
   passwordProblem,
+  POLL_STEPS,
+  pollDelay,
   poolInviteText,
   presenceLabel,
   roomInviteText,
+  setupLandingMode,
   sortRoomCards,
+  unreadActivityCount,
 } from "../web/src/lib/views.js";
 import type { ActivityItem, Message, RoomCard, RoomMember } from "../web/src/lib/types.js";
 
@@ -182,4 +188,75 @@ test("초대 전달 문장은 워크스페이스·방·링크를 구분해 담�
   const room = roomInviteText("우리 집", "회의실", "https://x/join/acr_inv_2");
   assert.match(room, /회의실/);
   assert.ok(!/로비/.test(room), "방 초대에 로비 문구를 섞지 않는다");
+});
+
+test("P0-1: 계정이 없고 관리자 키를 모르면 기존 방 코드 탭으로 열고, 방이 없으면 계정 만들기로 연다", () => {
+  assert.equal(setupLandingMode(null), "login");
+  assert.equal(setupLandingMode({ needs_owner: false }), "login");
+  assert.equal(setupLandingMode({ needs_owner: true, bootstrap_allowed: true, legacy_rooms: 0 }), "onboard");
+  assert.equal(
+    setupLandingMode({ needs_owner: true, bootstrap_allowed: false, legacy_rooms: 2 }),
+    "legacy",
+    "관리자 키를 모르는 상태에서 기존 방이 있으면 방 코드 경로가 막다른 길을 피한다",
+  );
+  assert.equal(
+    setupLandingMode({ needs_owner: true, bootstrap_allowed: true, legacy_rooms: 1 }),
+    "onboard",
+    "웹에서 키를 만들 수 있으면 계정 만들기가 첫 화면이다",
+  );
+  assert.equal(
+    setupLandingMode({ needs_owner: true, bootstrap_allowed: false, legacy_rooms: 0 }),
+    "onboard",
+    "기존 방이 없으면 안내만 하고 계정 만들기 탭에 둔다",
+  );
+});
+
+test("P1-3: 내가 보낸 최근 메시지가 답장 전이면 폴링을 4초로 유지한다", () => {
+  const now = Date.UTC(2026, 10, 26, 4, 0, 0);
+  const sent = message({
+    seq: 5,
+    sender: { type: "owner", id: "owner", name: "owner" },
+    recipient: { id: "agt_1", name: "피클" },
+    delivery: { state: "sent" },
+    created_at: new Date(now - 30_000).toISOString(),
+  });
+  assert.equal(awaitingDelivery([sent], now), true);
+  assert.equal(awaitingDelivery([{ ...sent, delivery: { state: "acked" } }], now), true, "확인함도 답장 전이면 기다린다");
+  assert.equal(awaitingDelivery([{ ...sent, delivery: { state: "replied" } }], now), false, "답장하면 끝난다");
+  assert.equal(awaitingDelivery([{ ...sent, recipient: null }], now), false, "지목 없는 글은 배지가 없다");
+  assert.equal(awaitingDelivery([{ ...sent, created_at: new Date(now - 16 * 60_000).toISOString() }], now), false, "오래된 글은 따라가지 않는다");
+
+  assert.equal(pollDelay(0, false), POLL_STEPS[0]);
+  assert.equal(pollDelay(4, false), POLL_STEPS[4], "조용하면 20초까지 늦춘다");
+  assert.equal(pollDelay(4, true), POLL_STEPS[0], "기다리는 동안은 4초 고정");
+  assert.equal(pollDelay(99, true), POLL_STEPS[0]);
+  assert.equal(pollDelay(-3, false), POLL_STEPS[0], "음수는 첫 단계로");
+});
+
+test("P1-8: 승인 전에 풀의 기존 이름과 대조한다(폐기된 비서·자기 자신은 제외)", () => {
+  const pool = [
+    { id: "agt_1", name: "피클", status: "active" },
+    { id: "agt_2", name: "Poke", status: "unclaimed" },
+    { id: "agt_3", name: "옛비서", status: "revoked" },
+  ];
+  assert.equal(agentNameConflict(pool, "피클"), "피클");
+  assert.equal(agentNameConflict(pool, "  피클 "), "피클", "앞뒤 공백은 무시한다");
+  assert.equal(agentNameConflict(pool, "poke"), "Poke", "대소문자 무시(서버 name_key 와 같다)");
+  assert.equal(agentNameConflict(pool, "옛비서"), null, "폐기된 이름은 다시 쓸 수 있다");
+  assert.equal(agentNameConflict(pool, "새비서"), null);
+  assert.equal(agentNameConflict(pool, "피클", "agt_1"), null, "기존 비서의 구성원 추가는 자기 이름을 그대로 쓴다");
+  assert.equal(agentNameConflict(pool, "   "), null);
+});
+
+test("P1-2: 인박스 확인 필요 수는 목록의 unread 항목 수와 같다", () => {
+  const item = (seq: number, unread: boolean): ActivityItem => ({
+    room_id: "room_1",
+    room_name: "로비",
+    room_kind: "lobby",
+    unread,
+    message: message({ seq }),
+  });
+  assert.equal(unreadActivityCount([item(1, true), item(2, false), item(3, true)]), 2);
+  assert.equal(unreadActivityCount([]), 0);
+  assert.equal(unreadActivityCount([{ ...item(1, false), unread: undefined }]), 0, "읽음 표시가 없으면 세지 않는다");
 });

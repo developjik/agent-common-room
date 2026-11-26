@@ -6,12 +6,14 @@
 //  - 비서실: overview + 비서 목록 + 승인 대기 = 3회
 //  - 인박스: overview + 활동 = 2회
 // 폴링은 탭이 보일 때만 돌고(숨으면 20초 간격으로 쉼), 새 메시지가 없으면 4→6→10→15→20초로 늦춘다.
+// 단, 내가 보낸 메시지의 전달 배지(보냄→받아감→확인함→답장함)를 기다리는 동안은 4초 간격을 유지한다.
+// (예전에는 조용한 방이 20초 간격이라 배지가 최대 20초 늦게 바뀌었다.)
 //
 // 전달 상태 실시간 갱신: 증분 API(after=)는 커서 이후만 주므로 기존 메시지의 delivery.state 가
 // 바뀌어도 화면이 그대로였다. 매 폴링마다 최근 구간(DELIVERY_WINDOW)을 되읽어 같은 seq 를 합친다.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, joinRequests, room as roomApi, workspace as wsApi } from "../lib/api.js";
-import { countNew, memberToAgent, nextFetchAfter } from "../lib/views.js";
+import { awaitingDelivery, countNew, memberToAgent, nextFetchAfter, POLL_STEPS, pollDelay } from "../lib/views.js";
 import type {
   ActivityItem,
   Agent,
@@ -23,8 +25,6 @@ import type {
   Workspace,
 } from "../lib/types.js";
 import type { View } from "../lib/route.js";
-
-const POLL_STEPS = [4000, 6000, 10000, 15000, 20000];
 
 function mergeMessages(prev: Message[], next: Message[]): Message[] {
   if (next.length === 0) return prev;
@@ -107,6 +107,9 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
   const roomRef = useRef<string | null>(roomId);
   const viewRef = useRef<View>(view);
   const gen = useRef(0);
+  const messagesRef = useRef<Message[]>([]);
+  const loopRef = useRef<() => void>(() => {});
+  const timerRef = useRef<number | undefined>(undefined);
 
   roomRef.current = roomId;
   viewRef.current = view;
@@ -235,25 +238,48 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
     void refresh({ desk: view === "desk", inbox: view === "inbox" });
   }, [view, refresh]);
 
+  // 전달 배지를 기다리는지 판단하려면 최신 메시지 목록이 필요하다(렌더 밖 폴링 루프에서 읽는다).
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  /** 폴링을 즉시 한 번 돌리고 간격을 처음(4초)으로 되돌린다. 전송 직후 배지 갱신에 쓴다. */
+  const nudge = useCallback(() => {
+    quiet.current = 0;
+    window.clearTimeout(timerRef.current);
+    loopRef.current();
+  }, []);
+
   // 첫 로드 + 적응형 폴링
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    // nudge 가 돌려 놓은 반복과 진행 중인 폴링이 같은 refresh 를 기다리면 둘 다 타이머를 잡으려 한다.
+    // 실행 중 플래그와 "예약 전 기존 타이머 해제"로 타이머가 하나만 남게 한다.
+    let running = false;
 
     const schedule = () => {
       if (cancelled) return;
-      timer = window.setTimeout(loop, POLL_STEPS[quiet.current]);
+      window.clearTimeout(timer);
+      const delay = pollDelay(quiet.current, awaitingDelivery(messagesRef.current));
+      timer = window.setTimeout(loop, delay);
+      timerRef.current = timer;
     };
     const loop = async () => {
-      if (cancelled) return;
-      if (document.hidden) {
+      if (cancelled || running) return;
+      running = true;
+      try {
+        if (document.hidden) return;
+        const added = await refresh();
+        // 새 글이 없어도 전달 배지를 기다리는 동안에는 간격을 늘리지 않는다.
+        const waiting = awaitingDelivery(messagesRef.current);
+        quiet.current = added > 0 || waiting ? 0 : Math.min(quiet.current + 1, POLL_STEPS.length - 1);
+      } finally {
+        running = false;
         schedule();
-        return;
       }
-      const added = await refresh();
-      quiet.current = added > 0 ? 0 : Math.min(quiet.current + 1, POLL_STEPS.length - 1);
-      schedule();
     };
+    loopRef.current = () => void loop();
     const onVisible = () => {
       if (document.hidden || cancelled) return;
       quiet.current = 0;
@@ -265,6 +291,7 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      loopRef.current = () => {};
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
@@ -351,9 +378,11 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
       if (input.reply_to) body.reply_to = input.reply_to;
       const res = await roomApi.say(rid, body);
       if (rid === roomRef.current) await pullMessages(rid, false, gen.current);
+      // 방금 보낸 메시지의 전달 상태를 빨리 따라가도록 폴링 간격을 되돌린다.
+      nudge();
       return res.message;
     },
-    [pullMessages],
+    [pullMessages, nudge],
   );
 
   const deleteMessage = useCallback(

@@ -1,5 +1,5 @@
 // 화면이 서버 값을 번역하는 순수 규칙. 컴포넌트는 여기 결과만 그린다(테스트는 이 파일만 본다).
-import type { ActivityItem, Agent, AgentSummary, RoomCard, RoomHealth, RoomMember } from "./types.js";
+import type { ActivityItem, Agent, AgentSummary, Message, RoomCard, RoomHealth, RoomMember } from "./types.js";
 import type { View } from "./route.js";
 import { TONE_LABEL, type AgentTone } from "./format.js";
 
@@ -230,4 +230,64 @@ export function nextFetchAfter(lastSeq: number, full: boolean, window = DELIVERY
 /** 새 메시지 수(폴링 간격 판단). 되읽은 기존 메시지는 세지 않는다. */
 export function countNew(previousLast: number, seqs: number[]): number {
   return seqs.filter((s) => s > previousLast).length;
+}
+
+// ---------- 적응형 폴링 ----------
+
+/** 폴링 단계(ms). 새 글이 없으면 점점 늦춘다. */
+export const POLL_STEPS = [4000, 6000, 10000, 15000, 20000];
+
+/** 전달 배지(보냄→받아감→확인함→답장함)를 기다리는 최근 구간. */
+export const DELIVERY_WATCH_MS = 15 * 60_000;
+
+/**
+ * 지금 전달 상태 변화를 기다리는 메시지가 있는지.
+ * 내가 보낸 지 DELIVERY_WATCH_MS 안의 메시지가 수신자에게 아직 답장(replied)까지 가지 않았다면 true.
+ * 이때는 폴링을 가장 짧은 간격으로 고정해 배지가 최대 20초 늦게 바뀌던 문제를 줄인다.
+ */
+export function awaitingDelivery(messages: Message[], now = Date.now()): boolean {
+  return messages.some((m) => {
+    if (m.sender.type !== "owner" || !m.recipient || !m.delivery) return false;
+    if (m.delivery.state === "replied" || m.deleted) return false;
+    const at = new Date(m.created_at).getTime();
+    return Number.isFinite(at) && now - at < DELIVERY_WATCH_MS;
+  });
+}
+
+/** 폴링 간격: 전달을 기다리는 중이면 가장 짧은 단계(4초), 아니면 조용한 만큼 늦춘 단계. */
+export function pollDelay(quiet: number, waiting: boolean, steps: number[] = POLL_STEPS): number {
+  const idx = Math.min(Math.max(0, Math.trunc(quiet)), steps.length - 1);
+  return waiting ? steps[0] : steps[idx];
+}
+
+// ---------- 최초 화면(로그인/계정 만들기) ----------
+
+export type LandingMode = "login" | "legacy" | "onboard";
+
+/**
+ * 계정이 하나도 없을 때 어느 탭으로 열지 정한다.
+ * 관리자 키를 모르면 '계정 만들기'는 막다른 길이라(웹 부트스트랩이 꺼져 있으면 키 입력창만 보인다),
+ * 아직 계정에 연결되지 않은 기존 방이 있으면 '기존 방 코드'로 열어 준다.
+ */
+export function setupLandingMode(setup: { needs_owner?: boolean; bootstrap_allowed?: boolean; legacy_rooms?: number } | null): LandingMode {
+  if (!setup?.needs_owner) return "login";
+  if (setup.legacy_rooms && setup.legacy_rooms > 0 && !setup.bootstrap_allowed) return "legacy";
+  return "onboard";
+}
+
+/** 이미 풀에 있는(폐기되지 않은) 비서 이름과 부딪히면 그 이름을 돌려준다. 승인 전에 미리 알려 409 왕복을 줄인다. */
+export function agentNameConflict(
+  pool: { id: string; name: string; status: string }[],
+  wanted: string,
+  ignoreId?: string | null,
+): string | null {
+  const key = wanted.trim().toLowerCase();
+  if (!key) return null;
+  const hit = pool.find((a) => a.status !== "revoked" && a.id !== ignoreId && a.name.trim().toLowerCase() === key);
+  return hit ? hit.name : null;
+}
+
+/** 인박스에서 아직 읽지 않은 항목 수(배지와 같은 기준). */
+export function unreadActivityCount(items: ActivityItem[]): number {
+  return items.filter((it) => it.unread).length;
 }

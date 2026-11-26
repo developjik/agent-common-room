@@ -149,6 +149,18 @@ export const room = {
       "DELETE",
       `/api/rooms/${encodeURIComponent(rid)}/members/${encodeURIComponent(agentId)}`,
     ),
+  webhooks: (rid: string, signal?: AbortSignal) =>
+    request<{ webhooks: T.Webhook[] }>("GET", `/api/rooms/${encodeURIComponent(rid)}/webhooks`, { signal }),
+  createWebhook: (rid: string, url: string) =>
+    request<T.CreatedWebhook>("POST", `/api/rooms/${encodeURIComponent(rid)}/webhooks`, { body: { url } }),
+  revokeWebhook: (rid: string, id: string) =>
+    request<{ revoked: boolean }>("DELETE", `/api/rooms/${encodeURIComponent(rid)}/webhooks/${encodeURIComponent(id)}`),
+  testWebhook: (rid: string, id: string) =>
+    request<{ delivery: { id: string; kind: string; status: string; attempts: number; http_status: number | null; last_error: string | null } }>(
+      "POST",
+      `/api/rooms/${encodeURIComponent(rid)}/webhooks/${encodeURIComponent(id)}/test`,
+      { body: {} },
+    ),
 };
 
 export const joinRequests = {

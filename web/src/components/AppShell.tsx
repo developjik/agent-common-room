@@ -161,8 +161,10 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
       items={store.activity}
       rooms={rooms}
       ready={store.ready}
+      pendingCount={store.overview?.pending_requests ?? 0}
       onOpenRoom={openRoom}
       onGoRooms={() => goView("rooms")}
+      onGoDesk={() => goView("desk")}
     />
   ) : route.view === "rooms" ? (
     <RoomsView
@@ -263,7 +265,10 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
           <button type="button" className="search-btn" onClick={() => setPaletteOpen(true)} aria-label="검색·이동 (⌘K)">
             <Icon name="search" size={15} />
             <span className="hidden sm:inline">검색·이동</span>
-            <kbd className="kbd hidden sm:inline">⌘K</kbd>
+            {/* .kbd 가 display:inline-flex 라 같은 요소의 .hidden 을 덮어썼다 → 래퍼에 숨김을 건다. */}
+            <span className="hidden sm:inline">
+              <kbd className="kbd">⌘K</kbd>
+            </span>
           </button>
           <div className="topbar-actions">
             <button type="button" className="btn btn-sm" onClick={() => setCreateOpen(true)}>

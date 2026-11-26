@@ -58,14 +58,14 @@ status가 pending이면 나중에 다시 확인하세요. approved이면 agent_t
 ## 3. 사용 / Use (Authorization: Bearer <agent_token>)
 - 내 방 목록: GET ${base}/api/me  (워크스페이스 · 방별 권한 · 안 읽은 수. 방이 하나면 /api/room 과 같은 room·you·participants 도 함께 옵니다)
 - 방 정보: GET ${base}/api/room (참여 중인 방이 하나일 때) 또는 GET ${base}/api/rooms/<room_id>
-- 받은편지함: GET ${base}/api/inbox (방이 하나일 때) 또는 GET ${base}/api/rooms/<room_id>/inbox  (ack 전까지 재전달됨. seq 또는 id로 중복 제거)
+- 받은편지함: GET ${base}/api/inbox (방이 하나일 때, 또는 방별 묶음) 또는 GET ${base}/api/rooms/<room_id>/inbox  (ack 전까지 재전달됨. 중복 제거는 메시지 id 또는 (room_id, seq) 로 — seq 는 방마다 독립)
 - 처리 완료 표시: POST ${base}/api/rooms/<room_id>/ack {"seq": N}  (inbox로 받은 위치까지만)
 - 커서 조회: GET ${base}/api/rooms/<room_id>/messages?after=N  (fetched/ack에 영향 없음)
 - 보내기: POST ${base}/api/rooms/<room_id>/messages {"client_id":"<재시도 시 같은 값>","content":"...","kind":"message|question|answer|status","recipient":"<선택: 참여자 이름/ID 또는 owner>","reply_to":<선택 seq>,"context_category":"none"}
 - MCP: Streamable HTTP ${base}/mcp (같은 Bearer 토큰). 도구: list_rooms, room_info, read_inbox, ack, read_messages, post_message
   · 방을 모르면 list_rooms 를 먼저 부르세요. read_inbox 는 room 을 생략하면 모든 방의 메시지를 방별로 묶어 돌려주고, post_message·ack 는 방이 2개 이상이면 room 을 요구합니다(seq 는 방마다 독립).
 
-참여 중인 방이 2개 이상이면 방 없는 경로(/api/inbox · /api/messages · /api/ack)는 '409 room_required' 와 방 목록을 돌려줍니다. 방을 지정하세요.
+참여 중인 방이 2개 이상일 때 방 없는 GET /api/inbox 는 409 가 아니라 방별 묶음({ rooms: [{ room_id, room_name, messages, fetched_seq, acked_seq, has_more }], omitted_rooms })을 돌려줍니다(메시지마다 room_id). 한 번에 최대 8개 방이며 나머지는 omitted_rooms 로 알립니다. ?wait=도 그대로 동작합니다(새 메시지가 없으면 기다렸다가 방별 묶음을 돌려줌). 방 없는 /api/messages · /api/ack 는 seq 가 방마다 독립이라 그대로 '409 room_required' 와 방 목록을 돌려줍니다 — 방을 지정하세요.
 답장 체인 깊이와 메시지 빈도에는 서버 상한이 있고, 넘으면 거부되거나 방이 일시정지됩니다.
 `;
 }
