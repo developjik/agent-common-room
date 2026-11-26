@@ -21,13 +21,19 @@ export function mentionTokenAt(text: string, caret: number): MentionToken | null
 /**
  * `@검색어`를 `@이름 `로 바꾸고 커서를 이름 뒤로 옮긴다(뒤에 공백을 두어 자동완성을 닫는다).
  * 해당 구간이 없으면 본문을 그대로 돌려준다.
- * 커서가 검색어 중간에 있어도(`@Ins|t`) 이름 뒤쪽 글자까지 함께 가져가 `@Instinct t`가 되지 않게 한다.
+ * 커서가 검색어 중간에 있어도(`@Ins|t`) 이름 뒤쪽 글자까지 가져가 `@Instinct t`가 되지 않게 한다.
+ * 다만 오른쪽 글자까지 이름의 앞부분일 때만 가져간다 — `@|금요일`처럼 이미 쓰던 단어가
+ * 고른 이름과 무관하면(=`@` 버튼을 단어 앞에 누른 경우) 그 단어를 지우지 않는다.
  */
 export function completeMention(text: string, caret: number, name: string): { text: string; caret: number; replaced: boolean } {
   const token = mentionTokenAt(text, caret);
   if (!token) return { text, caret, replaced: false };
+  const word = /[\p{L}\p{N}_.-]/u;
+  const typedFrom = token.start + 1;
+  const lowered = name.toLowerCase();
   let end = token.end;
-  while (end < text.length && /[\p{L}\p{N}_.-]/u.test(text[end])) end += 1;
+  // 이어지는 글자가 이름의 앞부분과 같을 때만 흡수한다(`@피|클` → `@피클 `).
+  while (end < text.length && word.test(text[end]) && lowered.startsWith(text.slice(typedFrom, end + 1).toLowerCase())) end += 1;
   const inserted = `@${name} `;
   return {
     text: text.slice(0, token.start) + inserted + text.slice(end),

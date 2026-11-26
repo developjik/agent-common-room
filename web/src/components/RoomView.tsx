@@ -244,7 +244,6 @@ export function RoomView({
   }
 
   const liveAgents = agents.filter((a) => a.status === "active");
-  const pinnedAgent = recipient ? agents.find((a) => a.id === recipient) : undefined;
   const panelContent =
     panel?.kind === "thread" ? (
       <ThreadPanel
@@ -313,17 +312,8 @@ export function RoomView({
 
         {room.paused ? <PauseBanner room={room} messages={store.messages} onResume={() => void togglePause()} /> : null}
 
-        {pinnedAgent || replyTo || recipientNotice ? (
+        {replyTo || recipientNotice ? (
           <div className="pins" aria-label="보내는 대상">
-            {pinnedAgent ? (
-              <span className="pin">
-                <Icon name="at" size={13} />
-                <strong>@{pinnedAgent.name}</strong> 에게만
-                <button type="button" className="pin-clear" onClick={() => setRecipient("")} aria-label="받는 사람 해제 (방 전체로)">
-                  <Icon name="close" size={12} />
-                </button>
-              </span>
-            ) : null}
             {replyTo ? (
               <span className="pin">
                 <Icon name="reply" size={13} />
@@ -386,7 +376,6 @@ export function RoomView({
           onSend={send}
           seed={seed}
           focusNonce={focusComposer}
-          placeholder={recipient ? `@${agents.find((a) => a.id === recipient)?.name ?? ""} 에게 보내기` : `${room.name}에 보내기`}
         />
       </div>
 
