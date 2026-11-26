@@ -254,24 +254,30 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    // nudge 가 돌려 놓은 반복과 진행 중인 폴링이 같은 refresh 를 기다리면 둘 다 타이머를 잡으려 한다.
+    // 실행 중 플래그와 "예약 전 기존 타이머 해제"로 타이머가 하나만 남게 한다.
+    let running = false;
 
     const schedule = () => {
       if (cancelled) return;
+      window.clearTimeout(timer);
       const delay = pollDelay(quiet.current, awaitingDelivery(messagesRef.current));
       timer = window.setTimeout(loop, delay);
       timerRef.current = timer;
     };
     const loop = async () => {
-      if (cancelled) return;
-      if (document.hidden) {
+      if (cancelled || running) return;
+      running = true;
+      try {
+        if (document.hidden) return;
+        const added = await refresh();
+        // 새 글이 없어도 전달 배지를 기다리는 동안에는 간격을 늘리지 않는다.
+        const waiting = awaitingDelivery(messagesRef.current);
+        quiet.current = added > 0 || waiting ? 0 : Math.min(quiet.current + 1, POLL_STEPS.length - 1);
+      } finally {
+        running = false;
         schedule();
-        return;
       }
-      const added = await refresh();
-      // 새 글이 없어도 전달 배지를 기다리는 동안에는 간격을 늘리지 않는다.
-      const waiting = awaitingDelivery(messagesRef.current);
-      quiet.current = added > 0 || waiting ? 0 : Math.min(quiet.current + 1, POLL_STEPS.length - 1);
-      schedule();
     };
     loopRef.current = () => void loop();
     const onVisible = () => {

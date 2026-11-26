@@ -552,7 +552,8 @@ export async function handleFetch(
         // ack·messages 는 seq 가 방마다 독립이라 여전히 방을 지정해야 한다.
         const limit = url.searchParams.get("limit") ?? undefined;
         const rooms = await svc.agentRooms(agent.id);
-        if (rooms.length > 1) return json(200, await svc.inboxMany(agent, limit));
+        // wait 도 단일 방과 같은 계약으로 넘긴다(집계 경로가 즉시 반환하면 롱폴링 클라이언트가 폭주한다).
+        if (rooms.length > 1) return json(200, await svc.inboxMany(agent, limit, url.searchParams.get("wait") ?? undefined, bearer(req)));
         return json(200, await svc.inbox(agent, limit, url.searchParams.get("wait") ?? undefined, bearer(req)));
       }
       if (path === "/api/ack" && method === "POST") return json(200, await svc.ack(agent, obj(await readJson(req)).seq));

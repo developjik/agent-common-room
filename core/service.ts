@@ -890,23 +890,23 @@ export class RoomService {
   async workspaceActivity(scope: OwnerScope, workspaceId: string, limit?: unknown) {
     await this.assertOwnerWorkspace(scope, workspaceId);
     const lim = this.clampLimit(limit, 50);
+    // 안 읽은 항목을 먼저 보여 준다. 배지(counts.needs_you)는 기간 제한 없이 안 읽은 것을 세므로,
+    // 최근 50건만 시간순으로 자르면 "배지는 1인데 목록엔 없다"가 생긴다(읽은 최신 글 50건이 가림).
+    // is_unread 는 개요와 같은 기준(방별 owner_reads.last_read_seq)이다.
     const rows = await this.db.all(
-      `SELECT m.*, r.name AS room_name, r.kind AS room_kind
+      `SELECT m.*, r.name AS room_name, r.kind AS room_kind,
+              CASE WHEN m.seq > COALESCE(o.last_read_seq, 0) THEN 1 ELSE 0 END AS is_unread
          FROM messages m JOIN rooms r ON r.id=m.room_id
+         LEFT JOIN owner_reads o ON o.owner_id=? AND o.room_id=m.room_id
         WHERE r.workspace_id=? AND m.deleted_at IS NULL
           AND ((m.sender_type='agent' AND m.kind='question') OR m.recipient_id='owner' OR m.sender_type='system')
-        ORDER BY m.created_at DESC, m.seq DESC LIMIT ?`,
-      workspaceId, lim);
+        ORDER BY is_unread DESC, m.created_at DESC, m.seq DESC LIMIT ?`,
+      scope.ownerId ?? "", workspaceId, lim);
     const messages = await this.toPublicMany(rows);
-    // unread 는 개요의 counts.needs_you 와 같은 기준(방별 owner_reads.last_read_seq)이다.
-    const reads = scope.ownerId
-      ? await this.db.all("SELECT room_id, last_read_seq FROM owner_reads WHERE owner_id=?", scope.ownerId)
-      : [];
-    const readByRoom = new Map(reads.map(r => [String(r.room_id), Number(r.last_read_seq)]));
     return {
       items: messages.map((m, i) => ({
         room_id: rows[i].room_id, room_name: rows[i].room_name, room_kind: rows[i].room_kind ?? "room",
-        unread: Number(rows[i].seq) > (readByRoom.get(String(rows[i].room_id)) ?? 0),
+        unread: Number(rows[i].is_unread) === 1,
         message: m,
       })),
       notice: UNTRUSTED_NOTICE,
@@ -1513,14 +1513,22 @@ export class RoomService {
     };
   }
   /**
-   * 여러 방의 inbox를 "한 번에" 읽는다(MCP read_inbox 의 방 생략 경로).
+   * 여러 방의 inbox를 "한 번에" 읽는다(MCP read_inbox 의 방 생략 경로, 그리고 v2 의 방 없는 GET /api/inbox).
    * 방마다 inbox()를 부르면 방당 5~6쿼리라 D1 무료 플랜의 호출당 50쿼리를 금방 넘는다.
    * 여기서는 구성원 1 + 메시지 1(방별 OR + ROW_NUMBER) + 커서 batch 1 + 공개 변환(방당 최대 2: 수신자·답장)
    * 으로 줄인다. 방 8개 상한 + 공개 변환(방당 최대 2) = 약 20쿼리로 Free D1의 호출당 50쿼리 안에 들어온다.
    * 한 번에 최대 AGGREGATE_ROOMS(8)개 방만 돌려주고 나머지는 omitted_rooms 로 알린다(바인드 상한·쿼리 예산 보호).
+   *
+   * wait 은 단일 방 inbox 와 같은 계약이다. 집계에서 무시하면 `?wait=25` 를 쓰는 클라이언트가
+   * 즉시 반환을 받고 요청을 연달아 보내게 되므로, 새 메시지가 없으면 기한까지 2초 간격으로 다시 읽는다
+   * (갱신당 메시지 1 + 토큰 확인 1).
    */
-  async inboxMany(agent: Agent, limit?: unknown) {
+  async inboxMany(agent: Agent, limit?: unknown, wait?: unknown, token?: string) {
     const lim = this.clampLimit(limit);
+    const waitSec = wait === undefined || wait === null || wait === "" ? 0
+      : typeof wait === "string" ? Number(wait) : typeof wait === "number" ? wait : NaN;
+    if (!Number.isFinite(waitSec) || waitSec < 0 || waitSec > 25) throw err(400, "bad_wait", "wait는 0~25초 숫자여야 합니다.");
+    const deadline = Date.now() + Math.floor(waitSec) * 1000;
     const all = await this.membershipsOf(agent.id);
     const members = all.filter(m => !!m.can_read);
     if (!members.length) throw err(403, "no_read_scope", "읽을 수 있는 방이 없습니다.");
@@ -1536,12 +1544,23 @@ export class RoomService {
     });
     params.push(agent.id, lim + 1);
     // 방별로 lim+1 행만 가져온다(ROW_NUMBER). 미확인 메시지가 아무리 많아도 메모리·응답이 커지지 않는다.
-    const rows = await this.db.all(
+    const readAggregate = () => this.db.all(
       `SELECT * FROM (
          SELECT m.*, ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY seq) AS rn
            FROM messages m
           WHERE (${conds.join(" OR ")}) AND sender_id<>?
        ) t WHERE t.rn <= ? ORDER BY t.room_id, t.seq`, ...params);
+    let rows = await readAggregate();
+    while (!rows.length && Date.now() < deadline) {
+      // 남은 대기 시간을 넘지 않도록 갱신 간격을 deadline에 맞춘다.
+      await new Promise(r => setTimeout(r, Math.min(2000, Math.max(0, deadline - Date.now()))));
+      // 대기 중 토큰이 폐기된 에이전트에게 메시지가 나가지 않게 매 갱신마다 확인한다.
+      if (token) {
+        const alive = await this.db.one("SELECT id FROM agents WHERE id=? AND status='active' AND token_hash=?", agent.id, await hashToken(token));
+        if (!alive) throw err(401, "unauthorized", "토큰이 폐기되었습니다.");
+      }
+      rows = await readAggregate();
+    }
     const byRoom = new Map<string, Row[]>();
     for (const r of rows) {
       const list = byRoom.get(String(r.room_id)) ?? [];
@@ -1769,7 +1788,7 @@ export class RoomService {
     if (typeof urlRaw !== "string") throw err(400, "bad_url", "url 문자열이 필요합니다.");
     const u = this.checkWebhookUrl(urlRaw);
     await this.assertPublicHost(u.toString());
-    const count = (await this.db.one("SELECT count(*) c FROM webhooks WHERE room_id=?", roomId))!.c;
+    const count = (await this.db.one("SELECT count(*) c FROM webhooks WHERE room_id=? AND active=1", roomId))!.c;
     if (count >= 10) throw err(409, "webhook_limit", "웹훅은 방당 최대 10개입니다.");
     const id = newId("whk");
     const secret = newToken("whsec");

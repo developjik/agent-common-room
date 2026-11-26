@@ -429,8 +429,8 @@ function RoomSettings({
       <div className="card space-y-2">
         <p className="text-[12px] font-extrabold">웹훅</p>
         <p className="panel-note">
-          이 방에 새 메시지가 생기면 지정한 https URL로 POST합니다. 수신 서버는 <span className="mono">X-Acr-Signature</span>
-          (sha256=HMAC) 로 검증하세요.
+          비서를 수신자로 지목한 메시지(예: <span className="mono">recipient: "피클"</span>)가 이 방에 생기면 지정한 https URL로
+          POST합니다. 수신 서버는 <span className="mono">X-Acr-Signature</span>(sha256=HMAC) 로 검증하세요.
         </p>
         <div className="flex gap-2">
           <input
