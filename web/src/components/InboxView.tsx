@@ -5,7 +5,7 @@ import { Avatar } from "./Avatar.js";
 import { Icon } from "./icons.js";
 import { EmptyState } from "./ui.js";
 import { fmtFull, plainPreview, relTime } from "../lib/format.js";
-import { ACTIVITY_KINDS, ACTIVITY_LABEL, activityKind, filterActivity, type ActivityKind } from "../lib/views.js";
+import { ACTIVITY_KINDS, ACTIVITY_LABEL, activityKind, filterActivity, inboxSummaryLine, type ActivityKind } from "../lib/views.js";
 import type { ActivityItem, RoomCard } from "../lib/types.js";
 
 interface Props {
@@ -26,6 +26,7 @@ export function InboxView({ items, rooms, ready, needCount, pendingCount, onOpen
   const [roomId, setRoomId] = useState("");
 
   const filtered = useMemo(() => filterActivity(items, { roomId, kind }), [items, roomId, kind]);
+  const summary = inboxSummaryLine(needCount, items.length);
   const counts = useMemo(() => {
     const byKind: Record<string, number> = { all: items.length, question: 0, directed: 0, system: 0 };
     for (const it of items) byKind[activityKind(it)] = (byKind[activityKind(it)] ?? 0) + 1;
@@ -35,10 +36,7 @@ export function InboxView({ items, rooms, ready, needCount, pendingCount, onOpen
   return (
     <div className="page page-narrow">
       <div className="page-tools">
-        <p className="page-summary">
-          {needCount ? `답변 필요 ${needCount}곳` : "답변 필요 없음"}
-          {items.length ? ` · ${items.length}건` : ""}
-        </p>
+        {summary ? <p className="page-summary">{summary}</p> : <span />}
         <button type="button" className="btn btn-sm" onClick={onGoRooms}>
           방 목록
         </button>
@@ -123,7 +121,8 @@ export function InboxView({ items, rooms, ready, needCount, pendingCount, onOpen
                   <span className="min-w-0 flex-1">
                     <span className="inbox-head">
                       <span className="inbox-room">{it.room_name}</span>
-                      {m.sender.type !== "system" ? <Avatar name={m.sender.type === "owner" ? "나" : m.sender.name} small /> : null}
+                      {m.sender.type === "agent" ? <Avatar name={m.sender.name} small /> : null}
+                      {/* 오너 글은 아바타도 이름도 '나'라 '나 나'로 겹쳤다. 비서 글에만 아바타를 둔다. */}
                       <span className="inbox-sender">{m.sender.type === "owner" ? "나" : m.sender.type === "system" ? "시스템" : m.sender.name}</span>
                       <span className="inbox-kind-label">{ACTIVITY_LABEL[k]}</span>
                     </span>

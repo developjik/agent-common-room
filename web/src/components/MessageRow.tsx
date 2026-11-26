@@ -72,7 +72,12 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
 
       <div className="msg-body">
         <div className="msg-head">
-          {grouped ? null : <span className={"msg-name" + (isOwner ? " is-owner" : "")}>{name}</span>}
+          {/* 오너 글은 아바타 글자도 이름도 '나'라 '나 나'로 겹쳤다. 이름은 읽기용으로만 남긴다. */}
+          {grouped ? null : isOwner ? (
+            <span className="sr-only">나</span>
+          ) : (
+            <span className="msg-name">{name}</span>
+          )}
           {grouped ? null : (
             <span className="msg-time" title={fmtFull(m.created_at)}>
               {fmtTime(m.created_at)}

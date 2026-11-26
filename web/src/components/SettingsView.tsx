@@ -1,4 +1,4 @@
-// 설정: 계정·워크스페이스 정보, 테마, 세션 로그아웃. (정책·웹훅은 기존 콘솔 /ui/ 로 안내)
+// 설정: 계정·워크스페이스 정보, 테마, 세션 로그아웃. (방 정책·웹훅은 방의 구성원 → 방 탭)
 import { useState } from "react";
 import { Icon } from "./icons.js";
 import { useToast } from "./Toast.js";
@@ -101,7 +101,7 @@ export function SettingsView({ owner, workspace, theme, onTheme, onLogout, synce
             </button>
           ))}
         </div>
-        <p className="panel-note mt-2">계정을 만들지 않고 v1 콘솔(<a className="msg-link" href="/ui/">/ui/</a>)을 쓸 수 있습니다</p>
+        <p className="panel-note mt-2">선택은 이 브라우저에 저장되고, 다른 기기에서는 각각 고릅니다.</p>
       </section>
 
       <section className="settings-card">

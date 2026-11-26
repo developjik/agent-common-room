@@ -274,7 +274,7 @@ export function DeskView({ store, workspace, rooms, focus, onClearFocus, onCreat
           onClose={() => setPlacing(null)}
           onSubmit={async (roomIds, opts) => {
             await store.placeAgent(placing.id, roomIds, opts);
-            notify(`${placing.name} 을(를) ${roomIds.length}개 방에 배치했습니다.`);
+            notify(`"${placing.name}" 비서를 ${roomIds.length}개 방에 배치했습니다.`);
             setPlacing(null);
           }}
         />
