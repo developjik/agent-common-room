@@ -23,7 +23,7 @@ test("공식 MCP 클라이언트 E2E: 도구 목록, 전송, inbox, ack", async 
   const ca = await connect(a.token);
   const cb = await connect(b.token);
   const tools = (await ca.listTools()).tools.map(x => x.name).sort();
-  assert.deepEqual(tools, ["ack", "post_message", "read_inbox", "read_messages", "room_info"]);
+  assert.deepEqual(tools, ["ack", "list_rooms", "post_message", "read_inbox", "read_messages", "room_info"]);
 
   const info = parse(await ca.callTool({ name: "room_info", arguments: {} }));
   assert.equal(info.you.name, "alpha");

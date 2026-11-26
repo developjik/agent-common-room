@@ -3,8 +3,8 @@
 // 문자열 리터럴('...') 안의 ?는 건드리지 않는다.
 import pg from "pg";
 import type { Pool, PoolClient } from "pg";
-import type { ChangeResult, DbStatement, Row, SqlDb } from "../core/db.js";
-import { POSTGRES_SCHEMA_STATEMENTS } from "../core/schema.js";
+import type { ChangeResult, DbStatement, Row, SqlDb, SqlDialect } from "../core/db.js";
+import { migrateToLatest } from "../core/migrate.js";
 
 const { Pool: PgPool } = pg;
 
@@ -74,7 +74,49 @@ function poolConfig(url: string) {
   };
 }
 
+/**
+ * 잠금을 잡은 "연결 하나"에 묶인 어댑터. 풀 크기가 1인 배포(ACR_PG_POOL_MAX=1)에서도
+ * 스키마 준비가 같은 연결을 재사용하게 한다(추가 연결을 요구하면 시작이 멈춘다).
+ */
+class ClientDb implements SqlDb {
+  readonly dialect: SqlDialect = "postgres";
+  constructor(private client: PoolClient) {}
+  prep(sql: string, ...params: any[]): DbStatement {
+    return { sql: toPgParams(sql), params } as BoundStatement;
+  }
+  async one(sql: string, ...params: any[]): Promise<Row | undefined> {
+    const r = await this.client.query(toPgParams(sql), params);
+    return r.rows[0];
+  }
+  async all(sql: string, ...params: any[]): Promise<Row[]> {
+    const r = await this.client.query(toPgParams(sql), params);
+    return r.rows;
+  }
+  async run(sql: string, ...params: any[]): Promise<ChangeResult> {
+    const r = await this.client.query(toPgParams(sql), params);
+    return { changes: Number(r.rowCount ?? 0) };
+  }
+  async batch(statements: DbStatement[]): Promise<ChangeResult[]> {
+    const out: ChangeResult[] = [];
+    await this.client.query("BEGIN");
+    try {
+      for (const s of statements) {
+        const b = s as BoundStatement;
+        const r = await this.client.query(b.sql, b.params);
+        out.push({ changes: Number(r.rowCount ?? 0) });
+      }
+      await this.client.query("COMMIT");
+      return out;
+    } catch (e) {
+      try { await this.client.query("ROLLBACK"); } catch { /* 연결이 이미 끊긴 경우 */ }
+      throw e;
+    }
+  }
+  async ensureSchema(): Promise<void> { /* 잠금 안에서만 쓰는 어댑터 */ }
+}
+
 export class PostgresDb implements SqlDb {
+  readonly dialect: SqlDialect = "postgres";
   private schemaReady: Promise<void> | null = null;
   constructor(public pool: Pool) {}
 
@@ -120,7 +162,7 @@ export class PostgresDb implements SqlDb {
 
   /**
    * 스키마 준비(멱등). 서버리스에서 여러 인스턴스가 동시에 시작해도 안전하도록
-   * advisory lock 안에서 DDL을 한 번만 실행한다.
+   * advisory lock 안에서 DDL·백필을 한 번만 실행한다.
    */
   ensureSchema(): Promise<void> {
     if (!this.schemaReady) {
@@ -130,11 +172,10 @@ export class PostgresDb implements SqlDb {
         try {
           // 동시 부팅 시 DDL 경합 방지. (advisory lock이 없는 엔진에서도 스키마 준비는 계속한다)
           try { await client.query("SELECT pg_advisory_lock(914_210_731)"); locked = true; } catch { /* noop */ }
-          await client.query("BEGIN");
-          for (const ddl of POSTGRES_SCHEMA_STATEMENTS) await client.query(ddl);
-          await client.query("COMMIT");
+          // migrate 는 batch(=트랜잭션)와 개별 조회를 섞어 쓴다. 잠금을 잡은 "이 연결"로만 실행한다
+          // (풀 크기 1인 배포에서 두 번째 연결을 요구하면 시작이 멈춘다).
+          await migrateToLatest(new ClientDb(client));
         } catch (e) {
-          try { await client.query("ROLLBACK"); } catch { /* noop */ }
           this.schemaReady = null;
           throw e;
         } finally {

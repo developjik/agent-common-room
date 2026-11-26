@@ -1,8 +1,8 @@
 // 로컬 Node·Render·Railway용 SQLite 드라이버(node:sqlite).
 // 배포 즉시 쓸 수 있도록 첫 쿼리 전에 스키마(멱등 DDL)를 만든다.
 import { DatabaseSync } from "node:sqlite";
-import type { ChangeResult, DbStatement, Row, SqlDb } from "../core/db.js";
-import { SQLITE_SCHEMA_STATEMENTS } from "../core/schema.js";
+import type { ChangeResult, DbStatement, Row, SqlDb, SqlDialect } from "../core/db.js";
+import { migrateToLatest } from "../core/migrate.js";
 
 interface BoundStatement {
   sql: string;
@@ -10,6 +10,7 @@ interface BoundStatement {
 }
 
 export class NodeSqliteDb implements SqlDb {
+  readonly dialect: SqlDialect = "sqlite";
   constructor(public raw: DatabaseSync) {}
 
   prep(sql: string, ...params: any[]): DbStatement {
@@ -55,14 +56,8 @@ export class NodeSqliteDb implements SqlDb {
   }
 
   async ensureSchema(): Promise<void> {
-    this.raw.exec("BEGIN IMMEDIATE");
-    try {
-      for (const ddl of SQLITE_SCHEMA_STATEMENTS) this.raw.exec(ddl);
-      this.raw.exec("COMMIT");
-    } catch (e) {
-      try { this.raw.exec("ROLLBACK"); } catch { /* noop */ }
-      throw e;
-    }
+    // DDL·백필·불변식 검증을 한 절차로 실행한다(이미 최신이면 읽기 1회).
+    await migrateToLatest(this);
   }
 
   async close(): Promise<void> {

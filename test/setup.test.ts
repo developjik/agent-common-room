@@ -56,11 +56,11 @@ test("최초 접속: 키가 없으면 웹에서 한 번만 발급할 수 있고,
   const second = await s.call("POST", "/api/setup/bootstrap", undefined, {});
   assert.equal(second.status, 409);
 
-  // 평문 키는 어디에도 저장되지 않는다(해시만).
+  // 평문 키는 어디에도 저장되지 않는다(해시만). meta 에는 schema_version 같은 다른 표식도 있다.
   const meta = s.sqlite.raw.prepare("SELECT key, value FROM meta").all() as any[];
-  assert.equal(meta.length, 1);
-  assert.equal(meta[0].key, "admin_key_hash");
-  assert.match(String(meta[0].value), /^[0-9a-f]{64}$/);
+  const keyRows = meta.filter((r) => r.key === "admin_key_hash");
+  assert.equal(keyRows.length, 1);
+  assert.match(String(keyRows[0].value), /^[0-9a-f]{64}$/);
   assert.ok(!JSON.stringify(meta).includes(first.json.admin_key));
 });
 
