@@ -835,7 +835,7 @@ export class RoomService {
        SELECT id,room_id,invite_id,display_name,product,note,status,claim_hash,created_at FROM join_requests WHERE id=? AND status<>'pending'`,
       jrId);
   }
-  private async membershipStatements(roomId: string, agentId: string, opts: { status: string; can_read: boolean; can_write: boolean; history_floor: number }): Promise<DbStatement[]> {
+  private async membershipStatements(roomId: string, agentId: string, opts: { status: string; can_read: boolean; can_write: boolean; history_floor: number; preserveActive?: boolean }): Promise<DbStatement[]> {
     const now = this.clock.now();
     const existing = await this.db.one("SELECT * FROM room_members WHERE room_id=? AND agent_id=?", roomId, agentId);
     if (existing) {
@@ -849,6 +849,8 @@ export class RoomService {
           this.db.prep("UPDATE agents SET fetched_seq=0, acked_seq=0 WHERE id=? AND room_id=?", agentId, roomId),
         ];
       }
+      // 초대 수락처럼 "이미 있는 자격을 다시 쓰지 않는" 경우: 오너가 정한 권한을 덮지 않고 그대로 둔다.
+      if (opts.preserveActive && existing.status === "active") return [];
       // 이미 활성인 구성원을 다시 배치해도 권한만 갱신하고 커서·하한은 보존한다.
       const status = opts.status === "active" ? "active" : existing.status;
       return [this.db.prep("UPDATE room_members SET status=?, can_read=?, can_write=? WHERE room_id=? AND agent_id=?",
@@ -1107,9 +1109,13 @@ export class RoomService {
    * 비서가 스스로 토큰을 받아 올 때까지 기다려야 했다. 오너 승인은 기본값에서 사라진다.
    *
    * - 이미 토큰이 있는 비서(existingAgent)가 보내면 새 신원·새 토큰 없이 그 방의 구성원만 추가한다.
-   * - 이름이 겹치면 409 name_taken. 초대 사용 횟수 차감은 같은 batch 안이라 함께 롤백된다
-   *   ("이름 충돌로 실패했는데 초대만 소진" 되지 않는다).
+   * - 이름이 겹치면 409 name_taken. 차감한 초대 사용 횟수는 실패 시 되돌린다("이름 충돌로 실패했는데
+   *   초대만 소진"되지 않는다).
    * - join_requests 에 approved·claimed 행을 남겨 오너가 누가 언제 들어왔는지 볼 수 있게 한다.
+   *
+   * 사용 횟수 차감은 **먼저 조건부 UPDATE 로 확정**한다. batch 안에 두고 결과를 커밋 뒤에 검사하면,
+   * 마지막 1회를 두고 경합한 쪽이 차감 0행인데도 신원·멤버십을 커밋해 버린다(토큰 없는 활성 비서가 남고
+   * 그 이름을 다시 쓸 수 없다). 실패하면 차감을 되돌리는 보상 쓰기를 한다.
    */
   async joinNow(token: string, body: { display_name?: unknown; product?: unknown; note?: unknown }, existingAgent?: Agent | null) {
     const now = this.clock.now();
@@ -1124,16 +1130,28 @@ export class RoomService {
     const targets = lobbyId === String(room.id) ? [lobbyId] : [lobbyId, String(room.id)];
     const product = typeof body.product === "string" ? body.product.trim().slice(0, 60) : "";
     const note = typeof body.note === "string" ? body.note.trim().slice(0, 300) : "";
-    const consume = this.db.prep("UPDATE invites SET uses=uses+1 WHERE id=? AND revoked=0 AND expires_at>? AND uses<max_uses", inv.id, now);
     const jrId = newId("jr");
+    // 원자적 조건부 차감. 경합에서 지면 여기서 끝난다(신원·멤버십을 만들지 않는다).
+    const consumed = await this.db.run("UPDATE invites SET uses=uses+1 WHERE id=? AND revoked=0 AND expires_at>? AND uses<max_uses", inv.id, now);
+    if (!batchChanges(consumed)) throw invalid();
+    /** 이후 단계가 실패하면 차감한 사용 횟수를 되돌린다(같은 초대로 다시 시도할 수 있게). */
+    const giveBack = async () => {
+      try {
+        await this.db.run("UPDATE invites SET uses=CASE WHEN uses>0 THEN uses-1 ELSE 0 END WHERE id=?", inv.id);
+      } catch { /* 보상 실패는 원래 오류를 가리지 않는다. */ }
+    };
 
     if (existingAgent) {
-      if (existingAgent.workspace_id !== String(ws.id)) throw err(403, "cross_workspace", "다른 워크스페이스의 방에는 들어갈 수 없습니다.");
-      const stmts: DbStatement[] = [consume];
+      if (existingAgent.workspace_id !== String(ws.id)) {
+        await giveBack();
+        throw err(403, "cross_workspace", "다른 워크스페이스의 방에는 들어갈 수 없습니다.");
+      }
+      const stmts: DbStatement[] = [];
       for (const rid of targets) {
         const target = rid === lobbyId ? lobby : room;
+        // 이미 활성인 방은 건드리지 않는다(오너가 내린 읽기/쓰기 제한을 초대 수락이 되돌리면 안 된다).
         stmts.push(...await this.membershipStatements(rid, existingAgent.id, {
-          status: "active", can_read: true, can_write: true, history_floor: Number(target.next_seq) - 1,
+          status: "active", can_read: true, can_write: true, history_floor: Number(target.next_seq) - 1, preserveActive: true,
         }));
       }
       stmts.push(this.db.prep(
@@ -1141,8 +1159,12 @@ export class RoomService {
         jrId, room.id, inv.id, existingAgent.name, product, note, await hashToken(newToken("acr_clm")), existingAgent.id, now, now, inv.kind ?? "room"));
       stmts.push(this.db.prep("INSERT INTO audit(room_id, ts, actor, action, detail) VALUES (?,?,?,?,?)",
         room.id, now, "agent:" + existingAgent.id, "join.instant", `${jrId} existing rooms=${targets.join(",")}`));
-      const res = await this.db.batch(stmts);
-      if (batchChanges(res[0]) !== 1) throw invalid();
+      try {
+        await this.db.batch(stmts);
+      } catch (e) {
+        await giveBack();
+        throw e;
+      }
       return {
         status: "joined" as const, agent_id: existingAgent.id, name: existingAgent.name, existing_agent: true,
         room_id: lobbyId, lobby_room_id: lobbyId, rooms: (await this.agentRooms(existingAgent.id)).map(r => r.id),
@@ -1153,13 +1175,13 @@ export class RoomService {
 
     const name = this.validateAgentName(body.display_name);
     if (await this.db.one("SELECT 1 x FROM agents WHERE workspace_id=? AND name_key=? AND status IN ('unclaimed','active')", ws.id, name.toLowerCase())) {
+      await giveBack();
       throw err(409, "name_taken", `'${name}' 이름은 이미 쓰고 있습니다. display_name 을 다른 이름으로 바꿔 다시 호출하세요(초대 사용 횟수는 차감되지 않았습니다).`);
     }
     const agentId = newId("agt");
     const agentToken = newToken("acr_agt");
     const lobbyFloor = Number(lobby.next_seq) - 1;
     const stmts: DbStatement[] = [
-      consume,
       this.db.prep(
         "INSERT INTO agents(id,room_id,workspace_id,name,name_key,product,token_hash,status,can_read,can_write,history_floor,created_at,last_seen) VALUES (?,?,?,?,?,?,?,'active',1,1,?,?,?)",
         agentId, lobbyId, ws.id, name, name.toLowerCase(), product, await hashToken(agentToken), lobbyFloor, now, now),
@@ -1176,11 +1198,9 @@ export class RoomService {
     stmts.push(this.db.prep("INSERT INTO audit(room_id, ts, actor, action, detail) VALUES (?,?,?,?,?)",
       room.id, now, "invite", "join.instant", `${jrId} agent=${agentId} rooms=${targets.join(",")}`));
     try {
-      const res = await this.db.batch(stmts);
-      // 초대 사용이 0행이면(동시에 마지막 횟수를 누가 씀) 전체가 롤백됐다 → 같은 404.
-      if (batchChanges(res[0]) !== 1) throw invalid();
+      await this.db.batch(stmts);
     } catch (e) {
-      if (e instanceof ApiError) throw e;
+      await giveBack();
       if (isConstraintError(e)) throw err(409, "name_taken", `'${name}' 이름은 이미 쓰고 있습니다. display_name 을 다른 이름으로 바꿔 다시 호출하세요(초대 사용 횟수는 차감되지 않았습니다).`);
       throw e;
     }

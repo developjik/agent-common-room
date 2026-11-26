@@ -22,7 +22,6 @@ import {
 } from "../lib/views.js";
 import type { WorkspaceStore } from "../hooks/useWorkspace.js";
 import type { JoinRequest, PoolAgent, RoomCard, Workspace } from "../lib/types.js";
-
 interface Props {
   store: WorkspaceStore;
   workspace: Workspace;
@@ -33,6 +32,7 @@ export function AgentsView({ store, workspace, onOpenRoom }: Props) {
   const notify = useToast();
   const confirm = useConfirm();
   const [busyInvite, setBusyInvite] = useState(false);
+  const [fallback, setFallback] = useState<{ link: string; text: string } | null>(null);
   const rooms = store.overview?.rooms ?? [];
   const lobbyId = workspace.lobby_room_id ?? null;
   const lobbyName = rooms.find((r) => r.id === lobbyId)?.name ?? "로비";
@@ -47,12 +47,16 @@ export function AgentsView({ store, workspace, onOpenRoom }: Props) {
     try {
       const res = await store.createPoolInvite(INVITE_DEFAULTS.ttlHours, INVITE_DEFAULTS.maxUses);
       const link = `${location.origin}/join/${res.invite_token}`;
-      const ok = await copyText(poolInviteText(workspace.name, lobbyName, link));
-      notify(
-        ok
-          ? "초대 문장을 복사했습니다 · 7일 · 10회. 비서에게 그대로 붙여넣으세요."
-          : "클립보드에 넣지 못했습니다. 브라우저 권한을 확인한 뒤 다시 시도하세요.",
-      );
+      const text = poolInviteText(workspace.name, lobbyName, link);
+      const ok = await copyText(text);
+      if (ok) {
+        setFallback(null);
+        notify("초대 문장을 복사했습니다 · 7일 · 10회. 비서에게 그대로 붙여넣으세요.");
+      } else {
+        // 클립보드가 막혀도 방금 만든 링크는 여기서 직접 복사할 수 있게 남긴다(발급 응답에만 있음).
+        setFallback({ link, text });
+        notify("클립보드에 넣지 못했습니다. 아래 링크를 직접 복사하세요.");
+      }
     } catch (e) {
       notify(e instanceof Error ? e.message : "초대 링크를 만들지 못했습니다.");
     } finally {
@@ -85,6 +89,19 @@ export function AgentsView({ store, workspace, onOpenRoom }: Props) {
           {busyInvite ? "만드는 중…" : "비서 초대 링크 복사"}
         </button>
       </div>
+
+      {fallback ? (
+        <div className="invite-bar" role="status">
+          <Icon name="link" size={14} />
+          <code className="min-w-0 flex-1 select-all break-all">{fallback.link}</code>
+          <button type="button" className="btn btn-sm" onClick={() => void copyText(fallback.text)}>
+            초대 문장 복사
+          </button>
+          <button type="button" className="btn-icon" onClick={() => setFallback(null)} aria-label="닫기">
+            <Icon name="close" size={13} />
+          </button>
+        </div>
+      ) : null}
 
       {store.requests.length ? (
         <section aria-labelledby="legacy-requests" className="mb-4">
@@ -243,14 +260,26 @@ function AgentCard({
 function LegacyRequest({ store, q }: { store: WorkspaceStore; q: JoinRequest }) {
   const notify = useToast();
   const [busy, setBusy] = useState(false);
-  const conflict = q.existing_agent ? null : agentNameConflict(store.pool, q.display_name, q.agent_id);
+  const [name, setName] = useState(q.display_name);
+  const wanted = name.trim();
+  // 입력한 이름을 실시간으로 풀의 기존 비서와 대조한다(이름을 바꾸면 바로 승인할 수 있다).
+  const conflict = q.existing_agent ? null : agentNameConflict(store.pool, wanted, q.agent_id);
 
   const approve = async () => {
     if (busy) return;
+    if (!wanted) {
+      notify("비서 이름을 입력하세요.");
+      return;
+    }
     setBusy(true);
     try {
-      const name = await store.approve(q.id, { history: "none", can_read: true, can_write: true });
-      notify(`${name} 님을 승인했습니다.`);
+      const approved = await store.approve(q.id, {
+        history: "none",
+        can_read: true,
+        can_write: true,
+        name: q.existing_agent || wanted === q.display_name.trim() ? undefined : wanted,
+      });
+      notify(`${approved} 님을 승인했습니다.`);
     } catch (e) {
       notify(e instanceof Error ? e.message : "승인하지 못했습니다.");
     } finally {
@@ -287,13 +316,26 @@ function LegacyRequest({ store, q }: { store: WorkspaceStore; q: JoinRequest }) 
         </div>
       </div>
       {q.note ? <p className="text-[12px] leading-relaxed text-muted">{q.note}</p> : null}
-      {conflict ? (
-        <p className="w-full text-[11.5px] leading-relaxed auth-error" role="alert">
-          '{conflict}' 이름의 비서가 이미 있습니다. 그 비서를 연결 끊은 뒤 다시 초대하세요.
-        </p>
-      ) : null}
+      <div className="w-full">
+        <label className="label" htmlFor={`n-${q.id}`}>
+          비서 이름
+        </label>
+        <input
+          id={`n-${q.id}`}
+          className="field text-[12.5px]"
+          value={name}
+          maxLength={40}
+          disabled={!!q.existing_agent}
+          onChange={(e) => setName(e.target.value)}
+        />
+        {conflict ? (
+          <p className="mt-1 text-[11px] leading-relaxed auth-error" role="alert">
+            '{conflict}' 이름의 비서가 이미 있습니다. 이름을 바꾸면 바로 승인할 수 있습니다.
+          </p>
+        ) : null}
+      </div>
       <div className="flex w-full gap-2">
-        <button type="button" className="btn btn-primary btn-sm flex-1" onClick={() => void approve()} disabled={busy || !!conflict}>
+        <button type="button" className="btn btn-primary btn-sm flex-1" onClick={() => void approve()} disabled={busy || !!conflict || !wanted}>
           승인
         </button>
         <button type="button" className="btn btn-danger btn-sm" onClick={() => void deny()} disabled={busy}>

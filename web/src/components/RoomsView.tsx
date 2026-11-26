@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { RoomView } from "./RoomView.js";
 import { Icon } from "./icons.js";
 import { useToast } from "./Toast.js";
-import { sortRoomCards } from "../lib/views.js";
+import { sortRoomCards, roomNeedsAnswer } from "../lib/views.js";
 import { relTime } from "../lib/format.js";
 import type { WorkspaceStore } from "../hooks/useWorkspace.js";
 import type { RoomCard, Workspace } from "../lib/types.js";
@@ -146,6 +146,11 @@ function RoomRow({ room, active, onOpen }: { room: RoomCard; active: boolean; on
       <span className="rl-preview">{preview}</span>
       <span className="rl-side">
         {room.paused ? <span className="tag tag-wait">정지</span> : null}
+        {roomNeedsAnswer(room) ? (
+          <span className="rl-need" title="답변 필요">
+            답변 필요
+          </span>
+        ) : null}
         {room.unread > 0 ? (
           <span className="tile-unread">{room.unread > 99 ? "99+" : room.unread}</span>
         ) : (

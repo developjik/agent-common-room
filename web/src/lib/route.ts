@@ -21,7 +21,8 @@ const LEGACY: Record<string, View> = { home: "rooms", inbox: "rooms", rooms: "ro
 
 export function parseView(raw: string | null | undefined): View {
   const key = String(raw ?? "");
-  return LEGACY[key] ?? "rooms";
+  // 상속된 키(__proto__·constructor 등)는 화면 이름이 아니다. 직접 정의한 별칭만 인정한다.
+  return Object.prototype.hasOwnProperty.call(LEGACY, key) ? LEGACY[key] : "rooms";
 }
 
 /** 검색 문자열(‘?’ 포함/미포함 모두)을 경로로 해석한다. 방 ID가 있으면 그 방을 연 '방' 화면이다. */

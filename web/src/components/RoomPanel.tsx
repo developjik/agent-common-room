@@ -170,7 +170,8 @@ function RoomName({ store, room }: { store: WorkspaceStore; room: RoomDetail }) 
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") void save();
+            // 한글 입력기로 후보를 확정하는 Enter 는 저장하지 않는다(조합 중 전송 방지와 같은 규칙).
+            if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) void save();
           }}
         />
         <button type="button" className="btn" onClick={() => void save()} disabled={busy || name.trim() === room.name}>

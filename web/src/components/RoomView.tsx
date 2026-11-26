@@ -172,6 +172,12 @@ export function RoomView({ roomId, store, workspace, isWide, onBack }: Props) {
     }
   };
 
+  // 모바일 시트를 열면 포커스를 시트 안으로 옮긴다(대화 컨트롤부터 Tab 이 돌지 않게).
+  useEffect(() => {
+    if (!panelOpen || isWide) return;
+    window.setTimeout(() => document.querySelector<HTMLElement>(".sheet [data-close]")?.focus(), 0);
+  }, [panelOpen, isWide]);
+
   if (!room) {
     return (
       <div className="page">

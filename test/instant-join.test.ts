@@ -153,6 +153,49 @@ test("레거시 2단계는 instant:false 로 그대로 남아 있다(참여 요�
   } finally { await t.close(); }
 });
 
+test("마지막 1회를 두고 경합해도 진 쪽은 신원을 남기지 않는다(토큰 없는 활성 비서 금지)", async () => {
+  const t = await start();
+  try {
+    const { owner, wid } = await workspace(t, "instant-race");
+    const invite = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, { max_uses: 1 })).json;
+    const [a, b] = await Promise.all([
+      t.call("POST", `/api/join/${invite.invite_token}`, undefined, { display_name: "동시A" }),
+      t.call("POST", `/api/join/${invite.invite_token}`, undefined, { display_name: "동시B" }),
+    ]);
+    assert.deepEqual([a.status, b.status].sort(), [201, 404], "하나만 들어온다");
+    const agents = (await t.call("GET", `/api/workspaces/${wid}/agents`, owner)).json.agents;
+    assert.equal(agents.length, 1, "진 쪽의 활성 신원이 남지 않는다");
+    assert.equal(agents[0].status, "active");
+    const loser = a.status === 404 ? "동시A" : "동시B";
+    const raw = t.sqlite.raw.prepare("SELECT count(*) c FROM agents WHERE name=?").get(loser) as any;
+    assert.equal(Number(raw.c), 0, `${loser} 신원이 만들어지지 않았다`);
+  } finally { await t.close(); }
+});
+
+test("기존 비서가 다른 방 초대를 수락해도 오너가 내린 로비 읽기 제한은 그대로다", async () => {
+  const t = await start();
+  try {
+    const { owner, wid, lobbyId } = await workspace(t, "instant-perm");
+    const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "연구방" })).json;
+    const pool = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
+    const first = await t.call("POST", `/api/join/${pool.invite_token}`, undefined, { display_name: "제한" });
+    const token = first.json.agent_token as string;
+    const aid = first.json.agent_id as string;
+
+    // 오너가 로비 읽기를 끈다.
+    assert.equal((await t.call("PATCH", `/api/rooms/${lobbyId}/members/${aid}`, owner, { can_read: false, can_write: true })).status, 200);
+    const lobbyInvite = (await t.call("POST", `/api/rooms/${room.id}/invites`, owner, {})).json;
+    const again = await t.call("POST", `/api/join/${lobbyInvite.invite_token}`, token, { display_name: "제한" });
+    assert.equal(again.status, 201);
+
+    const me = (await t.call("GET", "/api/me", token)).json;
+    const lobby = me.rooms.find((r: any) => r.id === lobbyId);
+    const joined = me.rooms.find((r: any) => r.id === room.id);
+    assert.equal(lobby.you.can_read, false, "로비 읽기 제한이 초대 수락으로 풀리지 않는다");
+    assert.equal(joined.you.can_read, true, "새로 들어온 방은 기본 권한");
+  } finally { await t.close(); }
+});
+
 test("방 초대 안내는 '한 번 호출' 로 바뀌었고, 예전 승인 방식은 접힌 참고로만 남는다", async () => {
   const t = await start();
   try {

@@ -87,6 +87,8 @@ test("경로: 방·비서·설정 세 화면뿐이고, 예전 주소는 막다�
   assert.deepEqual(parseRoute("?room=room_50795a119a4a4b48"), { view: "rooms", roomId: "room_50795a119a4a4b48" });
   assert.deepEqual(parseRoute("?view=agents&room=room_x"), { view: "rooms", roomId: "room_x" }, "방을 보고 있으면 방 화면");
   assert.deepEqual(parseRoute("?view=../../etc"), { view: "rooms", roomId: null }, "모르는 뷰는 방");
+  assert.deepEqual(parseRoute("?view=__proto__"), { view: "rooms", roomId: null }, "상속된 키는 화면 이름이 아니다");
+  assert.deepEqual(parseRoute("?view=constructor"), { view: "rooms", roomId: null });
   assert.deepEqual(parseRoute("?room=<script>"), { view: "rooms", roomId: null }, "방 ID 모양이 아니면 무시");
 
   // 예전 주소(관제실·인박스·비서실) 호환
@@ -169,6 +171,7 @@ test("비서 방 토글: 방을 누르면 넣고 빼되 로비는 고정, 다른
   assert.deepEqual(toggledRoomIds(both, rooms, "room_lobby", "room_lobby").sort(), ["room_a", "room_lobby"], "로비 칩은 잠겨 있어 눌러도 빠지지 않는다");
   assert.ok(!toggledRoomIds(agent({ rooms: [{ room_id: "room_gone", room_name: "옛 방", status: "active" }] }), rooms, "room_lobby", "room_a").includes("room_gone"), "이 워크스페이스에 없는 방은 보내지 않는다");
   assert.match(unclaimedNotice(), /토큰을 받지 못한 비서/);
+  assert.match(unclaimedNotice(), /연결을 끊고 새로 초대/, "같은 이름으로 재초대해도 들어올 수 없다는 사실을 숨기지 않는다");
 });
 
 test("초대 문장과 기본값: 한 번 호출로 바로 입장, 7일 · 10회", () => {

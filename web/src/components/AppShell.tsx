@@ -117,7 +117,8 @@ export function AppShell({ owner, workspace, route, onNavigate, onLogout, onUnau
           </header>
         ) : null}
 
-        <div className="shell-view is-plain">{content}</div>
+        {/* 방 화면만 스스로 스크롤한다(목록·대화 각각). 비서·설정 화면은 공통 세로 스크롤을 쓴다. */}
+        <div className={"shell-view" + (route.view === "rooms" ? " is-plain" : "")}>{content}</div>
       </div>
 
       {!isDesktop ? (

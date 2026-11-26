@@ -133,7 +133,7 @@ export function toggledRoomIds(agent: PoolAgent, rooms: RoomCard[], lobbyRoomId:
 
 /** 토큰을 받지 못한(미승인) 비서에게 보여 줄 짧은 안내. */
 export function unclaimedNotice(): string {
-  return "토큰을 받지 못한 비서입니다. 상대에게 초대 링크를 다시 보내거나, 연결을 끊고 새로 초대하세요.";
+  return "토큰을 받지 못한 비서입니다. 같은 이름으로는 새 초대 링크를 받아도 들어올 수 없으니, 연결을 끊고 새로 초대하세요.";
 }
 
 // ---------- 초대 ----------
