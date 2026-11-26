@@ -5,8 +5,30 @@ export type Runtime = string;
 export interface SetupState {
   admin_key_configured: boolean;
   bootstrap_allowed: boolean;
+  needs_owner?: boolean;
   schema_version: number;
   runtime?: Runtime;
+}
+
+export interface Owner {
+  id: string;
+  login_id: string;
+  display_name: string;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  created_at: string;
+  lobby_room_id: string | null;
+  legacy: boolean;
+}
+
+export interface OwnerMe {
+  owner: Owner;
+  workspaces: Workspace[];
 }
 
 export interface RateLimit {
@@ -21,7 +43,8 @@ export interface PauseInfo {
   at: string | null;
 }
 
-export interface RoomOwner {
+/** 방 상세(오너). /api/rooms/:rid 와 /api/workspaces/:wid/rooms 응답. */
+export interface RoomDetail {
   id: string;
   name: string;
   description: string;
@@ -35,9 +58,31 @@ export interface RoomOwner {
   rate_limit: RateLimit;
   last_seq: number;
   created_at: string;
+  workspace_id: string | null;
+  kind: "lobby" | "room" | string;
+  last_message_at: string | null;
+  last_preview: string | null;
   pause_info: PauseInfo | null;
+  members: RoomMember[];
 }
 
+export interface RoomMember {
+  agent_id: string;
+  name: string;
+  product_self_declared: string;
+  status: "active" | "invited" | "removed" | string;
+  agent_status: "active" | "unclaimed" | "revoked" | string;
+  can_read: boolean;
+  can_write: boolean;
+  history_floor_seq: number;
+  fetched_seq: number;
+  acked_seq: number;
+  last_seen: string | null;
+}
+
+export type RoomHealth = "ok" | "idle" | "needs_input" | "paused";
+
+/** 화면이 쓰는 방 구성원(방 상세 members + 신원 상태를 합친 모양). */
 export interface Agent {
   id: string;
   name: string;
@@ -51,6 +96,51 @@ export interface Agent {
   last_seen: string | null;
 }
 
+/** 관제실 방 타일. GET /api/workspaces/:wid/overview 의 rooms[] */
+export interface RoomCard {
+  id: string;
+  name: string;
+  kind: "lobby" | "room" | string;
+  paused: boolean;
+  pause_reason: string | null;
+  member_count: number;
+  unread: number;
+  last_seq: number;
+  last_message_at: string | null;
+  last_preview: string | null;
+  last_sender: { name: string; type: string } | null;
+  health: RoomHealth;
+}
+
+/** 개요의 비서 요약(방 이름 대신 방 ID 목록). */
+export interface AgentSummary {
+  id: string;
+  name: string;
+  product: string;
+  status: "active" | "unclaimed" | "revoked" | string;
+  last_seen: string | null;
+  rooms: string[];
+}
+
+export interface Overview {
+  workspace: { id: string; name: string; lobby_room_id: string | null };
+  counts: { needs_you: number; unread_rooms: number; paused_rooms: number };
+  rooms: RoomCard[];
+  agents: AgentSummary[];
+  pending_requests: number;
+}
+
+/** 비서실(중앙 풀)의 비서. GET /api/workspaces/:wid/agents */
+export interface PoolAgent {
+  id: string;
+  name: string;
+  product_self_declared: string;
+  status: "active" | "unclaimed" | "revoked" | string;
+  last_seen: string | null;
+  created_at: string;
+  rooms: { room_id: string; room_name: string; status: string }[];
+}
+
 export interface JoinRequest {
   id: string;
   display_name: string;
@@ -60,6 +150,10 @@ export interface JoinRequest {
   claimed: boolean;
   agent_id: string | null;
   created_at: string;
+  room_id?: string;
+  room_name?: string;
+  kind?: "room" | "pool" | string;
+  existing_agent?: boolean;
 }
 
 export interface Invite {
@@ -69,6 +163,15 @@ export interface Invite {
   max_uses: number;
   uses: number;
   active: boolean;
+  kind?: "room" | "pool" | string;
+}
+
+export interface CreatedInvite {
+  invite_id: string;
+  invite_token: string;
+  expires_at: string;
+  max_uses: number;
+  kind: "room" | "pool" | string;
 }
 
 export type MessageKind = "message" | "question" | "answer" | "status";
@@ -96,4 +199,17 @@ export interface Message {
 export interface OwnerMessagesPage {
   messages: Message[];
   has_more: boolean;
+}
+
+/** 통합 인박스 항목. GET /api/workspaces/:wid/activity */
+export interface ActivityItem {
+  room_id: string;
+  room_name: string;
+  room_kind: string;
+  message: Message;
+}
+
+export interface ActivityFeed {
+  items: ActivityItem[];
+  notice?: string;
 }

@@ -506,6 +506,7 @@ export async function handleFetch(
       if ((m = /^\/messages\/(\d+)$/.exec(rest)) && method === "DELETE") { await svc.assertOwnerRoom(auth.scope, rid); await svc.deleteMessage(rid, Number(m[1])); return json(200, { deleted: true }); }
       if (rest === "/invites" && method === "POST") { await svc.assertOwnerRoom(auth.scope, rid); return json(201, await svc.createInvite(rid, obj(await readJson(req)))); }
       if (rest === "/invites" && method === "GET") { await svc.assertOwnerRoom(auth.scope, rid); return json(200, { invites: await svc.listInvites(rid) }); }
+      if ((m = /^\/invites\/([^/]+)$/.exec(rest)) && method === "DELETE") { await svc.assertOwnerRoom(auth.scope, rid); await svc.revokeInvite(rid, m[1]); return json(200, { revoked: true }); }
       if ((m = /^\/members\/([^/]+)$/.exec(rest)) && method === "PATCH") return json(200, await svc.updateMembership(auth.scope, rid, m[1], obj(await readJson(req))));
       if ((m = /^\/members\/([^/]+)$/.exec(rest)) && method === "DELETE") return json(200, await svc.removeMembership(auth.scope, rid, m[1]));
       if (rest === "/webhooks" && method === "GET") { await svc.assertOwnerRoom(auth.scope, rid); return json(200, await svc.listWebhooks(rid)); }

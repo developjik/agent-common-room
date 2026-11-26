@@ -28,7 +28,12 @@ export type IconName =
   | "play"
   | "inbox"
   | "bolt"
-  | "lock";
+  | "lock"
+  | "gauge"
+  | "rooms"
+  | "bot"
+  | "search"
+  | "more";
 
 const PATHS: Record<IconName, JSX.Element> = {
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
@@ -122,6 +127,40 @@ const PATHS: Record<IconName, JSX.Element> = {
     <>
       <rect x="4.5" y="10" width="15" height="10" rx="2" />
       <path d="M8 10V7.5a4 4 0 0 1 8 0V10" />
+    </>
+  ),
+  gauge: (
+    <>
+      <path d="M3.5 17a9 9 0 1 1 17 0" />
+      <path d="M12 17l4.2-5.4" />
+      <circle cx="12" cy="17" r="1.3" />
+    </>
+  ),
+  rooms: (
+    <>
+      <rect x="3" y="3" width="7.5" height="7.5" rx="1.5" />
+      <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" />
+      <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" />
+      <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" />
+    </>
+  ),
+  bot: (
+    <>
+      <rect x="4.5" y="8" width="15" height="11.5" rx="3" />
+      <path d="M12 8V4.5M9 13h.01M15 13h.01M9.5 16.2h5" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M20 20l-3.6-3.6" />
+    </>
+  ),
+  more: (
+    <>
+      <circle cx="5" cy="12" r="1.3" />
+      <circle cx="12" cy="12" r="1.3" />
+      <circle cx="19" cy="12" r="1.3" />
     </>
   ),
 };

@@ -10,25 +10,38 @@ export * from "@antithesishq/bombadil/browser/defaults";
 // CI/로컬 전용 더미 관리자 키. .github/workflows/ci.yml의 .dev.vars와 같은 값이며 실제 비밀이 아니다.
 const ADMIN_KEY = "test-admin-key-0123456789abcdef";
 
-// 로그인 상태가 아니면 방을 하나 만들고 오너로 로그인한다.
-// 이 액션 덕분에 탐색이 온보딩 화면에 갇히지 않고 실제 방 UI(메시지 피드/입력/관리 화면)까지 닿는다.
+// 로그인 상태가 아니면 오너 계정을 만들고(HttpOnly 쿠키) 계정 화면으로 들어간다.
+// v2 UI는 sessionStorage 토큰이 아니라 오너 쿠키로 인증하므로, 쿠키가 생기도록 같은 출처 fetch를 쓴다.
+const BOOT_LOGIN = { login_id: "bombadil", password: "bombadil-test-2026", display_name: "Bombadil" };
 const bootstrapOwnerRoom = registerCustomAction("bootstrapOwnerRoom", async (document, window) => {
-  if (window.sessionStorage.getItem("acr_session")) return;
-  const r = await window.fetch("/api/admin/rooms", {
+  const me = await window.fetch("/api/me");
+  if (me.ok) return;
+  // 새 dev D1이면 계정을 만들고, 이미 있으면 같은 자격으로 로그인한다.
+  let ok = await window.fetch("/api/setup/owner", {
     method: "POST",
     headers: { authorization: "Bearer " + ADMIN_KEY, "content-type": "application/json" },
-    body: JSON.stringify({ name: "bombadil 탐색 방" }),
+    body: JSON.stringify({ ...BOOT_LOGIN, workspace_name: "bombadil 워크스페이스" }),
   });
-  if (!r.ok) return;
-  const created = await r.json();
-  const lr = await window.fetch("/api/owner/login", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ room_id: created.room_id, owner_code: created.owner_code }),
-  });
-  if (!lr.ok) return;
-  const lj = await lr.json();
-  window.sessionStorage.setItem("acr_session", lj.session_token);
+  if (!ok.ok) {
+    ok = await window.fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ login_id: BOOT_LOGIN.login_id, password: BOOT_LOGIN.password }),
+    });
+  }
+  if (!ok.ok) return;
+  const me2 = await window.fetch("/api/me");
+  if (me2.ok) {
+    const data = await me2.json();
+    const wid = data.workspaces?.[0]?.id;
+    if (wid) {
+      await window.fetch(`/api/workspaces/${wid}/rooms`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "bombadil 탐색 방", description: "UI 속성 탐색용" }),
+      });
+    }
+  }
   window.location.reload();
 });
 

@@ -1,5 +1,6 @@
 // 메시지 한 줄. 같은 발신자 5분 이내 연속 메시지는 이름·아바타를 접고(그룹핑),
 // 호버하면 왼쪽 홈에 시각만, 오른쪽 위에 액션 바가 뜬다(스레드에 답글 · @멘션 · 복사 · 삭제).
+import { useState } from "react";
 import { Avatar } from "./Avatar.js";
 import { Icon } from "./icons.js";
 import { RichText } from "../lib/markdown.js";
@@ -30,6 +31,8 @@ interface Props {
 }
 
 export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash, onOpenThread, onQuoteReply, onMention, onCopy, onDelete, onJump }: Props) {
+  // 좁은 화면(터치)에는 호버가 없으므로, 메시지마다 '작업' 버튼으로 액션 바를 연다.
+  const [actionsOpen, setActionsOpen] = useState(false);
   const grouped = groupedWith(prev, m);
   const isOwner = m.sender.type === "owner";
   const agent = m.sender.type === "agent" ? agents.find((a) => a.id === m.sender.id) : undefined;
@@ -60,7 +63,7 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
       </div>
 
       <div className="msg-body">
-        <div className="msg-actions" role="group" aria-label={`#${m.seq} 메시지 작업`}>
+        <div className={"msg-actions" + (actionsOpen ? " is-open" : "")} role="group" aria-label={`#${m.seq} 메시지 작업`}>
           <button type="button" className="msg-action msg-action-label" onClick={() => onOpenThread(m.seq)} title="스레드에 답글">
             <Icon name="thread" size={14} />
             <span>스레드</span>
@@ -82,6 +85,16 @@ export function MessageRow({ m, prev, agents, bySeq, summary, threadOpen, flash,
             </button>
           ) : null}
         </div>
+
+        <button
+          type="button"
+          className="msg-more"
+          aria-expanded={actionsOpen}
+          aria-label={`#${m.seq} 메시지 작업 열기`}
+          onClick={() => setActionsOpen((v) => !v)}
+        >
+          <Icon name="more" size={15} />
+        </button>
 
         {!grouped ? (
           <div className="msg-head">

@@ -857,7 +857,7 @@ export class RoomService {
       `SELECT m.*, r.name AS room_name, r.kind AS room_kind
          FROM messages m JOIN rooms r ON r.id=m.room_id
         WHERE r.workspace_id=? AND m.deleted_at IS NULL
-          AND (m.kind='question' OR m.recipient_id='owner' OR m.sender_type='system')
+          AND ((m.sender_type='agent' AND m.kind='question') OR m.recipient_id='owner' OR m.sender_type='system')
         ORDER BY m.created_at DESC, m.seq DESC LIMIT ?`,
       workspaceId, lim);
     const messages = await this.toPublicMany(rows);
