@@ -743,8 +743,13 @@ test("P1-2 후속2: 인박스 페이지가 한 방의 글에 독점되지 않는
     const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
     const agent = cl.agent_token as string;
 
-    for (let i = 0; i < 3; i++) await t.call("POST", `/api/rooms/${lobbyId}/messages`, agent, { client_id: `l-${i}`, content: `로비 질문 ${i}`, kind: "question" });
+    // 연구방 질문을 '가장 오래된' 글로 만든다 — 최신순 정렬이면 페이지에 못 들어오는 조건.
+    const adv = (ms: number) => { if (t.clock) t.clock.advance(ms); };
     await t.call("POST", `/api/rooms/${room.id}/messages`, agent, { client_id: "r-0", content: "연구방 질문", kind: "question" });
+    for (let i = 0; i < 3; i++) {
+      adv(60_000);
+      await t.call("POST", `/api/rooms/${lobbyId}/messages`, agent, { client_id: `l-${i}`, content: `로비 질문 ${i}`, kind: "question" });
+    }
 
     const feed = (await t.call("GET", `/api/workspaces/${wid}/activity?limit=2`, owner)).json;
     const rooms = new Set(feed.items.map((i: any) => i.room_id));
@@ -808,5 +813,34 @@ test("P1-7 후속3(보안): 대기 중 읽기 권한을 회수한 방의 새 메
     const all = res.json.rooms.flatMap((r: any) => r.messages);
     assert.ok(!all.some((m: any) => m.content === "권한 회수 뒤의 비밀"), "회수된 방의 메시지는 응답에 없다");
     assert.ok(!res.json.rooms.some((r: any) => r.room_id === room.id), "회수된 방은 묶음에도 없다");
+  } finally { await t.close(); }
+});
+
+test("P1-7 후속4(보안): 대기 중 제거·재배치된 방의 '공유하지 않은 구간' 메시지는 실리지 않는다", async () => {
+  const t = await start();
+  try {
+    const own = await t.call("POST", "/api/setup/owner", ADMIN_KEY, { login_id: "replace", password: "long-enough-password", workspace_name: "우리 집" });
+    const owner = own.json.session_token as string;
+    const wid = own.json.workspace.id as string;
+    const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
+    const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test" })).json;
+    await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all", room_ids: [room.id] });
+    const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
+    const agent = cl.agent_token as string;
+    const aid = cl.agent_id as string;
+
+    const pending = t.call("GET", "/api/inbox?wait=9", agent);
+    setTimeout(() => {
+      void (async () => {
+        await t.call("DELETE", `/api/rooms/${room.id}/members/${aid}`, owner);
+        await t.call("POST", `/api/rooms/${room.id}/messages`, owner, { client_id: "gap-1", content: "비공개 구간의 글" });
+        await t.call("POST", `/api/workspaces/${wid}/agents/${aid}/rooms`, owner, { room_ids: [room.id], history: "none" });
+      })();
+    }, 300);
+    const res = await pending;
+    assert.equal(res.status, 200);
+    const all = res.json.rooms.flatMap((r: any) => r.messages);
+    assert.ok(!all.some((m: any) => m.content === "비공개 구간의 글"), "재배치 전 구간의 메시지는 응답에 없다");
   } finally { await t.close(); }
 });

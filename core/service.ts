@@ -1541,12 +1541,12 @@ export class RoomService {
     const slice = members.slice(0, AGGREGATE_ROOMS);
     const conds: string[] = [];
     const params: any[] = [];
-    const meta = slice.map((m) => {
+    const meta: { rid: string; name: string; prevFetched: number; acked: number; floor: number; blocked?: boolean }[] = slice.map((m) => {
       const rid = String(m.room_id);
       const floor = Math.max(Number(m.acked_seq), Number(m.history_floor), 0);
       conds.push("(room_id=? AND seq>? AND (recipient_id IS NULL OR recipient_id=? OR sender_id=?))");
       params.push(rid, floor, agent.id, agent.id);
-      return { rid, name: String(m.room_name), prevFetched: Number(m.fetched_seq), acked: Number(m.acked_seq) };
+      return { rid, name: String(m.room_name), prevFetched: Number(m.fetched_seq), acked: Number(m.acked_seq), floor };
     });
     params.push(agent.id, lim + 1);
     // 방별로 lim+1 행만 가져온다(ROW_NUMBER). 미확인 메시지가 아무리 많아도 메모리·응답이 커지지 않는다.
@@ -1560,22 +1560,33 @@ export class RoomService {
     // 이미 inbox 로 받아 간(재전달) 메시지만 있으면 기다린다 — 단일 방 inbox 와 같은 기준.
     const hasNew = (rs: Row[]) => rs.some(r => Number(r.seq) > (fetchedOf.get(String(r.room_id)) ?? 0));
     let rows = await readAggregate();
-    while (!hasNew(rows) && Date.now() < deadline) {
+    let waited = false;
+    // 무료 D1 은 요청당 쿼리 예산(50)이 빡빡하다. 대기 중에는 3초 간격으로만 다시 읽고,
+    // 토큰 폐기 확인은 두 번에 한 번만 한다(폐기 후 최대 ~6초 안에 끊긴다 — 여유를 둔 trade-off).
+    const WAIT_STEP_MS = 3000;
+    for (let round = 0; !hasNew(rows) && Date.now() < deadline; round++) {
       // 남은 대기 시간을 넘지 않도록 갱신 간격을 deadline에 맞춘다.
-      await new Promise(r => setTimeout(r, Math.min(2000, Math.max(0, deadline - Date.now()))));
-      // 대기 중 토큰이 폐기된 에이전트에게 메시지가 나가지 않게 매 갱신마다 확인한다.
-      if (token) {
+      await new Promise(r => setTimeout(r, Math.min(WAIT_STEP_MS, Math.max(0, deadline - Date.now()))));
+      waited = true;
+      if (token && round % 2 === 0) {
         const alive = await this.db.one("SELECT id FROM agents WHERE id=? AND status='active' AND token_hash=?", agent.id, await hashToken(token));
         if (!alive) throw err(401, "unauthorized", "토큰이 폐기되었습니다.");
       }
       rows = await readAggregate();
     }
-    // 대기 중 오너가 방의 읽기 권한을 회수했을 수 있다. 응답 직전에 권한을 다시 확인해
-    // 회수된 방의 새 메시지가 이 응답에 실리지 않게 한다.
-    const stillReadable = await this.db.all(
-      "SELECT room_id FROM room_members WHERE agent_id=? AND can_read=1 AND status<>'removed'", agent.id);
-    const allowed = new Set(stillReadable.map(r => String(r.room_id)));
-    rows = rows.filter(r => allowed.has(String(r.room_id)));
+    // 대기 중 오너가 권한을 바꿨을 수 있다. 응답 직전에 방별 읽기 권한과 기록 시작점(history_floor)을
+    // 다시 읽어, 회수된 방의 메시지·제거와 재배치 사이에 생긴 '공유하지 않기로 한 구간'의 메시지를
+    // 내보내지 않는다. 기다리지 않은 요청은 방금 읽은 멤버십이 그대로 유효하다.
+    if (waited) {
+      const now = await this.db.all("SELECT room_id, can_read, history_floor FROM room_members WHERE agent_id=? AND status<>'removed'", agent.id);
+      const readable = new Set(now.filter(m => !!m.can_read).map(m => String(m.room_id)));
+      const floors = new Map(now.map(m => [String(m.room_id), Number(m.history_floor ?? 0)]));
+      rows = rows.filter(r => {
+        const rid = String(r.room_id);
+        return readable.has(rid) && Number(r.seq) > (floors.get(rid) ?? 0);
+      });
+      for (const m of meta) if (!readable.has(m.rid)) m.blocked = true;
+    }
     const byRoom = new Map<string, Row[]>();
     for (const r of rows) {
       const list = byRoom.get(String(r.room_id)) ?? [];
@@ -1594,7 +1605,7 @@ export class RoomService {
       const messages = pubs.slice(idx, idx + n).map((p, i) => ({ ...p, room_id: m.rid, redelivered: Number(list[i].seq) <= m.prevFetched }));
       idx += list.length;
       // 대기 중 읽기 권한을 잃은 방은 응답에 넣지 않는다(권한은 위에서 다시 확인했다).
-      if (!allowed.has(m.rid)) continue;
+      if (m.blocked) continue;
       const last = n ? Number(list[n - 1].seq) : 0;
       if (last > m.prevFetched) {
         // 단조 증가 가드. 대표 방이면 agents.* 도 함께(롤백 미러).
