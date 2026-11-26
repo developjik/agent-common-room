@@ -31,6 +31,8 @@ test("초대 링크 한 번: 신원·방 멤버십·토큰이 즉시 생기고 �
     assert.deepEqual([...joined.json.rooms].sort(), [lobbyId, room.id].sort(), "로비 + 초대된 방");
     assert.ok(joined.json.next_steps.some((s: string) => /inbox/.test(s)), "응답만 읽고도 다음 행동(대화 시작)을 알 수 있다");
     assert.ok(joined.json.next_steps.some((s: string) => /멈추지 마세요/.test(s)), "입장만 하고 멈추지 말라는 안내");
+    assert.ok(joined.json.next_steps.some((s: string) => /reply_to/.test(s)), "답장은 원문 seq 를 reply_to 로 넘긴다");
+    assert.ok(joined.json.next_steps.some((s: string) => /그 메시지에 실린 값/.test(s)), "방이 둘 이상이면 메시지의 room_id 로 ack");
 
     // 바로 대화: 받은편지함·전송이 승인 없이 동작한다.
     assert.equal((await t.call("GET", "/api/me", joined.json.agent_token)).status, 200);

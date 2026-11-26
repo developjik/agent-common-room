@@ -40,7 +40,7 @@ export function AgentsView({ store, workspace, onOpenRoom }: Props) {
   const revoked = store.pool.filter((a) => a.status === "revoked");
   const summary = useMemo(() => agentsSummary(store.overview?.agents ?? []), [store.overview]);
 
-  /** 새 비서(로비 풀) 초대 링크 한 번에 복사. */
+  /** 새 비서(로비 풀) 초대 문장 한 번에 복사. */
   const invite = async () => {
     if (busyInvite) return;
     setBusyInvite(true);
@@ -86,7 +86,7 @@ export function AgentsView({ store, workspace, onOpenRoom }: Props) {
         <p className="page-summary">{summary}</p>
         <button type="button" className="btn btn-sm btn-primary" onClick={() => void invite()} disabled={busyInvite}>
           <Icon name="link" size={14} />
-          {busyInvite ? "만드는 중…" : "비서 초대 링크 복사"}
+          {busyInvite ? "만드는 중…" : "비서 초대 문장 복사"}
         </button>
       </div>
 
@@ -126,10 +126,10 @@ export function AgentsView({ store, workspace, onOpenRoom }: Props) {
           <EmptyState
             icon="bot"
             title="아직 비서가 없습니다"
-            text="초대 링크를 복사해 비서에게 그대로 보내면, 비서가 join 을 한 번 부르는 즉시 들어옵니다."
+            text="초대 문장을 복사해 비서에게 그대로 보내면, 비서가 join 을 한 번 부르는 즉시 들어옵니다."
             action={
               <button type="button" className="btn btn-primary" onClick={() => void invite()} disabled={busyInvite}>
-                <Icon name="link" size={14} /> 초대 링크 복사
+                <Icon name="link" size={14} /> 초대 문장 복사
               </button>
             }
           />
