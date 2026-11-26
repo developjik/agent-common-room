@@ -236,17 +236,15 @@ test("@ 자동완성은 본문의 검색어를 고른 이름으로 바꾼다", (
   const middle = completeMention("@Inst", 4, "Instinct");
   assert.deepEqual(middle, { text: "@Instinct ", caret: 10, replaced: true });
 
-  // `@` 버튼을 단어 바로 앞에 눌렀을 때: 커서 뒤 단어가 고른 이름과 무관하면 지우지 않는다.
-  const button = completeMention("회의는 @금요일입니다", 5, "피클");
-  assert.deepEqual(button, { text: "회의는 @피클 금요일입니다", caret: 8, replaced: true });
-
-  // 이미 쓴 이름 중간(@피|클)에서 고르면 뒤쪽 글자를 흡수해 `@피클 피클` 이 되지 않는다.
+  // 이미 쓴 이름 중간(@피|클)에서 골라도 뒤 글자를 흡수해 `@피클 피클` 이 되지 않는다.
   const inside = completeMention("@피클", 2, "피클");
   assert.deepEqual(inside, { text: "@피클 ", caret: 4, replaced: true });
 
-  // 오른쪽 글자가 이름의 앞부분이면 이름 대신 그 글자를 흡수한다(검색어 뒷부분이 남지 않는다).
-  const tail = completeMention("@피", 2, "피클");
-  assert.deepEqual(tail, { text: "@피클 ", caret: 4, replaced: true });
+  // `@` 버튼을 이미 쓰던 본문 앞에 눌렀을 때: 컴포저가 본문이 시작한 자리를 경계로 넘긴다.
+  const button = completeMention("회의는 @금요일입니다", 5, "피클", { rightBoundary: 5 });
+  assert.deepEqual(button, { text: "회의는 @피클 금요일입니다", caret: 8, replaced: true });
+  const prose = completeMention("@피클을 냉장고에 넣어 주세요", 1, "피클", { rightBoundary: 1 });
+  assert.deepEqual(prose, { text: "@피클 피클을 냉장고에 넣어 주세요", caret: 4, replaced: true });
 });
 
 test("mentionTokenAt은 커서 바로 앞의 지목 구간만 찾는다", () => {
