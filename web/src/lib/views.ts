@@ -243,7 +243,7 @@ export function paletteItems(
     group: "방",
     label: r.name,
     icon: "rooms",
-    hint: r.kind === "lobby" ? "로비" : r.unread ? `새 글 ${r.unread}` : roomNeedsAnswer(r) ? "답변 필요" : undefined,
+    hint: r.kind === "lobby" ? "로비" : r.unread ? `새 글 ${r.unread}` : r.paused || r.health === "paused" ? "정지" : roomNeedsAnswer(r) ? "답변 필요" : undefined,
     action: { type: "room", roomId: r.id },
   }));
   const agents: PaletteItem[] = input.agents.map((a) => ({
