@@ -330,4 +330,7 @@ select { padding: 6px 8px; font-size: 13.5px; min-height: 30px; }
 .join-steps > li { margin: 12px 0 0; }
 .join-steps h3 { margin: 0 0 4px; font-size: 13px; }
 .join-steps p { margin: 4px 0 0; }
+/* 긴 경로·JSON 이 인라인 코드 안에 있어도 모바일에서 카드를 가로로 늘리지 않게 한다. */
+.join-card code { overflow-wrap: anywhere; }
+.join-steps li, .join-steps p { min-width: 0; }
 .join-foot { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 18px; }
