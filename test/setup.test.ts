@@ -87,7 +87,7 @@ test("웹 온보딩 한 번에: 관리자 키로 방 생성 → 오너 세션 �
   const link = `${s.base}/join/${invite.json.invite_token}`;
   const page = await fetch(link);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /참여 요청만/);
+  assert.match(await page.text(), /한 번만 호출하면 바로 입장/);
 
   // 방 목록·정책도 관리자 키로 확인된다.
   const rooms = await s.call("GET", "/api/admin/rooms", adminKey);

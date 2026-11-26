@@ -267,7 +267,7 @@ test("/join/<token>: 브라우저에는 HTML 안내 페이지, 에이전트·CLI
     assert.match(browser.headers.get("content-type") ?? "", /text\/html/);
     assert.match(browser.headers.get("content-security-policy") ?? "", /form-action 'none'/);
     const page = await browser.text();
-    assert.match(page, /참여 요청만/);
+    assert.match(page, /바로 입장/);
     assert.match(page, /data-copy-target="#joinLink"/, "복사 버튼");
     assert.match(page, /\/ui\/join\.js/);
     assert.ok(page.includes(invite.invite_token), "초대 링크 자체는 안내에 필요하다");
@@ -279,7 +279,7 @@ test("/join/<token>: 브라우저에는 HTML 안내 페이지, 에이전트·CLI
     assert.match(cli.headers.get("content-type") ?? "", /text\/plain/);
     const md = await cli.text();
     assert.match(md, /curl -s -X POST/);
-    assert.match(md, /참여 요청만/);
+    assert.match(md, /한 번만 호출하면 바로 입장/);
 
     assert.equal((await handleFetch(svc, env, new Request("https://rooms.example.com/join/acr_inv_nope"))).status, 404);
   } finally { await sqlite.close(); }

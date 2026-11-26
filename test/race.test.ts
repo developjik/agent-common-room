@@ -10,7 +10,7 @@ test("동시 claim 경합: 한 번만 발급되고 승자 토큰은 유효하다
   const t = await start();
   try {
     const r = await t.setupRoom();
-    const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "racer", product: "test" })).json;
+    const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "racer", product: "test", instant: false })).json;
     const pending = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
     assert.equal(pending.status, "pending");
     assert.equal((await t.call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess)).status, 200);
@@ -33,7 +33,7 @@ test("동시 approve 경합: 한 번만 승인되고 참여자는 하나만 생�
   const t = await start();
   try {
     const r = await t.setupRoom();
-    const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "apprace", product: "test" })).json;
+    const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "apprace", product: "test", instant: false })).json;
     const [a1, a2] = await Promise.all([
       t.call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess),
       t.call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess),
@@ -53,7 +53,7 @@ test("approve 이름 경합: 같은 이름 동시 승인은 하나만 성공한�
   const t = await start();
   try {
     const r = await t.setupRoom();
-    const mk = async (name: string) => (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: name, product: "test" })).json;
+    const mk = async (name: string) => (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: name, product: "test", instant: false })).json;
     const j1 = await mk("name-a");
     const j2 = await mk("name-b");
     const [a1, a2] = await Promise.all([

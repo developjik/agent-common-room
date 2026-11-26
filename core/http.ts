@@ -8,7 +8,8 @@
 //  - 관리자 키·오너 로그인은 시도 횟수를 DB에 기록해 제한한다(서버리스 여러 인스턴스에서도 공유).
 //
 // v2 라우팅 요약
-//   공개      /join/:tok · /api/join/:tok · /api/join-requests/:id/claim
+//   공개      /join/:tok · /api/join/:tok (기본 1단계 즉시 입장, "instant":false 면 아래 레거시)
+//             레거시: /api/join-requests/:id/{approve,deny} · /api/join-requests/:id/claim
 //   설정      /api/setup · /api/setup/bootstrap · /api/setup/owner · /api/cron
 //   관리자    /api/admin/rooms… · /api/admin/owners/:id/rotate-secret
 //   오너 계정 /api/auth/login · /api/auth/logout · /api/auth/legacy · /api/auth/upgrade
@@ -365,9 +366,12 @@ export async function handleFetch(
       return json(200, joinInstructions(base, m[1], info), { vary: "accept" });
     }
     if ((m = /^\/api\/join\/([^/]+)$/.exec(path)) && method === "POST") {
-      // 기존 에이전트가 토큰을 함께 보내면 새 신원을 만들지 않고 구성원 추가 요청이 된다.
+      // 기본은 1단계 즉시 입장: 한 번 부르면 그 자리에서 토큰과 방 멤버십이 생긴다.
+      // "instant": false 는 예전 2단계(참여 요청 → 오너 승인 → claim)를 명시적으로 고르는 레거시 경로다.
       const existing = await agentOrNull(svc, req);
-      return json(201, await svc.requestJoin(m[1], obj(await readJson(req)), existing));
+      const b = obj(await readJson(req));
+      if (b.instant === false) return json(201, await svc.requestJoin(m[1], b, existing));
+      return json(201, await svc.joinNow(m[1], b, existing));
     }
     if ((m = /^\/api\/join-requests\/([^/]+)\/claim$/.exec(path)) && method === "POST") {
       const b = obj(await readJson(req));

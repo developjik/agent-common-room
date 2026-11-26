@@ -186,15 +186,14 @@ test("멀티룸: 방 2개에 배치된 비서는 방을 지정해 읽고 쓰며,
     const dup = await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" });
     assert.equal(dup.status, 409, "같은 워크스페이스에서 방 이름은 유일하다");
 
-    // 풀 초대 → 승인 → 로비 구성원(자동 가입)
+    // 풀 초대 → 1단계 즉시 입장 → 로비 구성원(자동 가입)
     const poolInvite = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, { max_uses: 3 })).json;
     assert.equal(poolInvite.kind, "pool");
-    const jr = (await t.call("POST", `/api/join/${poolInvite.invite_token}`, undefined, { display_name: "피클", product: "Pickle" })).json;
-    const approved = await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all" });
-    assert.equal(approved.status, 200);
-    const claim = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
-    const agent = claim.agent_token as string;
-    const aid = claim.agent_id as string;
+    const joined = await t.call("POST", `/api/join/${poolInvite.invite_token}`, undefined, { display_name: "피클", product: "Pickle" });
+    assert.equal(joined.status, 201);
+    assert.equal(joined.json.status, "joined");
+    const agent = joined.json.agent_token as string;
+    const aid = joined.json.agent_id as string;
 
     const afterJoin = (await t.call("GET", "/api/me", agent)).json;
     assert.equal(afterJoin.rooms.length, 1);
@@ -292,11 +291,10 @@ test("단일 토큰 호환: 이미 토큰이 있는 비서는 방 초대 링크�
     const lobbyId = own.json.workspace.lobby_room_id as string;
 
     const poolInvite = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
-    const jr = (await t.call("POST", `/api/join/${poolInvite.invite_token}`, undefined, { display_name: "피클", product: "Pickle" })).json;
-    await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all" });
-    const claim = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
-    const token = claim.agent_token as string;
-    const aid = claim.agent_id as string;
+    const joined = await t.call("POST", `/api/join/${poolInvite.invite_token}`, undefined, { display_name: "피클", product: "Pickle" });
+    assert.equal(joined.status, 201);
+    const token = joined.json.agent_token as string;
+    const aid = joined.json.agent_id as string;
 
     // 방 하나뿐일 때: v1 경로(/api/inbox)와 v1 모양(/api/me 의 room·you·participants)이 그대로 동작한다
     const meOne = (await t.call("GET", "/api/me", token)).json;
@@ -312,19 +310,10 @@ test("단일 토큰 호환: 이미 토큰이 있는 비서는 방 초대 링크�
     assert.equal(roomInvite.kind, "room");
     const existing = await t.call("POST", `/api/join/${roomInvite.invite_token}`, token, { display_name: "피클" });
     assert.equal(existing.status, 201);
+    assert.equal(existing.json.status, "joined", "한 번 호출로 바로 그 방의 구성원이 된다");
     assert.equal(existing.json.existing_agent, true, "새 신원을 만들지 않는다");
-    const pendingForExisting = await t.call("POST", "/api/join-requests/" + existing.json.request_id + "/claim", undefined, { claim_secret: existing.json.claim_secret });
-    assert.equal(pendingForExisting.json.status, "pending");
-
-    const ap = await t.call("POST", `/api/join-requests/${existing.json.request_id}/approve`, owner, { history: "all" });
-    assert.equal(ap.status, 200);
-    assert.equal(ap.json.existing_agent, true);
-    assert.equal(ap.json.agent_id, aid, "같은 신원(에이전트)에 방만 추가된다");
-
-    const cl = (await t.call("POST", `/api/join-requests/${existing.json.request_id}/claim`, undefined, { claim_secret: existing.json.claim_secret })).json;
-    assert.equal(cl.existing_agent, true);
-    assert.equal(cl.agent_token, undefined, "새 토큰을 발급하지 않는다");
-    assert.equal(cl.redirect_room_id, room.id);
+    assert.equal(existing.json.agent_token, undefined, "새 토큰을 발급하지 않는다");
+    assert.equal(existing.json.agent_id, aid, "같은 신원(에이전트)에 방만 추가된다");
 
     // 기존 토큰 하나로 두 방을 모두 본다
     const meTwo = (await t.call("GET", "/api/me", token)).json;
@@ -353,9 +342,7 @@ test("방 초대는 그 방으로, 풀 초대는 로비로 들어온다(안내�
     assert.match(info.text, /\/api\/rooms\/<room_id>/);
 
     const jr = (await t.call("POST", `/api/join/${roomInvite.invite_token}`, undefined, { display_name: "보이", product: "Vooy" })).json;
-    await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, {});
-    const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
-    const me = (await t.call("GET", "/api/me", cl.agent_token)).json;
+    const me = (await t.call("GET", "/api/me", jr.agent_token)).json;
     const names = me.rooms.map((r: any) => r.name).sort();
     assert.deepEqual(names, ["로비", "회의실"].sort(), "방 초대는 로비 + 그 방");
   } finally { await t.close(); }
@@ -389,7 +376,7 @@ test("승인 원자성: 잘못된 방 ID로 실패하면 신원·구성원이 �
   const t = await start();
   try {
     const r = await t.setupRoom();
-    const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "atomic", product: "test" })).json;
+    const jr = (await t.call("POST", `/api/join/${r.invite}`, undefined, { display_name: "atomic", product: "test", instant: false })).json;
     const bad = await t.call("POST", `/api/owner/join-requests/${jr.request_id}/approve`, r.sess, { room_ids: ["room_missing"] });
     assert.equal(bad.status, 404);
     assert.equal((t.sqlite.raw.prepare("SELECT count(*) c FROM agents WHERE name='atomic'").get() as any).c, 0, "신원이 남지 않는다");
@@ -450,19 +437,18 @@ test("MCP 집계 inbox는 쓰기 전용 방 때문에 실패하지 않고, 폐�
     const wid = own.json.workspace.id as string;
     const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
     const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
-    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "agg", product: "test" })).json;
-    await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all" });
-    const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
-    const aid = cl.agent_id as string;
+    const joined = await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "agg", product: "test" });
+    const aid = joined.json.agent_id as string;
+    const aggToken = joined.json.agent_token as string;
     await t.call("POST", `/api/workspaces/${wid}/agents/${aid}/rooms`, owner, { room_ids: [room.id], history: "all" });
     await t.call("PATCH", `/api/rooms/${room.id}/members/${aid}`, owner, { can_read: false, can_write: true });
     await t.call("POST", `/api/rooms/${room.id}/messages`, owner, { client_id: "wo-1", content: "쓰기만 가능한 방" });
 
-    const me = (await t.call("GET", "/api/me", cl.agent_token)).json;
+    const me = (await t.call("GET", "/api/me", aggToken)).json;
     const writeOnly = me.rooms.find((x: any) => x.id === room.id);
     assert.equal(writeOnly.you.can_read, false);
 
-    const agent = (await t.svc.authAgent(cl.agent_token as string))!;
+    const agent = (await t.svc.authAgent(aggToken))!;
     const agg = await t.svc.inboxMany(agent, 50);
     assert.deepEqual(agg.rooms.map((x: any) => x.room_id), [me.workspace.lobby_room_id], "읽을 수 있는 방만 돌려준다");
     assert.equal(agg.omitted_rooms, 0);
@@ -482,13 +468,13 @@ test("이미 승인된 구성원 추가 요청을 다시 승인해도 확정된 
     const owner = own.json.session_token as string;
     const wid = own.json.workspace.id as string;
     const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
-    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "twice", product: "test" })).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "twice", product: "test", instant: false })).json;
     await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all" });
     const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
 
     const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
     const roomInvite = (await t.call("POST", `/api/rooms/${room.id}/invites`, owner, {})).json;
-    const again = (await t.call("POST", `/api/join/${roomInvite.invite_token}`, cl.agent_token, {})).json;
+    const again = (await t.call("POST", `/api/join/${roomInvite.invite_token}`, cl.agent_token, { instant: false })).json;
     // 두 오너 탭이 서로 다른 권한으로 동시에 승인한다 → 하나만 성공하고, 확정된 권한은 승자의 값이어야 한다.
     const [withRead, noRead] = await Promise.all([
       t.call("POST", `/api/join-requests/${again.request_id}/approve`, owner, { history: "all", can_read: true, can_write: true }),
@@ -564,7 +550,7 @@ test("P1-2 회귀: 인박스 배지(counts.needs_you)는 승인 대기를 빼고
     const lobbyId = own.json.workspace.lobby_room_id as string;
 
     const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
-    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "Pickle" })).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "Pickle", instant: false })).json;
     // 아직 승인 전 = 대기 참여 요청 1건. 이때는 인박스(needs_you) 0, 비서실(pending_requests) 1.
     const pendingOnly = (await t.call("GET", `/api/workspaces/${wid}/overview`, owner)).json;
     assert.equal(pendingOnly.counts.needs_you, 0, "승인 대기는 인박스 배지에 더하지 않는다");
@@ -630,7 +616,7 @@ test("P1-2 후속: 읽은 최신 글이 페이지를 채워도 안 읽은 항목
     const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "연구방" })).json;
 
     const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
-    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test" })).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test", instant: false })).json;
     await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all", room_ids: [room.id] });
     const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
     const agent = cl.agent_token as string;
@@ -661,7 +647,7 @@ test("P1-7 후속: 다중 방 inbox 도 wait 를 지키고, 잘못된 wait 는 �
     const wid = own.json.workspace.id as string;
     const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
     const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
-    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "대기", product: "test" })).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "대기", product: "test", instant: false })).json;
     await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all", room_ids: [room.id] });
     const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
     const agent = cl.agent_token as string;
@@ -698,7 +684,7 @@ test("P1-2 후속2: 인박스 페이지가 한 방의 글에 독점되지 않는
     const lobbyId = own.json.workspace.lobby_room_id as string;
     const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "연구방" })).json;
     const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
-    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test" })).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test", instant: false })).json;
     await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all", room_ids: [room.id] });
     const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
     const agent = cl.agent_token as string;
@@ -727,7 +713,7 @@ test("P1-7 후속2: 재전달 메시지만 있으면 집계 inbox 도 기다린�
     const lobbyId = own.json.workspace.lobby_room_id as string;
     const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
     const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
-    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test" })).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test", instant: false })).json;
     await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all", room_ids: [room.id] });
     const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
     const agent = cl.agent_token as string;
@@ -755,7 +741,7 @@ test("P1-7 후속3(보안): 대기 중 읽기 권한을 회수한 방의 새 메
     const wid = own.json.workspace.id as string;
     const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
     const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
-    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test" })).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test", instant: false })).json;
     await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all", room_ids: [room.id] });
     const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
     const agent = cl.agent_token as string;
@@ -784,7 +770,7 @@ test("P1-7 후속4(보안): 대기 중 제거·재배치된 방의 '공유하지
     const wid = own.json.workspace.id as string;
     const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
     const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
-    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test" })).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test", instant: false })).json;
     await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all", room_ids: [room.id] });
     const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
     const agent = cl.agent_token as string;

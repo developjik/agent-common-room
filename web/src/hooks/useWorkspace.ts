@@ -1,29 +1,15 @@
 // 워크스페이스 한 곳의 상태와 폴링. 화면 컴포넌트는 이 훅이 준 값만 읽는다.
 //
 // 요청 예산(Free 플랜 보호):
-//  - 관제실: overview 1회
-//  - 방 집중: overview + 방 상세 + 메시지 = 3회
-//  - 비서실: overview + 비서 목록 + 승인 대기 = 3회
-//  - 인박스: overview + 활동 = 2회
-// 폴링은 탭이 보일 때만 돌고(숨으면 20초 간격으로 쉼), 새 메시지가 없으면 4→6→10→15→20초로 늦춘다.
-// 단, 내가 보낸 메시지의 전달 배지(보냄→받아감→확인함→답장함)를 기다리는 동안은 4초 간격을 유지한다.
-// (예전에는 조용한 방이 20초 간격이라 배지가 최대 20초 늦게 바뀌었다.)
-//
-// 전달 상태 실시간 갱신: 증분 API(after=)는 커서 이후만 주므로 기존 메시지의 delivery.state 가
-// 바뀌어도 화면이 그대로였다. 매 폴링마다 최근 구간(DELIVERY_WINDOW)을 되읽어 같은 seq 를 합친다.
+//  - 방 화면: overview + 방 상세 + 메시지 = 3회
+//  - 방 목록(방을 열지 않음): overview 1회
+//  - 비서 화면: overview + 비서 목록 + 승인 대기(레거시) = 3회
+// 폴링은 탭이 보일 때만 돌고(숨으면 쉼), 새 메시지가 없으면 4→6→10→15→20초로 늦춘다.
+// 단, 내가 보낸 메시지의 전달 배지를 기다리는 동안은 4초 간격을 유지한다.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, joinRequests, room as roomApi, workspace as wsApi } from "../lib/api.js";
 import { awaitingDelivery, countNew, memberToAgent, nextFetchAfter, POLL_STEPS, pollDelay } from "../lib/views.js";
-import type {
-  ActivityItem,
-  Agent,
-  JoinRequest,
-  Message,
-  Overview,
-  PoolAgent,
-  RoomDetail,
-  Workspace,
-} from "../lib/types.js";
+import type { Agent, JoinRequest, Message, Overview, PoolAgent, RoomDetail, Workspace } from "../lib/types.js";
 import type { View } from "../lib/route.js";
 
 function mergeMessages(prev: Message[], next: Message[]): Message[] {
@@ -55,24 +41,23 @@ export interface WorkspaceStore {
   agents: Agent[];
   overview: Overview | null;
   pool: PoolAgent[];
+  /** 예전 방식(승인 필요) 초대로 남은 대기 요청. 즉시 입장에는 없다. */
   requests: JoinRequest[];
-  activity: ActivityItem[];
   messages: Message[];
   ready: boolean;
   error: string | null;
   syncedAt: number | null;
   pendingCount: number;
-  refresh: (opts?: { full?: boolean; desk?: boolean; inbox?: boolean }) => Promise<number>;
-  createRoom: (name: string, description: string) => Promise<RoomDetail>;
-  listInvites: (rid: string) => Promise<import("../lib/types.js").Invite[]>;
+  refresh: (opts?: { full?: boolean; agentsView?: boolean }) => Promise<number>;
+  createRoom: (name: string) => Promise<RoomDetail>;
   createInvite: (rid: string, ttlHours: number, maxUses: number) => Promise<import("../lib/types.js").CreatedInvite>;
   createPoolInvite: (ttlHours: number, maxUses: number) => Promise<import("../lib/types.js").CreatedInvite>;
-  revokeInvite: (rid: string, inviteId: string) => Promise<void>;
   approve: (id: string, body: { history: "all" | "none"; can_read: boolean; can_write: boolean; name?: string }) => Promise<string>;
   deny: (id: string) => Promise<void>;
-  placeAgent: (agentId: string, roomIds: string[], opts?: { history?: "all" | "none"; can_read?: boolean; can_write?: boolean }) => Promise<void>;
+  /** 이 비서가 있어야 할 방 목록을 통째로 바꾼다(비서 화면의 방 토글). */
+  /** 이 비서가 있어야 할 방 목록으로 맞춘다(비서 화면의 방 토글). 빠진 방은 내보내고, 새 방만 배치한다. */
+  setAgentRooms: (agentId: string, currentRoomIds: string[], targetRoomIds: string[]) => Promise<void>;
   revokeAgent: (agentId: string) => Promise<void>;
-  updateMember: (rid: string, agentId: string, patch: { can_read?: boolean; can_write?: boolean; status?: "active" | "removed" }) => Promise<void>;
   removeMember: (rid: string, agentId: string) => Promise<void>;
   send: (rid: string, input: SendInput) => Promise<Message>;
   deleteMessage: (rid: string, seq: number) => Promise<void>;
@@ -93,7 +78,6 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
   const [overview, setOverview] = useState<Overview | null>(null);
   const [pool, setPool] = useState<PoolAgent[]>([]);
   const [requests, setRequests] = useState<JoinRequest[]>([]);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,46 +120,39 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
     [onUnauthorized],
   );
 
-  const pullMessages = useCallback(
-    async (rid: string, full: boolean, generation: number): Promise<number> => {
-      // 새 글 수는 '이번 조회 전의 마지막 seq'를 기준으로 센다. 전체 재조회(after=0)도
-      // 이미 보고 있던 메시지를 새 글로 세어 폴링 간격을 4초로 되돌리지 않는다.
-      const before = lastSeq.current;
-      const previousLast = before;
-      let after = full ? 0 : nextFetchAfter(before, false);
-      const collected: Message[] = [];
-      let lastFetched = previousLast;
-      for (;;) {
-        const page = await roomApi.messages(rid, after, 200);
-        if (!alive.current || generation !== gen.current) return 0;
-        collected.push(...page.messages);
-        if (page.messages.length) {
-          after = page.messages[page.messages.length - 1].seq;
-          lastFetched = Math.max(lastFetched, after);
-        }
-        if (!page.has_more) break;
+  const pullMessages = useCallback(async (rid: string, full: boolean, generation: number): Promise<number> => {
+    const before = lastSeq.current;
+    const previousLast = before;
+    let after = full ? 0 : nextFetchAfter(before, false);
+    const collected: Message[] = [];
+    let lastFetched = previousLast;
+    for (;;) {
+      const page = await roomApi.messages(rid, after, 200);
+      if (!alive.current || generation !== gen.current) return 0;
+      collected.push(...page.messages);
+      if (page.messages.length) {
+        after = page.messages[page.messages.length - 1].seq;
+        lastFetched = Math.max(lastFetched, after);
       }
-      if (generation !== gen.current) return 0;
-      if (full) {
-        // 전체 재조회 중에 보낸 새 메시지(로컬 낙관 반영)는 남겨 둔다.
-        setMessages((prev) => mergeMessages(collected, prev.filter((m) => m.seq > lastFetched)));
-      } else if (collected.length) {
-        setMessages((prev) => mergeMessages(prev, collected));
-      }
-      lastSeq.current = lastFetched;
-      return countNew(previousLast, collected.map((m) => m.seq));
-    },
-    [],
-  );
+      if (!page.has_more) break;
+    }
+    if (generation !== gen.current) return 0;
+    if (full) {
+      // 전체 재조회 중에 보낸 새 메시지(로컬 낙관 반영)는 남겨 둔다.
+      setMessages((prev) => mergeMessages(collected, prev.filter((m) => m.seq > lastFetched)));
+    } else if (collected.length) {
+      setMessages((prev) => mergeMessages(prev, collected));
+    }
+    lastSeq.current = lastFetched;
+    return countNew(previousLast, collected.map((m) => m.seq));
+  }, []);
 
   const refresh = useCallback(
-    async (opts: { full?: boolean; desk?: boolean; inbox?: boolean } = {}): Promise<number> => {
+    async (opts: { full?: boolean; agentsView?: boolean } = {}): Promise<number> => {
       if (refreshing.current) return refreshing.current;
       const generation = gen.current;
       const rid = roomRef.current;
       const currentView = viewRef.current;
-      // 자기 자신의 프라미스만 해제한다. 방을 바꿔 새 갱신이 시작된 뒤 이전 요청이 끝나도
-      // 새 요청의 잠금을 풀지 않는다(중복 폴링 방지).
       let self: Promise<number>;
       const run = async (): Promise<number> => {
         try {
@@ -186,18 +163,11 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
           if (rid && detail) setRoom(detail);
           setError(null);
 
-          const wantDesk = opts.desk || currentView === "desk";
-          const wantInbox = opts.inbox || currentView === "inbox";
-          if (wantDesk) {
+          if (opts.agentsView || currentView === "agents") {
             const [poolRes, reqRes] = await Promise.all([wsApi.agents(wid), wsApi.joinRequests(wid, "pending")]);
             if (!alive.current || generation !== gen.current) return 0;
             setPool(poolRes.agents);
             setRequests(reqRes.requests);
-          }
-          if (wantInbox) {
-            const feed = await wsApi.activity(wid, 50);
-            if (!alive.current || generation !== gen.current) return 0;
-            setActivity(feed.items);
           }
 
           tick.current += 1;
@@ -229,7 +199,7 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
   // 방이 바뀌면 즉시 전체 재조회. 이전 방의 응답은 generation 으로 버린다.
   useEffect(() => {
     gen.current += 1;
-    if (refreshing.current) refreshing.current = null; // 진행 중이던 응답은 generation 비교로 폐기된다.
+    if (refreshing.current) refreshing.current = null;
     lastSeq.current = 0;
     setMessages([]);
     setRoom(null);
@@ -237,12 +207,11 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
     if (roomId) void refresh({ full: true });
   }, [roomId, refresh]);
 
-  // 뷰가 바뀌면 필요한 목록을 바로 채운다(폴링을 기다리지 않는다).
+  // 화면이 바뀌면 필요한 목록을 바로 채운다(폴링을 기다리지 않는다).
   useEffect(() => {
-    void refresh({ desk: view === "desk", inbox: view === "inbox" });
+    void refresh({ agentsView: view === "agents" });
   }, [view, refresh]);
 
-  // 전달 배지를 기다리는지 판단하려면 최신 메시지 목록이 필요하다(렌더 밖 폴링 루프에서 읽는다).
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
@@ -258,8 +227,6 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
-    // nudge 가 돌려 놓은 반복과 진행 중인 폴링이 같은 refresh 를 기다리면 둘 다 타이머를 잡으려 한다.
-    // 실행 중 플래그와 "예약 전 기존 타이머 해제"로 타이머가 하나만 남게 한다.
     let running = false;
 
     const schedule = () => {
@@ -275,7 +242,6 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
       try {
         if (document.hidden) return;
         const added = await refresh();
-        // 새 글이 없어도 전달 배지를 기다리는 동안에는 간격을 늘리지 않는다.
         const waiting = awaitingDelivery(messagesRef.current);
         quiet.current = added > 0 || waiting ? 0 : Math.min(quiet.current + 1, POLL_STEPS.length - 1);
       } finally {
@@ -304,28 +270,24 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
   const agents = useMemo(() => (room ? room.members.filter((m) => m.status !== "removed").map(memberToAgent) : []), [room]);
 
   const createRoom = useCallback(
-    async (name: string, description: string) => {
-      const created = await wsApi.createRoom(wid, { name, description });
+    async (name: string) => {
+      const created = await wsApi.createRoom(wid, { name });
       await refresh({ full: true });
       return created;
     },
     [wid, refresh],
   );
 
-  const listInvites = useCallback((rid: string) => roomApi.invites(rid).then((r) => r.invites), []);
   const createInvite = useCallback((rid: string, ttlHours: number, maxUses: number) => roomApi.createInvite(rid, ttlHours, maxUses), []);
   const createPoolInvite = useCallback(
     (ttlHours: number, maxUses: number) => wsApi.createPoolInvite(wid, ttlHours, maxUses),
     [wid],
   );
-  const revokeInvite = useCallback(async (rid: string, inviteId: string) => {
-    await roomApi.revokeInvite(rid, inviteId);
-  }, []);
 
   const approve: WorkspaceStore["approve"] = useCallback(
     async (id, body) => {
       const res = await joinRequests.approve(id, body);
-      await refresh({ desk: true });
+      await refresh({ agentsView: true });
       return res.name;
     },
     [refresh],
@@ -334,15 +296,21 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
   const deny = useCallback(
     async (id: string) => {
       await joinRequests.deny(id);
-      await refresh({ desk: true });
+      await refresh({ agentsView: true });
     },
     [refresh],
   );
 
-  const placeAgent: WorkspaceStore["placeAgent"] = useCallback(
-    async (agentId, roomIds, opts = {}) => {
-      await wsApi.placeAgent(wid, agentId, { room_ids: roomIds, ...opts });
-      await refresh({ desk: true, full: !!roomRef.current });
+  const setAgentRooms: WorkspaceStore["setAgentRooms"] = useCallback(
+    async (agentId, currentRoomIds, targetRoomIds) => {
+      const current = new Set(currentRoomIds);
+      const target = new Set(targetRoomIds);
+      const added = [...target].filter((id) => !current.has(id));
+      const removed = [...current].filter((id) => !target.has(id));
+      // 새로 넣는 방은 지난 대화 없이, 이미 있던 방은 서버가 권한·커서를 보존한다.
+      if (added.length) await wsApi.placeAgent(wid, agentId, { room_ids: added });
+      for (const rid of removed) await roomApi.removeMember(rid, agentId);
+      await refresh({ agentsView: true, full: !!roomRef.current });
     },
     [wid, refresh],
   );
@@ -350,23 +318,15 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
   const revokeAgent = useCallback(
     async (agentId: string) => {
       await wsApi.revokeAgent(wid, agentId);
-      await refresh({ desk: true, full: !!roomRef.current });
+      await refresh({ agentsView: true, full: !!roomRef.current });
     },
     [wid, refresh],
-  );
-
-  const updateMember: WorkspaceStore["updateMember"] = useCallback(
-    async (rid, agentId, patch) => {
-      await roomApi.updateMember(rid, agentId, patch);
-      await refresh();
-    },
-    [refresh],
   );
 
   const removeMember = useCallback(
     async (rid: string, agentId: string) => {
       await roomApi.removeMember(rid, agentId);
-      await refresh();
+      await refresh({ agentsView: viewRef.current === "agents" });
     },
     [refresh],
   );
@@ -382,7 +342,6 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
       if (input.reply_to) body.reply_to = input.reply_to;
       const res = await roomApi.say(rid, body);
       if (rid === roomRef.current) await pullMessages(rid, false, gen.current);
-      // 방금 보낸 메시지의 전달 상태를 빨리 따라가도록 폴링 간격을 되돌린다.
       nudge();
       return res.message;
     },
@@ -411,10 +370,8 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
     async (rid: string) => {
       await roomApi.remove(rid);
       removedRooms.current.add(rid);
-      // 삭제한 방은 다시 조회하지 않는다. 예전에는 삭제 직후 폴링이 그 방을 한 번 더 읽어
-      // 404와 '방을 찾을 수 없습니다.' 오류 토스트가 성공 안내와 함께 떴다.
       if (rid === roomRef.current) {
-        gen.current += 1; // 진행 중이던 이 방 응답은 버린다.
+        gen.current += 1;
         roomRef.current = null;
         lastSeq.current = 0;
         setRoom(null);
@@ -431,7 +388,6 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
     overview,
     pool,
     requests,
-    activity,
     messages,
     ready,
     error,
@@ -439,15 +395,12 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
     pendingCount: requests.length,
     refresh,
     createRoom,
-    listInvites,
     createInvite,
     createPoolInvite,
-    revokeInvite,
     approve,
     deny,
-    placeAgent,
+    setAgentRooms,
     revokeAgent,
-    updateMember,
     removeMember,
     send,
     deleteMessage,

@@ -18,6 +18,7 @@ export type IconName =
   | "thread"
   | "chevron-down"
   | "chevron-right"
+  | "back"
   | "alert"
   | "check"
   | "clock"
@@ -87,6 +88,7 @@ const PATHS: Record<IconName, JSX.Element> = {
   ),
   thread: <path d="M20 12.5a7.5 7.5 0 0 1-7.5 7.5H8l-4 3v-6.2A7.5 7.5 0 1 1 20 12.5z" />,
   "chevron-down": <path d="M6 9l6 6 6-6" />,
+  back: <path d="M15 5l-7 7 7 7" />,
   "chevron-right": <path d="M9 6l6 6-6 6" />,
   alert: (
     <>
