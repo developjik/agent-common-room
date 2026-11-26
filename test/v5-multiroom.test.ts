@@ -728,3 +728,85 @@ test("P1-7 후속: 다중 방 inbox 도 wait 를 지키고, 잘못된 wait 는 �
     assert.ok(t1 - t0 < 9000, "wait 최대치까지 기다리지 않는다");
   } finally { await t.close(); }
 });
+
+test("P1-2 후속2: 인박스 페이지가 한 방의 글에 독점되지 않는다(방 필터가 비지 않는다)", async () => {
+  const t = await start();
+  try {
+    const own = await t.call("POST", "/api/setup/owner", ADMIN_KEY, { login_id: "fairpage", password: "long-enough-password", workspace_name: "우리 집" });
+    const owner = own.json.session_token as string;
+    const wid = own.json.workspace.id as string;
+    const lobbyId = own.json.workspace.lobby_room_id as string;
+    const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "연구방" })).json;
+    const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test" })).json;
+    await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all", room_ids: [room.id] });
+    const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
+    const agent = cl.agent_token as string;
+
+    for (let i = 0; i < 3; i++) await t.call("POST", `/api/rooms/${lobbyId}/messages`, agent, { client_id: `l-${i}`, content: `로비 질문 ${i}`, kind: "question" });
+    await t.call("POST", `/api/rooms/${room.id}/messages`, agent, { client_id: "r-0", content: "연구방 질문", kind: "question" });
+
+    const feed = (await t.call("GET", `/api/workspaces/${wid}/activity?limit=2`, owner)).json;
+    const rooms = new Set(feed.items.map((i: any) => i.room_id));
+    assert.equal(feed.items.length, 2);
+    assert.ok(rooms.has(lobbyId) && rooms.has(room.id), "페이지 한도가 작아도 두 방이 모두 보인다");
+  } finally { await t.close(); }
+});
+
+test("P1-7 후속2: 재전달 메시지만 있으면 집계 inbox 도 기다린다", async () => {
+  const t = await start();
+  try {
+    const own = await t.call("POST", "/api/setup/owner", ADMIN_KEY, { login_id: "redeliver", password: "long-enough-password", workspace_name: "우리 집" });
+    const owner = own.json.session_token as string;
+    const wid = own.json.workspace.id as string;
+    const lobbyId = own.json.workspace.lobby_room_id as string;
+    const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
+    const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test" })).json;
+    await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all", room_ids: [room.id] });
+    const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
+    const agent = cl.agent_token as string;
+
+    await t.call("POST", `/api/rooms/${lobbyId}/messages`, owner, { client_id: "m-1", content: "한 번 받아 간 글" });
+    const first = (await t.call("GET", "/api/inbox", agent)).json;
+    assert.equal(first.rooms.flatMap((r: any) => r.messages).length, 1);
+
+    // 아직 ack 하지 않았으므로 같은 글이 재전달 대상이다 → 이걸로 대기가 즉시 끝나면 안 된다.
+    const t0 = Date.now();
+    const waited = await t.call("GET", "/api/inbox?wait=2", agent);
+    const elapsed = Date.now() - t0;
+    assert.equal(waited.status, 200);
+    assert.ok(elapsed >= 1800, `재전달 메시지만으로는 깨지 않는다(실측 ${elapsed}ms)`);
+    const redelivered = waited.json.rooms.flatMap((r: any) => r.messages)[0];
+    assert.equal(redelivered.redelivered, true);
+  } finally { await t.close(); }
+});
+
+test("P1-7 후속3(보안): 대기 중 읽기 권한을 회수한 방의 새 메시지는 응답에 실리지 않는다", async () => {
+  const t = await start();
+  try {
+    const own = await t.call("POST", "/api/setup/owner", ADMIN_KEY, { login_id: "revoke-wait", password: "long-enough-password", workspace_name: "우리 집" });
+    const owner = own.json.session_token as string;
+    const wid = own.json.workspace.id as string;
+    const room = (await t.call("POST", `/api/workspaces/${wid}/rooms`, owner, { name: "회의실" })).json;
+    const inv = (await t.call("POST", `/api/workspaces/${wid}/invites`, owner, {})).json;
+    const jr = (await t.call("POST", `/api/join/${inv.invite_token}`, undefined, { display_name: "피클", product: "test" })).json;
+    await t.call("POST", `/api/join-requests/${jr.request_id}/approve`, owner, { history: "all", room_ids: [room.id] });
+    const cl = (await t.call("POST", `/api/join-requests/${jr.request_id}/claim`, undefined, { claim_secret: jr.claim_secret })).json;
+    const agent = cl.agent_token as string;
+    const aid = cl.agent_id as string;
+
+    const pending = t.call("GET", "/api/inbox?wait=6", agent);
+    setTimeout(() => {
+      void (async () => {
+        await t.call("PATCH", `/api/rooms/${room.id}/members/${aid}`, owner, { can_read: false });
+        await t.call("POST", `/api/rooms/${room.id}/messages`, owner, { client_id: "leak-1", content: "권한 회수 뒤의 비밀" });
+      })();
+    }, 600);
+    const res = await pending;
+    assert.equal(res.status, 200);
+    const all = res.json.rooms.flatMap((r: any) => r.messages);
+    assert.ok(!all.some((m: any) => m.content === "권한 회수 뒤의 비밀"), "회수된 방의 메시지는 응답에 없다");
+    assert.ok(!res.json.rooms.some((r: any) => r.room_id === room.id), "회수된 방은 묶음에도 없다");
+  } finally { await t.close(); }
+});

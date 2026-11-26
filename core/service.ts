@@ -892,15 +892,21 @@ export class RoomService {
     const lim = this.clampLimit(limit, 50);
     // 안 읽은 항목을 먼저 보여 준다. 배지(counts.needs_you)는 기간 제한 없이 안 읽은 것을 세므로,
     // 최근 50건만 시간순으로 자르면 "배지는 1인데 목록엔 없다"가 생긴다(읽은 최신 글 50건이 가림).
-    // is_unread 는 개요와 같은 기준(방별 owner_reads.last_read_seq)이다.
+    // 방별 라운드로빈(rn)으로 섮어 한 방의 글이 페이지를 독점하지 않게 한다 — 화면의 방 필터가
+    // 비어 보이는 일을 막는다. is_unread 는 개요와 같은 기준(방별 owner_reads.last_read_seq).
     const rows = await this.db.all(
-      `SELECT m.*, r.name AS room_name, r.kind AS room_kind,
-              CASE WHEN m.seq > COALESCE(o.last_read_seq, 0) THEN 1 ELSE 0 END AS is_unread
-         FROM messages m JOIN rooms r ON r.id=m.room_id
-         LEFT JOIN owner_reads o ON o.owner_id=? AND o.room_id=m.room_id
-        WHERE r.workspace_id=? AND m.deleted_at IS NULL
-          AND ((m.sender_type='agent' AND m.kind='question') OR m.recipient_id='owner' OR m.sender_type='system')
-        ORDER BY is_unread DESC, m.created_at DESC, m.seq DESC LIMIT ?`,
+      `SELECT * FROM (
+         SELECT t.*, ROW_NUMBER() OVER (PARTITION BY t.room_id, t.is_unread ORDER BY t.created_at DESC, t.seq DESC) AS rn
+           FROM (
+             SELECT m.*, r.name AS room_name, r.kind AS room_kind,
+                    CASE WHEN m.seq > COALESCE(o.last_read_seq, 0) THEN 1 ELSE 0 END AS is_unread
+               FROM messages m JOIN rooms r ON r.id=m.room_id
+               LEFT JOIN owner_reads o ON o.owner_id=? AND o.room_id=m.room_id
+              WHERE r.workspace_id=? AND m.deleted_at IS NULL
+                AND ((m.sender_type='agent' AND m.kind='question') OR m.recipient_id='owner' OR m.sender_type='system')
+           ) t
+       ) u
+       ORDER BY u.is_unread DESC, u.rn, u.created_at DESC, u.seq DESC LIMIT ?`,
       scope.ownerId ?? "", workspaceId, lim);
     const messages = await this.toPublicMany(rows);
     return {
@@ -1550,8 +1556,11 @@ export class RoomService {
            FROM messages m
           WHERE (${conds.join(" OR ")}) AND sender_id<>?
        ) t WHERE t.rn <= ? ORDER BY t.room_id, t.seq`, ...params);
+    const fetchedOf = new Map(meta.map(m => [m.rid, m.prevFetched]));
+    // 이미 inbox 로 받아 간(재전달) 메시지만 있으면 기다린다 — 단일 방 inbox 와 같은 기준.
+    const hasNew = (rs: Row[]) => rs.some(r => Number(r.seq) > (fetchedOf.get(String(r.room_id)) ?? 0));
     let rows = await readAggregate();
-    while (!rows.length && Date.now() < deadline) {
+    while (!hasNew(rows) && Date.now() < deadline) {
       // 남은 대기 시간을 넘지 않도록 갱신 간격을 deadline에 맞춘다.
       await new Promise(r => setTimeout(r, Math.min(2000, Math.max(0, deadline - Date.now()))));
       // 대기 중 토큰이 폐기된 에이전트에게 메시지가 나가지 않게 매 갱신마다 확인한다.
@@ -1561,6 +1570,12 @@ export class RoomService {
       }
       rows = await readAggregate();
     }
+    // 대기 중 오너가 방의 읽기 권한을 회수했을 수 있다. 응답 직전에 권한을 다시 확인해
+    // 회수된 방의 새 메시지가 이 응답에 실리지 않게 한다.
+    const stillReadable = await this.db.all(
+      "SELECT room_id FROM room_members WHERE agent_id=? AND can_read=1 AND status<>'removed'", agent.id);
+    const allowed = new Set(stillReadable.map(r => String(r.room_id)));
+    rows = rows.filter(r => allowed.has(String(r.room_id)));
     const byRoom = new Map<string, Row[]>();
     for (const r of rows) {
       const list = byRoom.get(String(r.room_id)) ?? [];
@@ -1578,6 +1593,8 @@ export class RoomService {
       const n = Math.min(list.length, lim);
       const messages = pubs.slice(idx, idx + n).map((p, i) => ({ ...p, room_id: m.rid, redelivered: Number(list[i].seq) <= m.prevFetched }));
       idx += list.length;
+      // 대기 중 읽기 권한을 잃은 방은 응답에 넣지 않는다(권한은 위에서 다시 확인했다).
+      if (!allowed.has(m.rid)) continue;
       const last = n ? Number(list[n - 1].seq) : 0;
       if (last > m.prevFetched) {
         // 단조 증가 가드. 대표 방이면 agents.* 도 함께(롤백 미러).
