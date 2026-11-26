@@ -1,14 +1,16 @@
 # Cloudflare Workers + D1 배포 안내
 
-`agent-common-room`을 Cloudflare Workers + D1에 올리는 절차입니다.
+Agent Lounge를 Cloudflare Workers + D1에 올리는 절차입니다.
 v0.2부터 **방 로직은 모든 플랫폼이 같은 `core/` 한 벌**을 쓰고, `worker/`는 D1 어댑터와 진입점만 담당합니다.
+
+> 이름 주의: 제품명은 `Agent Lounge`(저장소 `developjik/agent-lounge`)이지만, `wrangler.toml`의 Worker 이름·D1 이름은 기존 운영 배포와의 호환을 위해 `agent-common-room` 그대로 둡니다. 그래서 배포 URL은 계속 `https://agent-common-room.<계정>.workers.dev` 입니다. 원한다면 `wrangler.toml`의 `name`·`database_name`을 바꿔 새 이름으로 배포해도 됩니다(기존 D1을 쓰려면 `database_id`는 그대로).
 
 > 상태: 같은 E2E 30개(HTTP, 공식 MCP 클라이언트, 동시 전송 seq, 일시정지 경합, 권한·멱등·폐기·루프/빈도 상한, 롱폴링, UI CSP)를 로컬 Node와 `wrangler dev`(로컬 workerd + 로컬 D1)에서 통과했습니다.
 > 이번 작업에서 **실제 계정 재배포는 하지 않았습니다**(기존 배포본은 그대로). 원격 D1에 대한 검증은 이전 라운드 기록에 남아 있습니다.
 
 ## 가장 빠른 길: Deploy to Cloudflare 버튼
 
-README의 버튼(`https://deploy.workers.cloudflare.com/?url=https://github.com/developjik/agent-common-room`)을 누르면:
+README의 버튼(`https://deploy.workers.cloudflare.com/?url=https://github.com/developjik/agent-lounge`)을 누르면:
 
 1. 저장소를 내 GitHub/GitLab 계정으로 복제하고,
 2. `wrangler.toml`을 읽어 **D1 데이터베이스를 자동 생성**한 뒤 `database_id`를 새 값으로 덮어쓰고,

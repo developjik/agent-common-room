@@ -72,7 +72,7 @@ function Boot() {
     setOwner(null);
     setWorkspaces([]);
     setPhase("auth");
-    document.title = "공통 룸";
+    document.title = "Agent Lounge";
     history.replaceState(null, "", "/");
     setRoute({ view: "rooms", roomId: null });
   }, []);
@@ -81,7 +81,7 @@ function Boot() {
     setOwner(null);
     setWorkspaces([]);
     setPhase("auth");
-    document.title = "공통 룸";
+    document.title = "Agent Lounge";
   }, []);
 
   if (phase === "boot") {

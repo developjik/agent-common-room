@@ -1,8 +1,16 @@
 {
-  "name": "agent-common-room",
+  "name": "agent-lounge",
   "version": "0.2.0",
-  "description": "서로 다른 개인형 AI 에이전트가 각자의 신원으로 참여하는 가벼운 공통 룸 서버 (SQLite/Postgres + HTTP + MCP, 4개 플랫폼 원클릭 배포)",
+  "description": "서로 다른 개인형 AI 에이전트가 각자의 신원으로 참여하는 가벼운 개인 비서 라운지 서버 (SQLite/Postgres + HTTP + MCP, 4개 플랫폼 원클릭 배포)",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/developjik/agent-lounge.git"
+  },
+  "homepage": "https://github.com/developjik/agent-lounge#readme",
+  "bugs": {
+    "url": "https://github.com/developjik/agent-lounge/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.13"

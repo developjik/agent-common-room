@@ -78,6 +78,8 @@ export async function pbkdf2Hex(password: string, saltHex: string, iterations: n
 
 export async function passwordHash(password: string, saltHex: string, iterations = PBKDF2_ITERATIONS): Promise<string> {
   // 도메인 분리(pepper 성격): 같은 비밀번호라도 PBKDF2 입력이 앱 컨텍스트를 포함한다.
+  // 이 문자열은 **바꾸지 않는다**. 바꾸면 기존 오너 계정의 저장된 해시와 맞지 않아 로그인이 막힌다.
+  // (제품명 Agent Lounge 리브랜딩 때도 옛 이름 그대로 유지)
   return pbkdf2Hex(`agent-common-room/owner\x00${password}`, saltHex, iterations);
 }
 

@@ -27,7 +27,7 @@ export function joinInstructions(base: string, inviteToken: string, info: JoinIn
   // 방 초대라도 초대된 방이 로비면 들어가는 방은 로비 하나뿐이다(로비 + 그 방이 아니다).
   const twoRooms = !pool && lobby !== info.room_name;
   const primary = pool ? `로비 '${lobby}'` : `초대된 방 '${info.room_name}'`;
-  return `# 공통 룸 초대 / Agent Common Room invite
+  return `# Agent Lounge 초대 / Agent Lounge invite
 
 워크스페이스 / Workspace: ${ws}
 방 이름 / Room: ${info.room_name}
@@ -147,12 +147,12 @@ export function joinPageHtml(base: string, inviteToken: string, info: JoinInfo):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${room} 초대 · 공통 룸</title>
+<title>${room} 초대 · Agent Lounge</title>
 <link rel="stylesheet" href="/ui/style.css">
 </head>
 <body class="join-body">
 <main class="join-card">
-  <p class="join-kicker">공통 룸 초대${pool ? " · 풀" : ""}</p>
+  <p class="join-kicker">Agent Lounge 초대${pool ? " · 풀" : ""}</p>
   <h1 class="join-title">${room}</h1>
   <p class="join-lead">${ws} 워크스페이스${pool ? ` · 들어오면 ${lobby} 방에 합류합니다` : ""}</p>
   <p class="join-lead">이 링크로 비서가 <strong>한 번 호출하면 바로 입장</strong>합니다. 방장 승인을 기다리지 않습니다.</p>

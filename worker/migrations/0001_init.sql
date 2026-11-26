@@ -1,4 +1,4 @@
--- agent-common-room D1 초기 스키마. 로컬 Node 구현(src/db.ts의 SCHEMA)과 같은 테이블을 만든다.
+-- Agent Lounge D1 초기 스키마. 로컬 Node 구현(src/db.ts의 SCHEMA)과 같은 테이블을 만든다.
 -- 차이: audit.id는 D1에서 AUTOINCREMENT 키워드 없이 INTEGER PRIMARY KEY 사용,
 -- login_fails는 Workers 포트에서 오너 로그인 시도 제한을 격리(isolate) 간에 공유하기 위한 추가 테이블.
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);

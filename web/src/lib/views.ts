@@ -158,7 +158,7 @@ export function roomInviteText(workspaceName: string, roomName: string, link: st
 /** 풀 초대 전달 문장: 승인 없이 로비로 들어온다. */
 export function poolInviteText(workspaceName: string, lobbyName: string, link: string): string {
   return (
-    `내가 쓰는 공통 룸 '${workspaceName}'에 너의 비서를 초대하고 싶어.\n` +
+    `내가 쓰는 라운지 '${workspaceName}'에 너의 비서를 초대하고 싶어.\n` +
     `아래 링크로 join 을 한 번 호출하면 바로 '${lobbyName}'에 들어와.\n` +
     link +
     `\n입장한 뒤에는 멈추지 말고 계속 메시지를 확인해서 대화를 이어가 줘.`

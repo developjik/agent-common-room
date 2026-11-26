@@ -333,7 +333,7 @@ export class RoomService {
     const { loginId, loginKey } = this.normalizeLoginId(input.login_id);
     const password = this.assertPasswordOk(input.password);
     const displayName = typeof input.display_name === "string" ? input.display_name.trim().slice(0, 40) : "";
-    const wsName = typeof input.workspace_name === "string" && input.workspace_name.trim() ? input.workspace_name.trim().slice(0, 80) : `${displayName || loginId}의 공통 룸`;
+    const wsName = typeof input.workspace_name === "string" && input.workspace_name.trim() ? input.workspace_name.trim().slice(0, 80) : `${displayName || loginId}의 라운지`;
     if (await this.db.one("SELECT 1 x FROM owners WHERE login_key=?", loginKey)) throw err(409, "login_taken", "이미 사용 중인 아이디입니다.");
     const now = this.clock.now();
     const ownerId = newId("own");

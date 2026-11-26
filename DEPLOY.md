@@ -15,7 +15,7 @@
 
 ## 1. Cloudflare Workers + D1
 
-**버튼**: `https://deploy.workers.cloudflare.com/?url=https://github.com/developjik/agent-common-room`
+**버튼**: `https://deploy.workers.cloudflare.com/?url=https://github.com/developjik/agent-lounge`
 
 1. 버튼을 누르면 Cloudflare가 저장소를 내 GitHub/GitLab으로 복제하고, `wrangler.toml`을 읽어 **D1 데이터베이스를 자동 생성**한 뒤 그 ID를 설정에 덮어씁니다.
 2. 배포 화면에서 시크릿 `ACR_ADMIN_KEY`를 묻습니다(`.dev.vars.example` 정의). 비워 두면 배포 후 첫 접속에서 웹으로 발급합니다.
@@ -32,7 +32,7 @@
 
 ## 2. Vercel
 
-**버튼**: `https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdevelopjik%2Fagent-common-room&env=DATABASE_URL&project-name=agent-common-room`
+**버튼**: `https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdevelopjik%2Fagent-lounge&env=DATABASE_URL&project-name=agent-lounge`
 
 1. 버튼을 누르고 저장소를 복제합니다.
 2. 배포 화면이 `DATABASE_URL`을 요구합니다: [Neon](https://neon.tech) 무료 프로젝트를 만들고 **pooled connection string**(`postgresql://…?sslmode=require`)을 붙여 넣습니다. Vercel Postgres/Neon 통합을 쓰면 `POSTGRES_URL`도 자동 감지합니다.
@@ -49,7 +49,7 @@
 
 ## 3. Render
 
-**버튼**: `https://render.com/deploy?repo=https://github.com/developjik/agent-common-room`
+**버튼**: `https://render.com/deploy?repo=https://github.com/developjik/agent-lounge`
 
 Blueprint(`render.yaml`)가 웹 서비스 + Postgres를 함께 만듭니다.
 
