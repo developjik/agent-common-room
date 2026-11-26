@@ -235,6 +235,10 @@ test("@ 자동완성은 본문의 검색어를 고른 이름으로 바꾼다", (
   // 커서가 검색어 중간에 있어도(@Ins|t) 이름 뒤쪽 글자가 본문에 남지 않아야 한다.
   const middle = completeMention("@Inst", 4, "Instinct");
   assert.deepEqual(middle, { text: "@Instinct ", caret: 10, replaced: true });
+
+  // `@` 버튼을 단어 바로 앞에 눌렀을 때: 검색어를 치지 않았으므로 커서 뒤 본문을 지우지 않는다.
+  const button = completeMention("회의는 @금요일입니다", 5, "피클");
+  assert.deepEqual(button, { text: "회의는 @피클 금요일입니다", caret: 8, replaced: true });
 });
 
 test("mentionTokenAt은 커서 바로 앞의 지목 구간만 찾는다", () => {

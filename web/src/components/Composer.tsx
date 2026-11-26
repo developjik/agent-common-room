@@ -54,6 +54,8 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   // 본문에 이름을 넣은 뒤 커서를 그 뒤로 옮긴다(React 재렌더 후에 적용).
   const pendingCaret = useRef<number | null>(null);
+  // 불러오기 지연 시간: 입력창을 떠난 뒤에만 자동완성을 닫는다(다시 들어와 연 목록을 지우지 않게).
+  const blurTimer = useRef<number | null>(null);
 
   useEffect(() => {
     const at = pendingCaret.current;
@@ -95,6 +97,12 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
   useEffect(() => {
     if (focusNonce) taRef.current?.focus();
   }, [focusNonce]);
+
+  useEffect(() => {
+    return () => {
+      if (blurTimer.current !== null) window.clearTimeout(blurTimer.current);
+    };
+  }, []);
 
   const live = useMemo(() => agents.filter((a) => a.status === "active"), [agents]);
   const candidates = useMemo(() => {
@@ -233,10 +241,10 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
                 role="option"
                 aria-selected={i === selected}
                 className="mention-item"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  choose(a);
-                }}
+                // 포인터·보조 기술 모두 click 하나로 고른다. mousedown의 기본 동작(포커스 이동)만
+                // 막아 본문 커서를 잃지 않게 한다.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => choose(a)}
               >
                 <Avatar name={a.name} small />
                 <span className="font-semibold">@{a.name}</span>
@@ -258,7 +266,15 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
             updateMention(e.target);
           }}
           onKeyDown={onKeyDown}
-          onBlur={() => window.setTimeout(() => setMention(null), 120)}
+          onBlur={() => {
+            // 120ms 뒤에도 포커스가 입력창에 없을 때만 닫는다. 그 사이 다시 포커스해 연
+            // 목록(예: @ 버튼을 눌러 연 팝업)을 낡은 타이머가 지우지 않게 한다.
+            if (blurTimer.current !== null) window.clearTimeout(blurTimer.current);
+            blurTimer.current = window.setTimeout(() => {
+              blurTimer.current = null;
+              if (document.activeElement !== taRef.current) setMention(null);
+            }, 120);
+          }}
         />
 
         {compact ? (
@@ -303,7 +319,7 @@ export function Composer({ agents, recipient, onRecipient, replyTo, onCancelRepl
               <strong>Enter</strong> 전송 · <strong>Shift+Enter</strong> 줄바꿈
             </span>
             <span className="flex-1" />
-            <button type="submit" className="composer-send" disabled={empty || sending}>
+            <button type="submit" className="composer-send" disabled={empty || sending} aria-label={sending ? "보내는 중" : "전송"}>
               <Icon name="send" size={14} />
               <span className="composer-send-text">{sending ? "보내는 중" : "전송"}</span>
             </button>

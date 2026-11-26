@@ -30,6 +30,12 @@ test("입력창은 1줄에서 160px까지만 자라고 제자리에서 스크롤
   assert.equal(/field-sizing/.test(css), false, "높이는 스크립트가 재므로 CSS 자동 높이와 겹치지 않는다");
 });
 
+test("멘션 후보는 click으로도 고를 수 있고 전송 버튼은 이름을 가진다", () => {
+  assert.match(composer, /onMouseDown=\{\(e\) => e\.preventDefault\(\)\}/, "mousedown은 포커스만 막는다");
+  assert.match(composer, /onClick=\{\(\) => choose\(a\)\}/, "보조 기술의 click도 같은 선택으로 들어온다");
+  assert.match(composer, /aria-label=\{sending \? "보내는 중" : "전송"\}/, "모바일에서 문구를 숨겨도 이름이 남는다");
+});
+
 test("플레이스홀더와 @ 호출·수신자 칩이 있다", () => {
   assert.match(composer, /"메시지 입력 \(@로 비서 호출\)"/);
   assert.match(composer, /`@\$\{recipientAgent\.name\}에게만 보내기`/);

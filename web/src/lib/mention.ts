@@ -22,12 +22,15 @@ export function mentionTokenAt(text: string, caret: number): MentionToken | null
  * `@검색어`를 `@이름 `로 바꾸고 커서를 이름 뒤로 옮긴다(뒤에 공백을 두어 자동완성을 닫는다).
  * 해당 구간이 없으면 본문을 그대로 돌려준다.
  * 커서가 검색어 중간에 있어도(`@Ins|t`) 이름 뒤쪽 글자까지 함께 가져가 `@Instinct t`가 되지 않게 한다.
+ * 다만 검색어를 아직 치지 않았으면(`@|금요일`) 커서 뒤는 사용자가 쓴 본문이므로 건드리지 않는다
+ * — @ 버튼을 단어 앞에 눌렀을 때 그 단어가 사라지던 문제.
  */
 export function completeMention(text: string, caret: number, name: string): { text: string; caret: number; replaced: boolean } {
   const token = mentionTokenAt(text, caret);
   if (!token) return { text, caret, replaced: false };
   let end = token.end;
-  while (end < text.length && /[\p{L}\p{N}_.-]/u.test(text[end])) end += 1;
+  // 검색어를 친 경우에만 이어지는 같은 단어를 이름으로 흡수한다(중간 자동완성 보정).
+  while (token.query.length > 0 && end < text.length && /[\p{L}\p{N}_.-]/u.test(text[end])) end += 1;
   const inserted = `@${name} `;
   return {
     text: text.slice(0, token.start) + inserted + text.slice(end),
