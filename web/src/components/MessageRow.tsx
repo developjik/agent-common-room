@@ -116,6 +116,31 @@ export function MessageRow({ m, prev, agents, bySeq, flash, onQuoteReply, onMent
               </button>
               {menuOpen ? (
                 <div className="msg-menu" role="menu">
+                  {/* 터치 기기에서는 헤더의 인라인 액션을 숨기고(대화 폭 보호) 이 메뉴로만 고른다. */}
+                  <div className="msg-menu-touch">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onQuoteReply(m);
+                      }}
+                    >
+                      <Icon name="reply" size={14} /> 답장
+                    </button>
+                    {agent && agent.status === "active" ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onMention(agent);
+                        }}
+                      >
+                        <Icon name="at" size={14} /> @{agent.name} 지목
+                      </button>
+                    ) : null}
+                  </div>
                   <button
                     type="button"
                     role="menuitem"

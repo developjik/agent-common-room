@@ -74,7 +74,9 @@ export interface PublicMessage {
   depth: number;
   context_category: string; created_at: string;
   // 지정 수신 메시지만: 받는 에이전트의 처리 단계 (보냄→전달됨→처리 확인→답장함).
-  delivery: { state: "sent" | "fetched" | "acked" | "replied" } | null;
+  // recipient_status 는 받는 비서의 신원 상태(active/revoked). 화면은 revoked 이고 아직 보냄이면
+  // "전달 안 됨 · 연결 끊김"으로 끝난 상태를 알린다(기다리면 되는 것처럼 보이지 않게).
+  delivery: { state: "sent" | "fetched" | "acked" | "replied"; recipient_status?: string } | null;
 }
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -943,13 +945,25 @@ export class RoomService {
    */
   private async pauseInfo(r: Row) {
     if (!r.paused) return null;
+    // 창 길이는 배너가 "재개하면 지금부터 새로 셉니다(10분 · 30건)"를 말할 수 있게 함께 준다.
+    const windowSeconds = Number(r.rate_limit_window_s);
+    const maxCount = Number(r.rate_limit_count);
     if (r.pause_reason === "rate_cap") {
       const a = await this.db.one("SELECT ts, detail FROM audit WHERE room_id=? AND action='room.auto_pause' ORDER BY id DESC LIMIT 1", r.id);
       const m = a ? /agent=(\S+)/.exec(String(a.detail)) : null;
-      return { reason: "rate_cap", actor: "auto", actor_id: m ? m[1] : null, at: a ? iso(Number(a.ts)) : null };
+      const at = a ? Number(a.ts) : null;
+      return {
+        reason: "rate_cap", actor: "auto", actor_id: m ? m[1] : null, at: at === null ? null : iso(at),
+        // 이 시점이 지나면 예전 창의 전송은 상한 계산에서 빠진다(재개하면 즉시 새 창).
+        until: at === null ? null : iso(at + windowSeconds * 1000),
+        window_seconds: windowSeconds, limit: maxCount,
+      };
     }
     const a = await this.db.one("SELECT ts FROM audit WHERE room_id=? AND action='room.update' AND detail LIKE '%paused%' ORDER BY id DESC LIMIT 1", r.id);
-    return { reason: r.pause_reason ?? "owner", actor: "owner", actor_id: null, at: a ? iso(Number(a.ts)) : null };
+    return {
+      reason: r.pause_reason ?? "owner", actor: "owner", actor_id: null, at: a ? iso(Number(a.ts)) : null,
+      until: null, window_seconds: windowSeconds, limit: maxCount,
+    };
   }
   private roomView(r: Row) {
     return {
@@ -975,6 +989,11 @@ export class RoomService {
     if (patch.paused !== undefined) {
       const p = !!patch.paused;
       stmts.push(this.db.prep("UPDATE rooms SET paused=?, pause_reason=? WHERE id=?", p ? 1 : 0, p ? "owner" : null, roomId));
+      // 재개는 빈도 상한 창의 기준점을 지금으로 옮긴다(스키마 변경 없이 meta 사용).
+      // 예전에는 600초 창에 남은 전송 수 때문에 재개 직후 다음 전송이 곧바로 다시 자동 정지됐다
+      // (오너 화면에는 '재개했습니다' 토스트 뒤 정지 배너가 돌아와 고장처럼 보였다).
+      // meta 는 모든 드라이버(SQLite·D1·Postgres)에 있는 key/value 테이블이라 마이그레이션이 필요 없다.
+      if (!p) stmts.push(this.db.prep("INSERT INTO meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", `rate_reset:${roomId}`, String(this.clock.now())));
     }
     if (typeof patch.context_policy === "string") stmts.push(this.db.prep("UPDATE rooms SET context_policy=? WHERE id=?", patch.context_policy.slice(0, 1000), roomId));
     if (Array.isArray(patch.allowed_categories)) {
@@ -1186,10 +1205,12 @@ export class RoomService {
     const agentId = newId("agt");
     const agentToken = newToken("acr_agt");
     const lobbyFloor = Number(lobby.next_seq) - 1;
+    // last_seen 은 비워 둔다. 입장은 토큰 발급일 뿐 실제 활동이 아니므로, 한 번도 inbox 를 열지 않은
+    // 비서가 30분간 '온라인'으로 보이던 문제를 막는다(실제 인증 요청이 있을 때 authAgent 가 기록).
     const stmts: DbStatement[] = [
       this.db.prep(
-        "INSERT INTO agents(id,room_id,workspace_id,name,name_key,product,token_hash,status,can_read,can_write,history_floor,created_at,last_seen) VALUES (?,?,?,?,?,?,?,'active',1,1,?,?,?)",
-        agentId, lobbyId, ws.id, name, name.toLowerCase(), product, await hashToken(agentToken), lobbyFloor, now, now),
+        "INSERT INTO agents(id,room_id,workspace_id,name,name_key,product,token_hash,status,can_read,can_write,history_floor,created_at,last_seen) VALUES (?,?,?,?,?,?,?,'active',1,1,?,?,NULL)",
+        agentId, lobbyId, ws.id, name, name.toLowerCase(), product, await hashToken(agentToken), lobbyFloor, now),
     ];
     for (const rid of targets) {
       const target = rid === lobbyId ? lobby : room;
@@ -1531,7 +1552,11 @@ export class RoomService {
       depth: Number(m.depth ?? 0),
       context_category: m.context_category, created_at: iso(m.created_at),
       delivery: rec
-        ? { state: replied ? "replied" : Number(m.seq) <= Number(rec.acked_seq) ? "acked" : Number(m.seq) <= Number(rec.fetched_seq) ? "fetched" : "sent" }
+        ? {
+          state: replied ? "replied" : Number(m.seq) <= Number(rec.acked_seq) ? "acked" : Number(m.seq) <= Number(rec.fetched_seq) ? "fetched" : "sent",
+          // 받는 비서가 폐기(revoked)됐으면 이 메시지는 영영 전달되지 않는다(화면이 끝난 상태로 표시).
+          ...(rec.status ? { recipient_status: String(rec.status) } : {}),
+        }
         : null,
     };
   }
@@ -1558,7 +1583,7 @@ export class RoomService {
       for (let i = 0; i < uniq.length; i += 90) {
         const slice = uniq.slice(i, i + 90);
         const found = await this.db.all(
-          `SELECT a.id, a.name, COALESCE(m.fetched_seq, a.fetched_seq) AS fetched_seq, COALESCE(m.acked_seq, a.acked_seq) AS acked_seq
+          `SELECT a.id, a.name, a.status, COALESCE(m.fetched_seq, a.fetched_seq) AS fetched_seq, COALESCE(m.acked_seq, a.acked_seq) AS acked_seq
              FROM agents a LEFT JOIN room_members m ON m.agent_id=a.id AND m.room_id=?
             WHERE a.id IN (${slice.map(() => "?").join(",")})`,
           roomId, ...slice);
@@ -1850,11 +1875,15 @@ export class RoomService {
       }
       const since = now - room.rate_limit_window_s * 1000;
       // 방 상한과 워크스페이스 집계 상한(방 상한의 3배)을 한 쿼리로 센다.
+      // 방 상한은 오너가 마지막으로 재개한 시각(rate_reset) 이후의 전송만 센다 — 재개가 예전 창 때문에
+      // 즉시 무효가 되지 않게. 값이 없으면 0(제한 없음)이라 기존 DB·기존 방에 그대로 호환된다.
       const recent = (await this.db.one(
-        `SELECT (SELECT count(*) FROM messages WHERE room_id=? AND sender_type='agent' AND created_at>=?) AS room_c,
+        `SELECT (SELECT count(*) FROM messages
+                  WHERE room_id=? AND sender_type='agent' AND created_at>=?
+                    AND created_at > COALESCE((SELECT CAST(value AS BIGINT) FROM meta WHERE key=?), 0)) AS room_c,
                 (SELECT count(*) FROM messages m JOIN rooms r ON r.id=m.room_id
                   WHERE r.workspace_id=? AND m.sender_type='agent' AND m.sender_id=? AND m.created_at>=?) AS ws_c`,
-        roomId, since, room.workspace_id ?? "", sender.id, since))!;
+        roomId, since, `rate_reset:${roomId}`, room.workspace_id ?? "", sender.id, since))!;
       if (Number(recent.ws_c) >= Number(room.rate_limit_count) * 3) {
         throw err(429, "agent_rate_cap", "여러 방에 걸친 메시지 빈도 상한을 넘었습니다. 잠시 뒤 다시 시도하세요.");
       }
@@ -1920,13 +1949,15 @@ export class RoomService {
    * 실패해도 대화 자체는 이미 저장됐으므로, 이 갱신은 최선 노력(값이 낡으면 다음 전송이 덮는다).
    */
   private async touchRoomPreview(roomId: string, msg?: Row) {
-    if (msg) {
+    // 시스템 안내(자동 일시정지·체인 상한)는 대화가 아니다. 방 목록 미리보기에 그 문장이 그대로 박히면
+    // "system: 답장 체인이 최대 깊이(6)에 닿아…"처럼 목록이 오염되므로, 마지막 '사람·비서' 메시지만 쓴다.
+    if (msg && msg.sender_type !== "system") {
       const preview = String(msg.deleted_at ? "" : msg.content ?? "").replace(/\s+/g, " ").slice(0, PREVIEW_MAX) || null;
       await this.db.run("UPDATE rooms SET last_message_at=?, last_preview=?, last_sender_name=?, last_sender_type=? WHERE id=?",
         msg.created_at, preview, msg.sender_name, msg.sender_type, roomId);
       return;
     }
-    const last = await this.db.one("SELECT created_at, content, sender_name, sender_type FROM messages WHERE room_id=? AND deleted_at IS NULL ORDER BY seq DESC LIMIT 1", roomId);
+    const last = await this.db.one("SELECT created_at, content, sender_name, sender_type FROM messages WHERE room_id=? AND deleted_at IS NULL AND sender_type<>'system' ORDER BY seq DESC LIMIT 1", roomId);
     if (!last) {
       await this.db.run("UPDATE rooms SET last_message_at=NULL, last_preview=NULL, last_sender_name=NULL, last_sender_type=NULL WHERE id=?", roomId);
       return;

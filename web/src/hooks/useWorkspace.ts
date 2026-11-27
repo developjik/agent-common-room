@@ -352,7 +352,17 @@ export function useWorkspace({ workspace, roomId, view, onUnauthorized }: Params
     async (rid: string, seq: number) => {
       await roomApi.deleteMessage(rid, seq);
       setMessages((prev) => prev.map((m) => (m.seq === seq ? { ...m, deleted: true, content: null } : m)));
-      void refresh();
+      // 삭제 전에 시작된 폴링(개요 스냅샷)이 아직 날아오는 중이면 그 응답에는 삭제된 본문이 들어 있다.
+      // refresh() 는 진행 중이면 그 약속을 그대로 돌려주므로, 먼저 끝나게 한 뒤 한 번 더 읽는다
+      // (예전에는 이 경합에 걸리면 다음 폴링(최대 20초)까지 방 목록에 삭제된 본문이 남았다).
+      if (refreshing.current) {
+        try {
+          await refreshing.current;
+        } catch {
+          /* 실패한 폴링은 아래 refresh 가 다시 시도한다. */
+        }
+      }
+      await refresh();
     },
     [refresh],
   );

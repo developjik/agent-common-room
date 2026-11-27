@@ -210,7 +210,11 @@ function AgentCard({
           </p>
           <p className="agent-card-status">
             <span className="dot" data-tone={tone} aria-hidden="true" />
-            {agent.status === "unclaimed" || !agent.last_seen ? "연결 대기" : `${relTime(agent.last_seen)} 접속`}
+            {agent.status === "unclaimed"
+              ? "승인 대기"
+              : !agent.last_seen
+                ? "입장함 · inbox 미확인"
+                : `${relTime(agent.last_seen)} 확인`}
           </p>
         </div>
         <button type="button" className="btn btn-sm btn-danger" onClick={onRevoke}>

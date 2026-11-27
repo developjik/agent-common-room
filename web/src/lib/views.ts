@@ -1,13 +1,13 @@
 // 화면이 서버 값을 번역하는 순수 규칙. 컴포넌트는 여기 결과만 그린다(테스트는 이 파일만 본다).
 // 세 화면(방·비서·설정)만 남긴 단순화 이후에도 필요한 규칙만 둔다.
 import type { Agent, AgentSummary, Message, PoolAgent, RoomCard, RoomMember } from "./types.js";
-import { TONE_LABEL, type AgentTone } from "./format.js";
+import { durationLabel, ONLINE_WINDOW_MS, TONE_LABEL, type AgentTone } from "./format.js";
 
-/** 풀의 비서 상태 → 상태 점. agentTone 과 같은 규칙(신원 상태 + 마지막 접속 30분). */
+/** 풀의 비서 상태 → 상태 점. agentTone 과 같은 규칙(신원 상태 + 마지막 실제 활동 5분). */
 export function presenceTone(status: string, lastSeen: string | null, now = Date.now()): AgentTone {
   if (status === "revoked") return "offline";
   if (status === "unclaimed" || !lastSeen) return "pending";
-  return now - new Date(lastSeen).getTime() < 30 * 60_000 ? "online" : "idle";
+  return now - new Date(lastSeen).getTime() < ONLINE_WINDOW_MS ? "online" : "idle";
 }
 
 export function presenceLabel(status: string, lastSeen: string | null): string {
@@ -163,6 +163,36 @@ export function poolInviteText(workspaceName: string, lobbyName: string, link: s
     link +
     `\n입장한 뒤에는 멈추지 말고 계속 메시지를 확인해서 대화를 이어가 줘.`
   );
+}
+
+// ---------- 일시정지 배너 ----------
+
+/** 배너가 읽는 값만(방 상세의 pause_info + rate_limit). */
+interface PausedRoom {
+  pause_info: { reason: string; window_seconds?: number; limit?: number } | null;
+  rate_limit?: { count: number; window_seconds: number };
+}
+
+/**
+ * 일시정지 배너 제목: 누가·왜 멈췄나.
+ * 예전에는 어떤 정지든 "일시정지" 한 마디에 "비서는 읽기만 합니다"만 보여,
+ * 자동 속도 제한으로 멈춘 방인지 방장이 직접 멈춘 방인지 구분할 수 없었다.
+ */
+export function pauseTitle(room: PausedRoom): string {
+  return room.pause_info?.reason === "rate_cap" ? "자동 일시정지 · 메시지 빈도 상한" : "일시정지 · 방장이 멈춤";
+}
+
+/**
+ * 배너 본문: 자동 정지는 남은/해제 방법을, 수동 정지는 재개하면 되는 것을 말한다.
+ * 재개하면 서버가 빈도 창의 기준점을 지금으로 옮기므로( rate_reset ) 바로 다시 대화할 수 있다.
+ */
+export function pauseDetail(room: PausedRoom): string {
+  if (room.pause_info?.reason === "rate_cap") {
+    const seconds = room.pause_info.window_seconds ?? room.rate_limit?.window_seconds ?? 600;
+    const count = room.pause_info.limit ?? room.rate_limit?.count ?? 30;
+    return `비서가 ${durationLabel(seconds)}에 ${count}건을 넘어 자동으로 멈췄습니다. 재개하면 이 방의 빈도 창을 지금부터 새로 셉니다(여러 방에 걸친 비서별 상한은 그대로 적용됩니다).`;
+  }
+  return "내 메시지는 그대로 전달되고, 비서는 읽기만 합니다. 재개하면 비서가 다시 답할 수 있습니다.";
 }
 
 // ---------- 메시지 폴링 ----------

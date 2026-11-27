@@ -59,11 +59,20 @@ export function remainLabel(iso: string): string {
 
 export type AgentTone = "online" | "idle" | "pending" | "offline";
 
+/**
+ * 온라인 판정 창.
+ * 예전에는 30분이었는데, 입장(토큰 발급)만 하고 inbox 를 한 번도 열지 않은 비서도 30분간
+ * 초록 점으로 보였다. 온라인은 "지금 폴링·답장 중"이라는 뜻이어야 하므로 5분으로 좁히고,
+ * 5분이 지나면 자리 비움으로 내린다.
+ */
+export const ONLINE_WINDOW_MS = 5 * 60_000;
+
 export function agentTone(a: Agent, now = Date.now()): AgentTone {
   if (a.status === "revoked") return "offline";
   if (a.status === "unclaimed") return "pending";
+  // 토큰은 발급됐지만 인증 요청이 한 번도 없었으면 아직 연결 대기다(입장했지만 폴링 전).
   if (!a.last_seen) return "pending";
-  return now - new Date(a.last_seen).getTime() < 30 * 60_000 ? "online" : "idle";
+  return now - new Date(a.last_seen).getTime() < ONLINE_WINDOW_MS ? "online" : "idle";
 }
 
 export const TONE_LABEL: Record<AgentTone, string> = {
@@ -101,7 +110,9 @@ export function historyFloorLabel(historyFloorSeq: number): string {
 export function seenLabel(a: Agent): string {
   if (a.status === "revoked") return "연결 끊김 · 다시 초대해야 함";
   if (a.status === "unclaimed") return "승인됨 · 연결 대기";
-  if (!a.last_seen) return "접속 기록 없음";
+  // last_seen 은 실제 인증 요청(me·inbox·ack·답장)에서 생긴다. 기록이 없으면 입장만 하고
+  // inbox 를 열지 않은 비서다(예전에는 입장 시각을 기록해 '방금 확인함'으로 보였다).
+  if (!a.last_seen) return "입장함 · inbox 미확인";
   const d = Math.max(0, Date.now() - new Date(a.last_seen).getTime());
   if (d < 3 * 60_000) return "방금 확인함";
   if (d < 60 * 60_000) return `${Math.max(1, Math.floor(d / 60_000))}분 전 확인`;
@@ -126,9 +137,14 @@ export function senderName(m: Message): string {
 export function deliveryNotice(m: Message, now = Date.now()): { label: string; title: string } | null {
   if (!m.recipient || !m.delivery || m.deleted) return null;
   if (m.delivery.state !== "sent") return null;
+  const who = m.recipient.id === "owner" ? "나" : `${m.recipient.name} 비서`;
+  // 받는 비서의 연결이 끊겼으면 이 메시지는 영영 전달되지 않는다. "아직 전달 전"은 기다리면
+  // 되는 것처럼 읽히므로, 끝난 상태(전달 안 됨 · 연결 끊김)로 바로 알린다.
+  if (m.delivery.recipient_status === "revoked") {
+    return { label: "전달 안 됨 · 연결 끊김", title: `${who}의 연결이 끊겨 전달할 수 없습니다` };
+  }
   const at = new Date(m.created_at).getTime();
   if (!Number.isFinite(at) || now - at < 30_000) return null;
-  const who = m.recipient.id === "owner" ? "나" : `${m.recipient.name} 비서`;
   return { label: "아직 전달 전", title: `${who}에게 아직 전달되지 않았습니다` };
 }
 
