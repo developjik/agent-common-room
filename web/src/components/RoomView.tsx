@@ -32,6 +32,8 @@ export function RoomView({ roomId, store, workspace, isWide, onBack }: Props) {
   const [focusComposer, setFocusComposer] = useState(0);
   const [flashSeq, setFlashSeq] = useState<number | null>(null);
   const [inviting, setInviting] = useState(false);
+  // 헤더에서 초대를 새로 발급하면 열려 있는 설정의 초대 목록도 다시 읽게 한다.
+  const [inviteTick, setInviteTick] = useState(0);
   const [fallbackLink, setFallbackLink] = useState<string | null>(null);
   const feedRef = useRef<ChatFeedHandle | null>(null);
   const flashTimer = useRef<number | undefined>(undefined);
@@ -149,6 +151,7 @@ export function RoomView({ roomId, store, workspace, isWide, onBack }: Props) {
       const res = await store.createInvite(roomId, INVITE_DEFAULTS.ttlHours, INVITE_DEFAULTS.maxUses);
       const link = `${location.origin}/join/${res.invite_token}`;
       // 링크만 보내면 비서가 join 만 하고 멈출 수 있다. 입장 뒤 대화를 이어가라는 한 줄까지 같이 보낸다.
+      setInviteTick((n) => n + 1);
       const text = roomInviteText(workspace.name, room?.name ?? "이 방", link);
       const ok = await copyText(text);
       if (ok) {
@@ -168,7 +171,7 @@ export function RoomView({ roomId, store, workspace, isWide, onBack }: Props) {
   const resume = async () => {
     try {
       await store.patchRoom(roomId, { paused: false });
-      notify("방을 재개했습니다. 지금부터 빈도 상한을 새로 셉니다.");
+      notify("방을 재개했습니다. 이 방의 빈도 상한을 지금부터 새로 셉니다.");
     } catch (e) {
       notify(e instanceof Error ? e.message : "재개하지 못했습니다.");
     }
@@ -219,6 +222,7 @@ export function RoomView({ roomId, store, workspace, isWide, onBack }: Props) {
       store={store}
       room={room}
       workspaceName={workspace.name}
+      inviteRefreshKey={`${inviteTick}:${room.members.length}`}
       onClose={() => setPanelOpen(false)}
       onMention={mention}
       onDeleted={onBack}

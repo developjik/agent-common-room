@@ -21,13 +21,15 @@ interface Props {
   store: WorkspaceStore;
   room: RoomDetail;
   workspaceName: string;
+  /** 헤더 초대 발급·구성원 변화 때 초대 목록을 다시 읽는 신호. */
+  inviteRefreshKey: string;
   onClose: () => void;
   onMention: (a: { id: string; name: string; status: string }) => void;
   /** 방을 지운 뒤 목록으로 돌아가기(삭제된 방을 계속 가리키지 않게). */
   onDeleted: () => void;
 }
 
-export function RoomPanel({ store, room, workspaceName, onClose, onMention, onDeleted }: Props) {
+export function RoomPanel({ store, room, workspaceName, inviteRefreshKey, onClose, onMention, onDeleted }: Props) {
   return (
     <>
       <div className="panel-head">
@@ -44,7 +46,7 @@ export function RoomPanel({ store, room, workspaceName, onClose, onMention, onDe
       <div className="panel-body space-y-5">
         <MemberList store={store} room={room} onMention={onMention} />
         <PauseControl store={store} room={room} />
-        <InviteList store={store} room={room} workspaceName={workspaceName} />
+        <InviteList store={store} room={room} workspaceName={workspaceName} refreshKey={inviteRefreshKey} />
         <RoomName store={store} room={room} />
         <DangerZone store={store} room={room} onDeleted={onDeleted} />
       </div>
@@ -198,12 +200,25 @@ function PauseControl({ store, room }: { store: WorkspaceStore; room: RoomDetail
  * 오너가 발급 내역을 볼 수도, 회수할 수도 없었다(즉시 입장은 오너 승인이 없어 회수가 유일한 통제).
  * 토큰 평문은 서버가 해시만 저장하므로 목록에는 ID·사용 횟수·만료만 둔다.
  */
-function InviteList({ store, room, workspaceName }: { store: WorkspaceStore; room: RoomDetail; workspaceName: string }) {
+function InviteList({
+  store,
+  room,
+  workspaceName,
+  refreshKey,
+}: {
+  store: WorkspaceStore;
+  room: RoomDetail;
+  workspaceName: string;
+  /** 헤더에서 초대를 새로 만들거나 비서가 입장해 사용 횟수가 바뀌면 목록을 다시 읽는다. */
+  refreshKey: string;
+}) {
   const notify = useToast();
   const confirm = useConfirm();
   const [invites, setInvites] = useState<Invite[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 클립보드가 막힌 브라우저에서는 발급 응답의 링크가 유일한 사본이다(서버는 해시만 남긴다).
+  const [fallbackLink, setFallbackLink] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -217,7 +232,7 @@ function InviteList({ store, room, workspaceName }: { store: WorkspaceStore; roo
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   const create = async () => {
     if (busy) return;
@@ -226,7 +241,8 @@ function InviteList({ store, room, workspaceName }: { store: WorkspaceStore; roo
       const res = await store.createInvite(room.id, INVITE_DEFAULTS.ttlHours, INVITE_DEFAULTS.maxUses);
       const link = `${location.origin}/join/${res.invite_token}`;
       const ok = await copyText(roomInviteText(workspaceName, room.name, link));
-      notify(ok ? "새 초대 문장을 복사했습니다 · 7일 · 10회" : "초대는 만들었지만 클립보드에 넣지 못했습니다.");
+      setFallbackLink(ok ? null : link);
+      notify(ok ? "새 초대 문장을 복사했습니다 · 7일 · 10회" : "초대는 만들었지만 클립보드에 넣지 못했습니다. 아래 링크를 직접 복사하세요.");
       await load();
     } catch (e) {
       notify(e instanceof Error ? e.message : "초대를 만들지 못했습니다.");
@@ -294,6 +310,17 @@ function InviteList({ store, room, workspaceName }: { store: WorkspaceStore; roo
         <Icon name="link" size={13} />
         {busy ? "만드는 중…" : "새 초대 문장 복사"}
       </button>
+      {fallbackLink ? (
+        <div className="invite-bar mt-2" role="status">
+          <code className="min-w-0 flex-1 select-all break-all">{fallbackLink}</code>
+          <button type="button" className="btn btn-sm" onClick={() => void copyText(fallbackLink)}>
+            복사
+          </button>
+          <button type="button" className="btn-icon" aria-label="닫기" onClick={() => setFallbackLink(null)}>
+            <Icon name="close" size={13} />
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

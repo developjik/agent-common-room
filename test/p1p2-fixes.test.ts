@@ -46,6 +46,17 @@ test("P1-1: 빈도 상한 자동 정지 뒤 재개하면 같은 창에서도 다
   const after = await t.call("POST", "/api/messages", a.token, msg("s4", "n4"));
   assert.equal(after.status, 201, `재개 직후 전송이 성공해야 한다 (${after.text})`);
   assert.equal(after.json.message.sender.type, "agent");
+
+  // 재개 직후의 전송은 새 창에서 세지 않지만, 그 뒤의 전송은 다시 센다(상한이 사라진 것이 아니다).
+  if (!EXTERNAL) {
+    t.clock.advance(1_000);
+    for (let i = 0; i < 3; i++) {
+      assert.equal((await t.call("POST", "/api/messages", a.token, msg(`t${i}`, `m${i}`))).status, 201, `새 창 ${i + 1}건째`);
+    }
+    const recapped = await t.call("POST", "/api/messages", a.token, msg("t3", "m3"));
+    assert.equal(recapped.status, 429, "새 창에서 상한을 다시 넘기면 또 자동 정지한다");
+    assert.equal(recapped.json.error.code, "rate_cap_paused");
+  }
 });
 
 test("P1-2: 오너가 방을 직접 일시정지/재개하고, 사유가 다르게 표시된다", async () => {
@@ -193,7 +204,7 @@ test("P1-1 화면 규칙: 배너가 정지 사유(자동/방장)와 재개 안�
   const auto = { pause_info: { reason: "rate_cap", window_seconds: 600, limit: 30 } };
   assert.match(pauseTitle(auto), /자동/);
   assert.match(pauseDetail(auto), /10분에 30건/, "빈도 창과 상한을 그대로 말한다");
-  assert.match(pauseDetail(auto), /재개하면 지금부터 새로 세므로/);
+  assert.match(pauseDetail(auto), /재개하면 이 방의 빈도 창을 지금부터 새로 셉니다/);
   const manual = { pause_info: { reason: "owner" } };
   assert.match(pauseTitle(manual), /방장/);
   assert.match(pauseDetail(manual), /다시 답할 수 있습니다/);

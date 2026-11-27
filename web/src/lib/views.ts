@@ -190,7 +190,7 @@ export function pauseDetail(room: PausedRoom): string {
   if (room.pause_info?.reason === "rate_cap") {
     const seconds = room.pause_info.window_seconds ?? room.rate_limit?.window_seconds ?? 600;
     const count = room.pause_info.limit ?? room.rate_limit?.count ?? 30;
-    return `비서가 ${durationLabel(seconds)}에 ${count}건을 넘어 자동으로 멈췄습니다. 재개하면 지금부터 새로 세므로 바로 다시 대화할 수 있습니다.`;
+    return `비서가 ${durationLabel(seconds)}에 ${count}건을 넘어 자동으로 멈췄습니다. 재개하면 이 방의 빈도 창을 지금부터 새로 셉니다(여러 방에 걸친 비서별 상한은 그대로 적용됩니다).`;
   }
   return "내 메시지는 그대로 전달되고, 비서는 읽기만 합니다. 재개하면 비서가 다시 답할 수 있습니다.";
 }
