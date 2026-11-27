@@ -218,7 +218,8 @@ function InviteList({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // 클립보드가 막힌 브라우저에서는 발급 응답의 링크가 유일한 사본이다(서버는 해시만 남긴다).
-  const [fallbackLink, setFallbackLink] = useState<string | null>(null);
+  // 어느 초대의 링크인지 함께 두어, 그 초대가 폐기·만료되면 죽은 링크를 계속 복사하지 않게 한다.
+  const [fallback, setFallback] = useState<{ id: string; link: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -241,7 +242,7 @@ function InviteList({
       const res = await store.createInvite(room.id, INVITE_DEFAULTS.ttlHours, INVITE_DEFAULTS.maxUses);
       const link = `${location.origin}/join/${res.invite_token}`;
       const ok = await copyText(roomInviteText(workspaceName, room.name, link));
-      setFallbackLink(ok ? null : link);
+      setFallback(ok ? null : { id: res.invite_id, link });
       notify(ok ? "새 초대 문장을 복사했습니다 · 7일 · 10회" : "초대는 만들었지만 클립보드에 넣지 못했습니다. 아래 링크를 직접 복사하세요.");
       await load();
     } catch (e) {
@@ -261,6 +262,7 @@ function InviteList({
     if (!ok) return;
     try {
       await roomApi.revokeInvite(room.id, inv.id);
+      if (fallback?.id === inv.id) setFallback(null);
       notify("초대를 폐기했습니다. 이 링크로는 입장할 수 없습니다.");
       await load();
     } catch (e) {
@@ -270,6 +272,8 @@ function InviteList({
 
   const active = invites?.filter((i) => i.active) ?? [];
   const total = invites?.length ?? 0;
+  // 목록에서 이미 활성이 아닌(폐기·만료·소진) 초대의 링크는 보여 주지 않는다.
+  const fallbackLink = fallback && (invites === null || active.some((i) => i.id === fallback.id)) ? fallback.link : null;
 
   return (
     <section aria-labelledby="invite-head" className="border-t border-line pt-4">
@@ -316,7 +320,7 @@ function InviteList({
           <button type="button" className="btn btn-sm" onClick={() => void copyText(fallbackLink)}>
             복사
           </button>
-          <button type="button" className="btn-icon" aria-label="닫기" onClick={() => setFallbackLink(null)}>
+          <button type="button" className="btn-icon" aria-label="닫기" onClick={() => setFallback(null)}>
             <Icon name="close" size={13} />
           </button>
         </div>
