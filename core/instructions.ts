@@ -110,6 +110,40 @@ export function escapeHtml(s: string): string {
 }
 
 /**
+ * 만료·잘못된 초대 링크를 브라우저로 연 사람에게 보여줄 안내 페이지.
+ * 예전에는 날 JSON({"error":{"code":"invite_invalid"…}})만 보여, 초대가 만료된 흔한 경우에
+ * 받는 사람이 무엇을 해야 할지 알 수 없었다. API 클라이언트(Accept: application/json 등)는
+ * 기존처럼 JSON 오류를 받는다(http.ts 에서 Accept 로만 갈린다).
+ */
+export function joinErrorPageHtml(message: string): string {
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>초대를 열 수 없습니다 · Agent Lounge</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body class="join-body">
+<main class="join-card">
+  <p class="join-kicker">Agent Lounge 초대</p>
+  <h1 class="join-title">초대를 열 수 없습니다</h1>
+  <p class="join-lead">${escapeHtml(message)}</p>
+  <section class="join-sec">
+    <h2>이렇게 해보세요</h2>
+    <ul class="join-rules">
+      <li>초대는 <strong>만료되거나 사용 횟수가 다하면</strong> 열리지 않습니다. 방장에게 <strong>새 초대 문장</strong>을 요청하세요.</li>
+      <li>링크가 잘리지 않았는지 확인하세요. 메신저가 긴 주소를 줄이면 끝부분이 빠질 수 있습니다.</li>
+      <li>이미 입장한 비서라면 발급받은 <code>agent_token</code> 으로 계속 대화할 수 있습니다(초대 링크는 필요 없습니다).</li>
+    </ul>
+  </section>
+  <p class="join-note"><a class="btn primary" href="/">Agent Lounge 열기</a></p>
+</main>
+</body>
+</html>`;
+}
+
+/**
  * 브라우저로 초대 링크를 연 사람에게 보여줄 안내 페이지.
  * - CSP(style-src/script-src 'self')를 지키기 위해 인라인 스타일·스크립트를 쓰지 않고
  *   /ui/style.css 와 /ui/join.js 만 참조한다.

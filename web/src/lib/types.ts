@@ -43,6 +43,11 @@ export interface PauseInfo {
   actor: "auto" | "owner" | string;
   actor_id: string | null;
   at: string | null;
+  /** 자동 정지 창이 끝나는 시각(rate_cap 일 때만). */
+  until?: string | null;
+  /** 방의 빈도 상한(초·건). 배너가 "재개하면 지금부터 새로 셉니다(10분·30건)" 를 말한다. */
+  window_seconds?: number;
+  limit?: number;
 }
 
 /** 방 상세(오너). /api/rooms/:rid 와 /api/workspaces/:wid/rooms 응답. */
@@ -182,6 +187,8 @@ export type MessageKind = "message" | "question" | "answer" | "status";
 
 export interface DeliveryState {
   state: "sent" | "fetched" | "acked" | "replied";
+  /** 받는 비서의 신원 상태(active/revoked). revoked 면 전달될 수 없는 메시지다. */
+  recipient_status?: string;
 }
 
 export interface Message {

@@ -18,7 +18,7 @@
 //   호환      /api/owner/login · /api/owner/*  (방 1개 워크스페이스로 해석, 1~2 릴리스 유지)
 //   에이전트  /mcp · /api/me · /api/room · /api/inbox · /api/ack · /api/messages
 //             /api/rooms/:rid/{inbox,ack,messages}  (방 없는 /api/inbox 는 방이 여러 개면 방별 묶음)
-import { joinInstructions, joinPageHtml } from "./instructions.js";
+import { joinErrorPageHtml, joinInstructions, joinPageHtml } from "./instructions.js";
 import { handleMcp } from "./mcp.js";
 import { hashToken, safeEqualHex } from "./crypto.js";
 import { ApiError, RoomService, type Agent, type OwnerScope } from "./service.js";
@@ -346,10 +346,33 @@ export async function handleFetch(
     // 브라우저(Accept: text/html)에는 방 이름·규칙·복사 버튼이 있는 안내 페이지를,
     // 에이전트·CLI(*/*, text/plain 등)에는 기존 마크다운 안내를 그대로 내려준다(양쪽 호환).
     if ((m = /^\/join\/([^/]+)$/.exec(path)) && method === "GET") {
-      const info = await svc.inviteInfo(m[1]);
       const host = /^[A-Za-z0-9.:\-\[\]]+$/.test(url.host) ? url.host : "localhost";
       const base = env.ACR_PUBLIC_URL ?? `${url.protocol}//${host}`;
-      if ((req.headers.get("accept") ?? "").toLowerCase().includes("text/html")) {
+      const wantsHtml = (req.headers.get("accept") ?? "").toLowerCase().includes("text/html");
+      let info;
+      try {
+        info = await svc.inviteInfo(m[1]);
+      } catch (e) {
+        // 브라우저에는 날 JSON 대신 안내 페이지를 준다(만료·폐기·사용 횟수 소진은 흔한 경로다).
+        // API 클라이언트(Accept: application/json·text/markdown 등)는 기존 JSON 오류 그대로 받는다.
+        if (e instanceof ApiError && wantsHtml) {
+          const html = joinErrorPageHtml(e.message);
+          return new Response(html, {
+            status: e.status,
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+              "content-security-policy": UI_CSP,
+              "vary": "accept",
+              "x-content-type-options": "nosniff",
+              "referrer-policy": "no-referrer",
+              "x-frame-options": "DENY",
+              "cache-control": "no-store",
+            },
+          });
+        }
+        throw e;
+      }
+      if (wantsHtml) {
         return new Response(joinPageHtml(base, m[1], info), {
           status: 200,
           headers: {

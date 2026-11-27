@@ -9,7 +9,7 @@ import { useToast } from "./Toast.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { copyText } from "../lib/browserClipboard.js";
 import { recipientReset } from "../lib/format.js";
-import { INVITE_DEFAULTS, roomInviteText } from "../lib/views.js";
+import { INVITE_DEFAULTS, pauseDetail, pauseTitle, roomInviteText } from "../lib/views.js";
 import type { WorkspaceStore } from "../hooks/useWorkspace.js";
 import type { Message, RoomDetail, Workspace } from "../lib/types.js";
 
@@ -168,7 +168,7 @@ export function RoomView({ roomId, store, workspace, isWide, onBack }: Props) {
   const resume = async () => {
     try {
       await store.patchRoom(roomId, { paused: false });
-      notify("방을 재개했습니다.");
+      notify("방을 재개했습니다. 지금부터 빈도 상한을 새로 셉니다.");
     } catch (e) {
       notify(e instanceof Error ? e.message : "재개하지 못했습니다.");
     }
@@ -215,7 +215,14 @@ export function RoomView({ roomId, store, workspace, isWide, onBack }: Props) {
 
   const liveAgents = agents.filter((a) => a.status === "active");
   const panel = panelOpen ? (
-    <RoomPanel store={store} room={room} onClose={() => setPanelOpen(false)} onMention={mention} onDeleted={onBack} />
+    <RoomPanel
+      store={store}
+      room={room}
+      workspaceName={workspace.name}
+      onClose={() => setPanelOpen(false)}
+      onMention={mention}
+      onDeleted={onBack}
+    />
   ) : null;
 
   return (
@@ -268,11 +275,11 @@ export function RoomView({ roomId, store, workspace, isWide, onBack }: Props) {
         ) : null}
 
         {room.paused ? (
-          <div className="banner" role="status">
-            <Icon name="pause" size={18} className="mt-0.5 shrink-0" />
+          <div className={"banner" + (room.pause_info?.reason === "rate_cap" ? " is-auto" : "")} role="status">
+            <Icon name={room.pause_info?.reason === "rate_cap" ? "alert" : "pause"} size={18} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
-              <p className="banner-title">일시정지</p>
-              <p className="banner-text">비서는 읽기만 합니다. 내 메시지는 그대로 전달됩니다.</p>
+              <p className="banner-title">{pauseTitle(room)}</p>
+              <p className="banner-text">{pauseDetail(room)}</p>
             </div>
             <button type="button" className="btn btn-primary btn-sm shrink-0" onClick={() => void resume()}>
               재개

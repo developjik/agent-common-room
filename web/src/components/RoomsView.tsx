@@ -135,8 +135,13 @@ function RoomList({ store, roomId, isWide, onOpenRoom }: { store: WorkspaceStore
 }
 
 function RoomRow({ room, active, onOpen }: { room: RoomCard; active: boolean; onOpen: () => void }) {
-  const who = room.last_sender ? (room.last_sender.type === "owner" ? "나" : room.last_sender.name) : "";
-  const preview = room.last_preview ? `${who ? who + ": " : ""}${room.last_preview}` : "아직 대화가 없습니다";
+  const who = room.last_sender ? (room.last_sender.type === "owner" ? "나" : room.last_sender.type === "system" ? "시스템" : room.last_sender.name) : "";
+  // 서버는 시스템 안내를 미리보기에서 빼고 보낸다. 혹시 섞여 들어온 경우에도 긴 안내문 대신 짧게 표시한다.
+  const preview = room.last_sender?.type === "system"
+    ? "시스템 안내"
+    : room.last_preview
+      ? `${who ? who + ": " : ""}${room.last_preview}`
+      : "아직 대화가 없습니다";
   return (
     <button type="button" className="rl-row" aria-current={active ? "page" : undefined} onClick={onOpen}>
       <span className="rl-head">

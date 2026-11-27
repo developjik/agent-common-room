@@ -125,6 +125,17 @@ export const ChatFeed = forwardRef<ChatFeedHandle, Props>(function ChatFeed(
                         </button>
                       ) : null}
                     </div>
+                    {!m.deleted ? (
+                      <button
+                        type="button"
+                        className="sys-msg-x"
+                        aria-label="시스템 안내 지우기"
+                        title="시스템 안내 지우기"
+                        onClick={() => onDelete(m)}
+                      >
+                        <Icon name="trash" size={13} />
+                      </button>
+                    ) : null}
                   </div>
                 ) : (
                   <MessageRow
