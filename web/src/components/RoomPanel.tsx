@@ -220,8 +220,7 @@ function InviteList({
   // 클립보드가 막힌 브라우저에서는 발급 응답의 링크가 유일한 사본이다(서버는 해시만 남긴다).
   // 어느 초대의 링크인지 함께 두어, 그 초대가 폐기·만료되면 죽은 링크를 계속 복사하지 않게 한다.
   const [fallback, setFallback] = useState<{ id: string; link: string } | null>(null);
-  const [, setTick] = useState(0);
-  const isLive = (inv: Invite) => inv.active && Date.parse(inv.expires_at) > Date.now();
+
 
   const load = useCallback(async () => {
     try {
@@ -237,12 +236,12 @@ function InviteList({
     void load();
   }, [load, refreshKey]);
 
-  // 서버 목록은 열 때·변화가 있을 때만 다시 읽는다. 7일짜리 초대가 열어 둔 화면에서 만료되면
-  // 마지막 응답의 active 값이 낡으므로, 만료 시각을 화면에서도 확인해 죽은 링크를 복사하지 않게 한다.
+  // 패널을 열어 둔 동안에도 사용 횟수·만료가 실제와 같도록 1분마다 서버 목록을 다시 읽는다.
+  // (브라우저 시계로 만료를 판단하면 시계가 앞선 기기에서 유효한 초대의 폐기 버튼이 사라진다.)
   useEffect(() => {
-    const id = window.setInterval(() => setTick((n) => n + 1), 60_000);
+    const id = window.setInterval(() => void load(), 60_000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [load]);
 
   const create = async () => {
     if (busy) return;
@@ -279,7 +278,7 @@ function InviteList({
     }
   };
 
-  const active = invites?.filter(isLive) ?? [];
+  const active = invites?.filter((i) => i.active) ?? [];
   const total = invites?.length ?? 0;
   // 목록에서 이미 활성이 아닌(폐기·만료·소진) 초대의 링크는 보여 주지 않는다.
   const fallbackLink = fallback && (invites === null || active.some((i) => i.id === fallback.id)) ? fallback.link : null;
@@ -299,16 +298,16 @@ function InviteList({
       {invites && total > 0 ? (
         <ul className="invite-list mt-2">
           {invites.map((inv) => (
-            <li key={inv.id} className="invite-row" data-active={isLive(inv) ? "true" : "false"}>
+            <li key={inv.id} className="invite-row" data-active={inv.active ? "true" : "false"}>
               <div className="min-w-0 flex-1">
                 <p className="invite-meta">
                   {inv.kind === "pool" ? "풀 초대" : "방 초대"} · 사용 {inv.uses}/{inv.max_uses}
                 </p>
                 <p className="invite-sub">
-                  {isLive(inv) ? `${remainLabel(inv.expires_at)} · ${shortDate(inv.created_at)} 발급` : inv.uses >= inv.max_uses ? "사용 횟수 소진" : "만료됨"}
+                  {inv.active ? `${remainLabel(inv.expires_at)} · ${shortDate(inv.created_at)} 발급` : inv.uses >= inv.max_uses ? "사용 횟수 소진" : "만료됨"}
                 </p>
               </div>
-              {isLive(inv) ? (
+              {inv.active ? (
                 <button type="button" className="btn btn-sm btn-danger" onClick={() => void revoke(inv)}>
                   폐기
                 </button>
