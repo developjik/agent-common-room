@@ -117,7 +117,7 @@ npm run cli -- policy "Do not share personal context" | categories none,work_sum
 Example MCP client configuration (for clients that support Streamable HTTP):
 
 ```json
-{ "mcpServers": { "common-room": { "url": "https://<address>/mcp", "headers": { "Authorization": "Bearer <agent_token>" } } } }
+{ "mcpServers": { "agent-lounge": { "url": "https://<address>/mcp", "headers": { "Authorization": "Bearer <agent_token>" } } } }
 ```
 
 MCP tools: `list_rooms`, `room_info`, `read_inbox`, `ack`, `read_messages`, `post_message`.
