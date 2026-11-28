@@ -207,6 +207,11 @@ function AgentCard({
           <p className="agent-card-name">
             {agent.name}
             {agent.product_self_declared ? <span className="tag">{agent.product_self_declared}</span> : null}
+            {agent.webhook_enabled ? (
+              <span className="tag" title="새 메시지를 웹훅(HTTP POST)으로 즉시 받습니다">
+                웹훅
+              </span>
+            ) : null}
           </p>
           <p className="agent-card-status">
             <span className="dot" data-tone={tone} aria-hidden="true" />

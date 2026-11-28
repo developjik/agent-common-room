@@ -22,6 +22,7 @@
 import { hashToken, newId, newPassword, newSaltHex, newToken, passwordHash, safeEqualHex, sha256Hex, PBKDF2_ITERATIONS } from "./crypto.js";
 import { batchChanges, isConstraintError, type DbStatement, type SqlDb, type Row } from "./db.js";
 import { SCHEMA_VERSION } from "./schema.js";
+import { sendWebhook, validateWebhookSecret, validateWebhookUrl, WebhookUrlError, type WebhookMessagePayload, type WebhookSendOptions, type WebhookTarget } from "./webhook.js";
 
 export class ApiError extends Error {
   /** 409 room_required 처럼 본문에 함께 돌려줄 구조(예: 방 목록). */
@@ -60,6 +61,16 @@ const MAX_PENDING_JOIN_REQUESTS = 50;
 
 export interface Clock { now(): number }
 export const realClock: Clock = { now: () => Date.now() };
+
+/**
+ * 웹훅 발송을 실행하는 방식. 런타임이 응답 뒤 작업(Workers·Vercel의 waitUntil)을 붙일 수 있게 한다.
+ * background 가 없으면(로컬 CLI·테스트) 실패만 삼키는 fire-and-forget 으로 돌린다.
+ */
+export interface WebhookSettings extends WebhookSendOptions {
+  /** 로컬 개발·테스트 전용. http 와 루프백·사설 주소를 허용한다(운영 금지). */
+  allowInsecure?: boolean;
+  background?: (p: Promise<unknown>) => void;
+}
 
 export interface Agent {
   id: string; room_id: string; workspace_id: string; name: string; product: string; status: string;
@@ -104,7 +115,7 @@ const MSG_COLS = "room_id,seq,id,client_id,sender_type,sender_id,sender_name,kin
 const PREVIEW_MAX = 120;
 
 export class RoomService {
-  constructor(public db: SqlDb, public clock: Clock = realClock) {}
+  constructor(public db: SqlDb, public clock: Clock = realClock, public webhooks: WebhookSettings = {}) {}
 
   audit(room: string | null, actor: string, action: string, detail = "") {
     return this.db.run("INSERT INTO audit(room_id, ts, actor, action, detail) VALUES (?,?,?,?,?)", room, this.clock.now(), actor, action, detail.slice(0, 500));
@@ -794,11 +805,18 @@ export class RoomService {
       list.push({ room_id: m.room_id, room_name: m.room_name, status: m.status });
       byAgent.set(String(m.agent_id), list);
     }
+    const hooks = await this.db.all(
+      "SELECT w.agent_id FROM agent_webhooks w JOIN agents a ON a.id=w.agent_id WHERE a.workspace_id=? AND w.enabled=1",
+      workspaceId,
+    );
+    const hookAgents = new Set(hooks.map(h => String(h.agent_id)));
     return agents.map(a => ({
       id: a.id, name: a.name, product_self_declared: a.product, status: a.status,
       last_seen: a.last_seen ? iso(Number(a.last_seen)) : null,
       created_at: iso(a.created_at),
       rooms: byAgent.get(String(a.id)) ?? [],
+      // 비서 화면의 작은 '웹훅 배지'용. URL·키는 오너에게도 보이지 않는다.
+      webhook_enabled: hookAgents.has(String(a.id)),
     }));
   }
   /** 풀의 에이전트를 방 하나(또는 여러 개)에 배치한다. 이미 있으면 권한·하한만 갱신한다. */
@@ -1432,6 +1450,160 @@ export class RoomService {
       can_read: !!a.can_read, can_write: !!a.can_write, history_floor: a.history_floor,
     };
   }
+  // ---------- 웹훅(HTTP POST 푸시) ----------
+  //
+  // 폴링·롱폴링은 그대로 두고, 새 메시지를 즉시 받고 싶은 비서가 스스로 등록한다.
+  // 비밀값(secret)은 HMAC 서명 키라 서버가 서명에 써야 하므로 그대로 저장하고,
+  // 응답에는 등록·재발급 때 한 번만 돌려준다(조회 응답에는 넣지 않는다).
+  private webhookView(row: Row | undefined) {
+    if (!row) return null;
+    return {
+      url: String(row.url),
+      enabled: !!row.enabled,
+      created_at: row.created_at ? iso(Number(row.created_at)) : null,
+      updated_at: row.updated_at ? iso(Number(row.updated_at)) : null,
+      last_delivery_at: row.last_delivery_at ? iso(Number(row.last_delivery_at)) : null,
+      last_status: row.last_status === null || row.last_status === undefined ? null : Number(row.last_status),
+      last_error: row.last_error ?? null,
+      failures: Number(row.failures ?? 0),
+    };
+  }
+  async agentWebhook(agentId: string) {
+    return this.webhookView(await this.db.one("SELECT * FROM agent_webhooks WHERE agent_id=?", agentId));
+  }
+  /**
+   * 웹훅 등록·수정. PUT /api/me/webhook.
+   * - 이미 등록된 비서가 URL 만 바꾸면 기존 secret 을 그대로 유지한다(응답의 webhook_secret 은 null).
+   * - rotate_secret: true 또는 secret 을 직접 넣으면 새 키가 되고 그때만 평문이 응답에 실린다.
+   */
+  async setAgentWebhook(agent: Agent, input: { url?: unknown; secret?: unknown; rotate_secret?: unknown; enabled?: unknown }) {
+    let url: string;
+    try {
+      url = validateWebhookUrl(input.url, { allowInsecure: this.webhooks.allowInsecure });
+    } catch (e) {
+      if (e instanceof WebhookUrlError) throw err(400, "bad_webhook_url", e.message);
+      throw e;
+    }
+    let given: string | null = null;
+    if (input.secret !== undefined && input.secret !== null && input.secret !== "") {
+      try {
+        given = validateWebhookSecret(input.secret);
+      } catch (e) {
+        if (e instanceof WebhookUrlError) throw err(400, "bad_webhook_secret", e.message);
+        throw e;
+      }
+    }
+    if (input.enabled !== undefined && typeof input.enabled !== "boolean") throw err(400, "bad_enabled", "enabled 는 true/false 여야 합니다.");
+    const existing = await this.db.one("SELECT * FROM agent_webhooks WHERE agent_id=?", agent.id);
+    const rotate = input.rotate_secret === true || given !== null || !existing;
+    const secret = given ?? (rotate ? newToken("acr_whsec") : String(existing!.secret));
+    const enabled = input.enabled === false ? 0 : 1;
+    const now = this.clock.now();
+    if (existing) {
+      await this.db.run(
+        "UPDATE agent_webhooks SET url=?, secret=?, enabled=?, updated_at=?, failures=CASE WHEN ? THEN 0 ELSE failures END WHERE agent_id=?",
+        url, secret, enabled, now, rotate ? 1 : 0, agent.id);
+    } else {
+      await this.db.run(
+        "INSERT INTO agent_webhooks(agent_id,url,secret,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?)",
+        agent.id, url, secret, enabled, now, now);
+    }
+    await this.audit(agent.room_id, `agent:${agent.id}`, existing ? "webhook.update" : "webhook.set", `${enabled ? "on" : "off"} ${url}`);
+    return {
+      webhook_url: url,
+      webhook_enabled: !!enabled,
+      // 평문 키는 이 응답에서만 보인다. 유지된 경우 null(분실했다면 rotate_secret:true 로 재발급).
+      webhook_secret: rotate ? secret : null,
+      webhook_secret_rotated: rotate,
+      webhook: await this.agentWebhook(agent.id),
+      verify: "X-AgentLounge-Signature: sha256=hex(HMAC-SHA256(secret, `${X-AgentLounge-Timestamp}.${rawBody}`))",
+    };
+  }
+  /** 웹훅 해지. PUT 재호출이 아니라 완전히 지우려면 DELETE /api/me/webhook. 이미 없으면 no-op. */
+  async deleteAgentWebhook(agent: Agent) {
+    const r = await this.db.run("DELETE FROM agent_webhooks WHERE agent_id=?", agent.id);
+    if (batchChanges(r)) await this.audit(agent.room_id, `agent:${agent.id}`, "webhook.delete");
+    return { webhook_url: null, webhook_enabled: false, deleted: batchChanges(r) > 0 };
+  }
+
+  /**
+   * 새 메시지에 대한 웹훅 발송을 백그라운드로 시작한다(응답을 막지 않는다).
+   * 발송 조건: 방이 일시정지가 아닐 때 · 발신자 본인 제외 · DM 은 받는 비서에게만.
+   */
+  private notifyWebhooks(room: Row, msg: Row, publicMessage: PublicMessage) {
+    if (room.paused) return;
+    if (String(msg.sender_type) === "system") return;
+    const task = this.dispatchWebhooks(room, msg, publicMessage).catch((e) => {
+      console.error("webhook dispatch failed:", e instanceof Error ? e.message : String(e));
+    });
+    if (this.webhooks.background) this.webhooks.background(task);
+    else void task;
+  }
+  private async dispatchWebhooks(room: Row, msg: Row, publicMessage: PublicMessage): Promise<void> {
+    const roomId = String(room.id);
+    const recipient = msg.recipient_id ? String(msg.recipient_id) : null;
+    // 오너에게 보낸 DM 은 비서에게 보내지 않는다(내용 유출 금지).
+    if (recipient === "owner") return;
+    const rows = await this.db.all(
+      `SELECT w.agent_id, w.url, w.secret, a.room_id AS agent_home_room FROM agent_webhooks w
+         JOIN room_members m ON m.agent_id=w.agent_id AND m.room_id=?
+         JOIN agents a ON a.id=w.agent_id
+        WHERE w.enabled=1 AND m.status='active' AND m.can_read=1 AND a.status='active'
+          AND m.history_floor < ?`,
+      roomId, Number(msg.seq));
+    const targets = rows.filter((r) => {
+      const id = String(r.agent_id);
+      if (msg.sender_type === "agent" && id === String(msg.sender_id)) return false; // 발신자 본인 제외
+      if (recipient && id !== recipient) return false;                              // DM 은 받는 비서에게만
+      return true;
+    });
+    if (!targets.length) return;
+    const nowSec = () => Math.floor(this.clock.now() / 1000);
+    await Promise.all(targets.map(async (r) => {
+      const target: WebhookTarget = { agent_id: String(r.agent_id), url: String(r.url), secret: String(r.secret) };
+      const payload: WebhookMessagePayload = {
+        event: "room.message",
+        delivery_id: String(msg.id),
+        room_id: roomId,
+        to_agent_id: target.agent_id,
+        message: publicMessage,
+        notice: ROOM_NOTICE,
+        sent_at: iso(this.clock.now()),
+      };
+      // 재시도 직전마다 권한을 다시 본다(대기 중 오너가 이 방에서 내보냈을 수 있다).
+      const stillAllowed = async () => !!await this.db.one(
+        `SELECT 1 x FROM agent_webhooks w
+           JOIN room_members m ON m.agent_id=w.agent_id AND m.room_id=?
+           JOIN agents a ON a.id=w.agent_id
+          WHERE w.agent_id=? AND w.enabled=1 AND m.status='active' AND m.can_read=1 AND a.status='active'`,
+        roomId, target.agent_id);
+      const res = await sendWebhook(target, payload, { ...this.webhooks, nowSec, stillAllowed });
+      await this.recordWebhookDelivery(target.agent_id, String(r.agent_home_room ?? ""), roomId, Number(msg.seq), res);
+    }));
+  }
+  /**
+   * 발송 결과를 등록 정보에 남긴다(비서 화면·/api/me 가 마지막 오류를 보여 줄 수 있게). 실패해도 발송 결과는 유지.
+   * 2xx 로 받은 메시지는 읽은 것으로(fetched) 기록한다 — 웹훅 본문으로 이미 내용을 받았는데 ack 가
+   * "아직 inbox 로 받지 않은 위치"라며 400 으로 거부되면, 알림을 처리하고도 미처리로 남기 때문이다.
+   * (재전달이 필요하면 수신기가 delivery_id 로 중복을 거르는 책임을 진다 — inbox 계약과 같은 선.)
+   */
+  private async recordWebhookDelivery(agentId: string, homeRoomId: string, roomId: string, seq: number, res: { ok: boolean; status: number | null; error?: string }) {
+    const now = this.clock.now();
+    try {
+      if (res.ok) {
+        await this.db.run("UPDATE agent_webhooks SET last_delivery_at=?, last_status=?, last_error=NULL, failures=0 WHERE agent_id=?", now, res.status, agentId);
+        await this.db.run("UPDATE room_members SET fetched_seq=CASE WHEN fetched_seq<? THEN ? ELSE fetched_seq END WHERE room_id=? AND agent_id=?", seq, seq, roomId, agentId);
+        // 대표 방(agents.room_id)이면 v4 커서 미러도 함께 올린다(불변식: 두 값이 같아야 한다).
+        if (homeRoomId && homeRoomId === roomId) {
+          await this.db.run("UPDATE agents SET fetched_seq=CASE WHEN fetched_seq<? THEN ? ELSE fetched_seq END WHERE id=?", seq, seq, agentId);
+        }
+      } else {
+        await this.db.run("UPDATE agent_webhooks SET last_delivery_at=?, last_status=?, last_error=?, failures=failures+1 WHERE agent_id=?",
+          now, res.status, (res.error ?? "failed").slice(0, 300), agentId);
+      }
+    } catch { /* 최선 노력: 기록 실패가 발송 결과를 바꾸지 않는다. */ }
+  }
+
   /** 방 하나의 구성원 목록(에이전트 신원 + 멤버십). */
   private async roomParticipants(roomId: string) {
     const rows = await this.db.all(
@@ -1463,10 +1635,15 @@ export class RoomService {
       : undefined;
     const rooms = await this.agentRooms(agent.id);
     const row = await this.db.one("SELECT last_seen FROM agents WHERE id=?", agent.id);
+    const hook = await this.agentWebhook(agent.id);
     const me = {
       agent: { id: agent.id, name: agent.name, product: agent.product, status: agent.status, last_seen: row?.last_seen ? iso(Number(row.last_seen)) : null },
       workspace: ws ? { id: ws.id, name: ws.name, lobby_room_id: ws.lobby_room_id ?? null } : null,
       rooms,
+      // 웹훅 등록 상태(비밀 키는 절대 담지 않는다). 없으면 webhook_url=null, webhook_enabled=false.
+      webhook_url: hook ? hook.url : null,
+      webhook_enabled: hook ? hook.enabled : false,
+      webhook: hook,
       notice: ROOM_NOTICE,
     };
     // v1 호환: 방이 하나뿐인 기존 클라이언트는 /api/me 가 /api/room 과 같은 모양을 기대한다.
@@ -1948,7 +2125,10 @@ export class RoomService {
       throw err(500, "internal", "메시지를 저장하지 못했습니다.");
     }
     await this.touchRoomPreview(roomId, msg);
-    return { duplicate: false, message: await this.toPublic(msg) };
+    const published = await this.toPublic(msg);
+    // 저장이 끝난 뒤에만 알린다(실패한 전송으로 웹훅을 오발하지 않는다).
+    this.notifyWebhooks(room, msg, published);
+    return { duplicate: false, message: published };
   }
 
   /**

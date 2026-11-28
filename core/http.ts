@@ -16,7 +16,7 @@
 //   오너 v2   /api/me · /api/workspaces/:wid/{overview,rooms,agents,invites,join-requests,activity}
 //             /api/rooms/:rid{,/messages,/invites,/members/:aid} · /api/join-requests/:jid/{approve,deny}
 //   호환      /api/owner/login · /api/owner/*  (방 1개 워크스페이스로 해석, 1~2 릴리스 유지)
-//   에이전트  /mcp · /api/me · /api/room · /api/inbox · /api/ack · /api/messages
+//   에이전트  /mcp · /api/me · /api/me/webhook · /api/room · /api/inbox · /api/ack · /api/messages
 //             /api/rooms/:rid/{inbox,ack,messages}  (방 없는 /api/inbox 는 방이 여러 개면 방별 묶음)
 import { joinErrorPageHtml, joinInstructions, joinPageHtml } from "./instructions.js";
 import { handleMcp } from "./mcp.js";
@@ -34,6 +34,8 @@ export interface Env {
   CRON_SECRET?: string;
   /** 표시용 런타임 이름(node | vercel | cloudflare ...). */
   ACR_RUNTIME?: string;
+  /** 로컬 개발·테스트 전용: "1"이면 웹훅 URL 에 http 와 루프백·사설 주소를 허용한다. 운영에서는 절대 설정하지 않는다. */
+  ACR_WEBHOOK_ALLOW_INSECURE?: string;
 }
 
 /**
@@ -473,6 +475,22 @@ export async function handleFetch(
       if (path === "/api/owner/messages" && method === "POST") { const r = await svc.postAsOwner(room, obj(await readJson(req))); return json(r.duplicate ? 200 : 201, r); }
       if ((m = /^\/api\/owner\/messages\/(\d+)$/.exec(path)) && method === "DELETE") { await svc.deleteMessage(room, Number(m[1])); return json(200, { deleted: true }); }
       throw new ApiError(404, "not_found", "없는 경로입니다.");
+    }
+
+    // ----- 에이전트 웹훅: 비서가 자기가 받을 푸시 주소를 스스로 등록·해지한다 -----
+    // 폴링·롱폴링은 그대로다. 웹훅을 등록하면 새 메시지 저장 직후 서버가 POST 로 알린다.
+    if (path === "/api/me/webhook") {
+      const agent = await agentOrNull(svc, req);
+      if (!agent) {
+        throw new ApiError(401, "unauthorized", "에이전트 토큰(Authorization: Bearer acr_agt_…)이 필요합니다. 오너 세션으로는 웹훅을 등록할 수 없습니다.");
+      }
+      if (method === "GET") {
+        const hook = await svc.agentWebhook(agent.id);
+        return json(200, { webhook_url: hook ? hook.url : null, webhook_enabled: hook ? hook.enabled : false, webhook: hook });
+      }
+      if (method === "PUT" || method === "PATCH") return json(200, await svc.setAgentWebhook(agent, obj(await readJson(req))));
+      if (method === "DELETE") return json(200, await svc.deleteAgentWebhook(agent));
+      return json(405, { error: { code: "method_not_allowed", message: "GET·PUT·PATCH·DELETE 만 지원합니다." } }, { allow: "GET, PUT, PATCH, DELETE" });
     }
 
     // ----- GET /api/me : 오너 계정 또는 에이전트 -----
