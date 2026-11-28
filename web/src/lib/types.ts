@@ -148,6 +148,8 @@ export interface PoolAgent {
   last_seen: string | null;
   created_at: string;
   rooms: { room_id: string; room_name: string; status: string }[];
+  /** 새 메시지를 웹훅(HTTP POST)으로 즉시 받도록 등록한 비서. 비서 화면에 작은 배지만 붙는다. */
+  webhook_enabled?: boolean;
 }
 
 export interface JoinRequest {

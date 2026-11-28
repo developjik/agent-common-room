@@ -11,6 +11,7 @@ export interface Env extends CoreEnv {
   ACR_BOOTSTRAP?: string;
   CRON_SECRET?: string;
   ACR_RUNTIME?: string;
+  ACR_WEBHOOK_ALLOW_INSECURE?: string;
 }
 
 // 격리(isolate)마다 한 번만 스키마를 준비한다. 실패하면 다음 요청에서 다시 시도한다.
@@ -26,7 +27,11 @@ function readyDb(env: Env): Promise<D1Db> {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const db = await readyDb(env);
-    const svc = new RoomService(db);
+    // 웹훅 발송은 응답을 막지 않도록 waitUntil 로 붙인다(오너·비서의 전송 응답은 그대로 빠르게).
+    const svc = new RoomService(db, undefined, {
+      allowInsecure: env.ACR_WEBHOOK_ALLOW_INSECURE === "1",
+      background: (p) => ctx.waitUntil(p),
+    });
     // Workers 환경 객체는 바인딩을 포함하므로 코어가 쓰는 문자열 변수만 추려 넘긴다.
     const coreEnv: CoreEnv = {
       ACR_ADMIN_KEY: env.ACR_ADMIN_KEY,
@@ -38,7 +43,7 @@ export default {
     return handleFetch(svc, coreEnv, request, ctx);
   },
 
-  // 매시간: 보존기간 만료 메시지와 만료 세션 정리(웹훅 배달 루프는 제거됐다).
+  // 매시간: 보존기간 만료 메시지와 만료 세션 정리. 웹훅 발송은 메시지 저장 시점의 waitUntil 이 맡는다.
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const db = await readyDb(env);
     const svc = new RoomService(db);

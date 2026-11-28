@@ -181,7 +181,7 @@ const SQLITE_BASE = [
   )`,
 ];
 
-// 레거시 테이블: 웹훅 기능은 2026-11-26 제거됐다(개인 비서 단톡방 흐름은 MCP·롱폴링·인박스가 맡는다).
+// 레거시 테이블: 방 단위 웹훅은 2026-11-26 제거됐다(지금의 웹훅은 아래 agent_webhooks 의 에이전트별 1개다).
 // 기존 D1·Postgres 에 남아 있는 테이블과 행을 지우는 DROP 마이그레이션은 넣지 않는다(비파괴).
 // 다만 방 삭제가 FK(ON DELETE CASCADE 없음)에 막히지 않도록 DELETE 는 계속 쓰므로, 새 DB 에도 만든다.
 const SQLITE_WEBHOOKS = [
@@ -206,6 +206,24 @@ const SQLITE_WEBHOOKS = [
     last_error TEXT,
     http_status INTEGER,
     created_at INTEGER NOT NULL
+  )`,
+];
+
+// v6: 에이전트별 웹훅(HTTP POST 푸시). 폴링 없이 새 메시지를 즉시 받고 싶은 비서가 스스로 등록한다.
+// 전부 추가(additive)만 한다 — 기존 테이블은 건드리지 않고 새 테이블 하나만 만든다(무중단).
+// 비밀값(secret)은 HMAC 서명 키라 서버가 검증에 써야 하므로 해시가 아니라 그대로 저장한다(발급 응답에서 한 번만 보임).
+const SQLITE_AGENT_WEBHOOKS = [
+  `CREATE TABLE IF NOT EXISTS agent_webhooks (
+    agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    last_delivery_at INTEGER,
+    last_status INTEGER,
+    last_error TEXT,
+    failures INTEGER NOT NULL DEFAULT 0
   )`,
 ];
 
@@ -237,7 +255,7 @@ const SQLITE_INDEXES = [
 /** SQLite/D1용 전체 DDL. 순서대로 실행하면 새 DB가 바로 쓸 수 있는 상태가 된다. */
 /** 테이블 DDL(신규 DB용)과 인덱스 DDL을 나눠 둔다. v4 DB에는 인덱스가 가리키는 컬럼(workspace_id 등)이
  * 아직 없으므로, migrate 는 "테이블 → 컬럼 추가 → 인덱스" 순서로 실행해야 한다. */
-export const SQLITE_TABLE_STATEMENTS: string[] = [...SQLITE_BASE, ...SQLITE_WEBHOOKS];
+export const SQLITE_TABLE_STATEMENTS: string[] = [...SQLITE_BASE, ...SQLITE_WEBHOOKS, ...SQLITE_AGENT_WEBHOOKS];
 export const SQLITE_INDEX_STATEMENTS: string[] = [...SQLITE_INDEXES];
 export const SQLITE_SCHEMA_STATEMENTS: string[] = [...SQLITE_TABLE_STATEMENTS, ...SQLITE_INDEX_STATEMENTS];
 
@@ -440,6 +458,22 @@ const PG_WEBHOOKS = [
   )`,
 ];
 
+// SQLITE_AGENT_WEBHOOKS 와 같은 논리 스키마(타입만 BIGINT).
+const PG_AGENT_WEBHOOKS = [
+  `CREATE TABLE IF NOT EXISTS agent_webhooks (
+    agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    last_delivery_at BIGINT,
+    last_status INTEGER,
+    last_error TEXT,
+    failures INTEGER NOT NULL DEFAULT 0
+  )`,
+];
+
 const PG_INDEXES = [
   `CREATE UNIQUE INDEX IF NOT EXISTS agents_live_name ON agents(room_id, name_key) WHERE status IN ('unclaimed','active')`,
   `CREATE UNIQUE INDEX IF NOT EXISTS messages_idem ON messages(room_id, sender_id, client_id) WHERE client_id IS NOT NULL`,
@@ -464,7 +498,7 @@ const PG_INDEXES = [
 ];
 
 /** Postgres용 전체 DDL. */
-export const POSTGRES_TABLE_STATEMENTS: string[] = [...PG_BASE, ...PG_WEBHOOKS];
+export const POSTGRES_TABLE_STATEMENTS: string[] = [...PG_BASE, ...PG_WEBHOOKS, ...PG_AGENT_WEBHOOKS];
 export const POSTGRES_INDEX_STATEMENTS: string[] = [...PG_INDEXES];
 export const POSTGRES_SCHEMA_STATEMENTS: string[] = [...POSTGRES_TABLE_STATEMENTS, ...POSTGRES_INDEX_STATEMENTS];
 
@@ -489,7 +523,8 @@ export function addedColumns(dialect: "sqlite" | "postgres"): Array<{ table: str
 }
 
 /** 마이그레이션 기록 확인용 스키마 버전. DDL을 바꾸면 올린다. */
-export const SCHEMA_VERSION = 5;
+// v6 = agent_webhooks 추가(에이전트별 웹훅 푸시). v5 DB는 첫 요청에서 이 테이블만 추가된다.
+export const SCHEMA_VERSION = 6;
 
 /** 백필·불변식 검증이 다루는 테이블(테스트가 재사용). */
 export const V5_TABLES = ["owners", "owner_sessions", "workspaces", "room_members", "owner_reads", "upgrade_tickets"];

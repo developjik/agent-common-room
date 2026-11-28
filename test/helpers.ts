@@ -3,7 +3,8 @@ import { createServer, type Server } from "node:http";
 import { createNodeRuntime } from "../runtime/node.js";
 import { openSqliteDb, type NodeSqliteDb } from "../runtime/node-sqlite.js";
 import { hashToken } from "../core/crypto.js";
-import type { Clock, RoomService } from "../core/service.js";
+import type { Clock, RoomService, WebhookSettings } from "../core/service.js";
+import type { Env } from "../core/http.js";
 
 export const ADMIN_KEY = process.env.ACR_ADMIN_KEY ?? "test-admin-key-0123456789abcdef";
 
@@ -17,7 +18,11 @@ export class FakeClock implements Clock {
   advance(ms: number) { this.t += ms; }
 }
 
-export async function start() {
+/**
+ * 로컬 테스트 서버를 띄운다. env·webhook 은 웹훅 테스트처럼 런타임 설정을 바꿔야 할 때만 넘긴다.
+ * (EXTERNAL 모드에서는 무시된다 — 이미 떠 있는 서버를 상대로 돌기 때문.)
+ */
+export async function start(opts: { env?: Env; webhook?: WebhookSettings } = {}) {
   if (EXTERNAL) {
     const base = process.env.ACR_EXTERNAL_BASE!.replace(/\/$/, "");
     async function call(method: string, path: string, token?: string, body?: unknown) {
@@ -63,7 +68,7 @@ export async function start() {
 
   const clock = new FakeClock();
   const sqlite = openSqliteDb(":memory:");
-  const runtime = await createNodeRuntime({ db: sqlite, clock, env: {}, lazyPurgeMs: 0, purgeIntervalMs: 0 });
+  const runtime = await createNodeRuntime({ db: sqlite, clock, env: opts.env ?? {}, webhook: opts.webhook, lazyPurgeMs: 0, purgeIntervalMs: 0 });
   // 환경변수 대신 DB에 해시로 관리자 키를 심는다(운영의 부트스트랩과 같은 경로).
   await runtime.svc.setAdminKeyHash(await hashToken(ADMIN_KEY));
   const server = createServer(runtime.handler);

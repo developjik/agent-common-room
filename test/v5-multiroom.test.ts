@@ -10,6 +10,7 @@ import { start, ADMIN_KEY } from "./helpers.js";
 import { openSqliteDb } from "../runtime/node-sqlite.js";
 import { backfillV5, checkInvariants } from "../core/migrate.js";
 import { hashToken } from "../core/crypto.js";
+import { SCHEMA_VERSION } from "../core/schema.js";
 
 const MIGRATIONS_DIR = new URL("../../worker/migrations/", import.meta.url);
 
@@ -45,7 +46,7 @@ test("v5 마이그레이션: v4 데이터를 지우지 않고 워크스페이스
   try {
     await db.ensureSchema();
     const version = (db.raw.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as any).value;
-    assert.equal(String(version), "5");
+    assert.equal(String(version), String(SCHEMA_VERSION), "최신 스키마 버전으로 기록된다");
 
     const ws = db.raw.prepare("SELECT * FROM workspaces").all() as any[];
     assert.equal(ws.length, 1, "레거시 방 하나 = 워크스페이스 하나");

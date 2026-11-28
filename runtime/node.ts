@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { handleFetch, type Assets, type Ctx, type Env } from "../core/http.js";
-import { ApiError, RoomService, realClock, type Clock } from "../core/service.js";
+import { ApiError, RoomService, realClock, type Clock, type WebhookSettings } from "../core/service.js";
 import type { SqlDb } from "../core/db.js";
 import { PostgresDb, createPostgresDb, detectPostgresUrl } from "./pg.js";
 
@@ -22,6 +22,8 @@ export interface NodeRuntimeOptions {
   lazyPurgeMs?: number;
   /** 장수 프로세스의 주기 정리(ms). 0이면 끔. 로컬·Render·Railway는 1시간. */
   purgeIntervalMs?: number;
+  /** 웹훅 발송 설정(테스트가 타임아웃·재시도·http 예외를 주입). 생략하면 환경변수를 따른다. */
+  webhook?: WebhookSettings;
 }
 
 export interface NodeRuntime {
@@ -162,7 +164,11 @@ export async function createNodeRuntime(opts: NodeRuntimeOptions = {}): Promise<
   const env = opts.env ?? envFromProcess();
   const { db, note } = await resolveDb(opts);
   if (db.ensureSchema) await db.ensureSchema();
-  const svc = new RoomService(db, opts.clock ?? realClock);
+  // 웹훅 예외 플래그는 환경변수로만 켠다(로컬 개발·CI). 미설정이면 https·공인 주소만 허용.
+  const svc = new RoomService(db, opts.clock ?? realClock, {
+    allowInsecure: process.env.ACR_WEBHOOK_ALLOW_INSECURE === "1",
+    ...opts.webhook,
+  });
   const publicDir = opts.publicDir ?? process.env.ACR_PUBLIC_DIR ?? join(process.cwd(), "public");
   const assets = makeAssets(publicDir);
 
