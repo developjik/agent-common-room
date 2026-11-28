@@ -144,6 +144,19 @@ export function validateWebhookUrl(raw: unknown, opts: { allowInsecure?: boolean
   return u.toString();
 }
 
+/**
+ * 해석된 IP 문자열이 공인 인터넷 주소인가(사설·루프백·링크로컬·멀티캐스트·예약이면 true).
+ * 등록 시 이름 검사만으로는 "등록할 때는 공인, 발송할 때는 사설" 응답(DNS 리바인딩)을 막지 못하므로,
+ * 자체 호스팅 런타임은 발송 직전에 이 함수로 해석 결과를 다시 검사한다(resolveHost 옵션).
+ */
+export function isBlockedAddress(ip: string): boolean {
+  const bare = ip.trim().replace(/^\[|\]$/g, "");
+  const v4 = ipv4Octets(bare);
+  if (v4) return isBlockedIpv4(v4);
+  if (bare.includes(":")) return isBlockedIpv6(bare);
+  return true; // IP 로 해석되지 않는 값은 거부한다.
+}
+
 /** 사용자가 지정한 서명 키 검증(선택). 비우면 서버가 무작위로 만든다. */
 export function validateWebhookSecret(raw: unknown): string {
   if (typeof raw !== "string") throw new WebhookUrlError("webhook secret 은 문자열이어야 합니다.");
@@ -188,6 +201,13 @@ export interface WebhookSendOptions {
   nowSec?: () => number;
   /** 재시도 대기. 테스트가 즉시 끝나게 하려면 0을 돌려주는 함수를 넣는다. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * 발송 직전 호스트 이름을 IP 로 풀어 주는 함수(자체 호스팅 Node 전용). Workers 는 node:dns 가 없어 넘기지 않는다
+   * — 대신 Cloudflare 가 사설 대역 연결을 막는다. 주면 해석 결과가 사설이면 발송하지 않는다(DNS 리바인딩 방어).
+   */
+  resolveHost?: (host: string) => Promise<string[]>;
+  /** 재시도 직전 권한 재확인. false 면 더 보내지 않는다(방에서 내보내진 뒤 본문이 새는 것을 막는다). */
+  stillAllowed?: () => Promise<boolean>;
 }
 
 const sleepReal = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -217,9 +237,27 @@ export async function sendWebhook(target: WebhookTarget, payload: WebhookMessage
     "x-agentlounge-timestamp": timestamp,
     "x-agentlounge-signature": `sha256=${signature}`,
   };
+  // 발송 직전 DNS 해석 결과가 사설이면 보내지 않는다(등록 후 응답이 바뀌는 리바인딩 방어).
+  if (opts.resolveHost) {
+    const host = new URL(target.url).hostname.replace(/^\[|\]$/g, "");
+    if (ipv4Octets(host) === null && !host.includes(":")) {
+      try {
+        const ips = await opts.resolveHost(host);
+        if (ips.some((ip) => isBlockedAddress(ip))) {
+          return { agent_id: target.agent_id, ok: false, status: null, attempts: 0, error: "blocked_host: 사설 주소로 해석되어 발송하지 않았습니다." };
+        }
+      } catch {
+        /* 해석 실패는 아래 fetch 실패로 이어진다(재시도 대상). */
+      }
+    }
+  }
   const maxAttempts = delays.length + 1;
   let last: WebhookDeliveryResult = { agent_id: target.agent_id, ok: false, status: null, attempts: 0 };
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // 재시도 전에 권한을 다시 본다(첫 시도는 이미 저장 시점의 대상 목록으로 걸러져 있다).
+    if (attempt > 1 && opts.stillAllowed && !(await opts.stillAllowed())) {
+      return { ...last, error: "revoked: 권한이 바뀌어 재시도를 멈췄습니다." };
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Math.max(50, timeoutMs));
     try {
@@ -231,6 +269,8 @@ export async function sendWebhook(target: WebhookTarget, payload: WebhookMessage
         redirect: "manual",
         signal: controller.signal,
       });
+      // 상태만 쓰므로 본문은 즉시 버린다. 읽지 않고 두면 Node 의 undici 가 연결을 붙잡아 소켓이 쌓인다.
+      try { await res.body?.cancel(); } catch { /* 이미 닫혔거나 Workers 가 취소를 지원하지 않는 경우 */ }
       last = { agent_id: target.agent_id, ok: res.status >= 200 && res.status < 300, status: res.status, attempts: attempt };
       if (last.ok) return last;
       const retryable = res.status === 429 || res.status >= 500;

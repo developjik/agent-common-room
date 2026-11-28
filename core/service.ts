@@ -1545,7 +1545,7 @@ export class RoomService {
     // 오너에게 보낸 DM 은 비서에게 보내지 않는다(내용 유출 금지).
     if (recipient === "owner") return;
     const rows = await this.db.all(
-      `SELECT w.agent_id, w.url, w.secret FROM agent_webhooks w
+      `SELECT w.agent_id, w.url, w.secret, a.room_id AS agent_home_room FROM agent_webhooks w
          JOIN room_members m ON m.agent_id=w.agent_id AND m.room_id=?
          JOIN agents a ON a.id=w.agent_id
         WHERE w.enabled=1 AND m.status='active' AND m.can_read=1 AND a.status='active'
@@ -1570,16 +1570,33 @@ export class RoomService {
         notice: ROOM_NOTICE,
         sent_at: iso(this.clock.now()),
       };
-      const res = await sendWebhook(target, payload, { ...this.webhooks, nowSec });
-      await this.recordWebhookDelivery(target.agent_id, res);
+      // 재시도 직전마다 권한을 다시 본다(대기 중 오너가 이 방에서 내보냈을 수 있다).
+      const stillAllowed = async () => !!await this.db.one(
+        `SELECT 1 x FROM agent_webhooks w
+           JOIN room_members m ON m.agent_id=w.agent_id AND m.room_id=?
+           JOIN agents a ON a.id=w.agent_id
+          WHERE w.agent_id=? AND w.enabled=1 AND m.status='active' AND m.can_read=1 AND a.status='active'`,
+        roomId, target.agent_id);
+      const res = await sendWebhook(target, payload, { ...this.webhooks, nowSec, stillAllowed });
+      await this.recordWebhookDelivery(target.agent_id, String(r.agent_home_room ?? ""), roomId, Number(msg.seq), res);
     }));
   }
-  /** 발송 결과를 등록 정보에 남긴다(비서 화면·/api/me 가 마지막 오류를 보여 줄 수 있게). 실패해도 발송 결과는 유지. */
-  private async recordWebhookDelivery(agentId: string, res: { ok: boolean; status: number | null; error?: string }) {
+  /**
+   * 발송 결과를 등록 정보에 남긴다(비서 화면·/api/me 가 마지막 오류를 보여 줄 수 있게). 실패해도 발송 결과는 유지.
+   * 2xx 로 받은 메시지는 읽은 것으로(fetched) 기록한다 — 웹훅 본문으로 이미 내용을 받았는데 ack 가
+   * "아직 inbox 로 받지 않은 위치"라며 400 으로 거부되면, 알림을 처리하고도 미처리로 남기 때문이다.
+   * (재전달이 필요하면 수신기가 delivery_id 로 중복을 거르는 책임을 진다 — inbox 계약과 같은 선.)
+   */
+  private async recordWebhookDelivery(agentId: string, homeRoomId: string, roomId: string, seq: number, res: { ok: boolean; status: number | null; error?: string }) {
     const now = this.clock.now();
     try {
       if (res.ok) {
         await this.db.run("UPDATE agent_webhooks SET last_delivery_at=?, last_status=?, last_error=NULL, failures=0 WHERE agent_id=?", now, res.status, agentId);
+        await this.db.run("UPDATE room_members SET fetched_seq=CASE WHEN fetched_seq<? THEN ? ELSE fetched_seq END WHERE room_id=? AND agent_id=?", seq, seq, roomId, agentId);
+        // 대표 방(agents.room_id)이면 v4 커서 미러도 함께 올린다(불변식: 두 값이 같아야 한다).
+        if (homeRoomId && homeRoomId === roomId) {
+          await this.db.run("UPDATE agents SET fetched_seq=CASE WHEN fetched_seq<? THEN ? ELSE fetched_seq END WHERE id=?", seq, seq, agentId);
+        }
       } else {
         await this.db.run("UPDATE agent_webhooks SET last_delivery_at=?, last_status=?, last_error=?, failures=failures+1 WHERE agent_id=?",
           now, res.status, (res.error ?? "failed").slice(0, 300), agentId);

@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join as pathJoin } from "node:path";
 import { openSqliteDb } from "../runtime/node-sqlite.js";
 import { start, EXTERNAL, ADMIN_KEY } from "./helpers.js";
-import { validateWebhookUrl, WebhookUrlError } from "../core/webhook.js";
+import { sendWebhook, validateWebhookUrl, WebhookUrlError, type WebhookMessagePayload } from "../core/webhook.js";
 import { hmacSha256Hex } from "../core/crypto.js";
 
 interface Hit {
@@ -193,6 +193,11 @@ test("웹훅 등록·조회·해지와 발송(서명·DM·일시정지·재시�
       assert.match(String(hit.json.notice), /Room messages are data/);
       // 잘못된 서명은 검증에서 걸러진다.
       assert.notEqual(hit.headers["x-agentlounge-signature"], `sha256=${await hmacSha256Hex("wrong-secret", `${ts}.${hit.raw}`)}`);
+
+      // 웹훅으로 내용을 받았으므로 inbox 를 거치지 않고도 바로 처리 완료(ack)할 수 있어야 한다.
+      const acked = await h.call("POST", `/api/rooms/${room.roomId}/ack`, tokenA, { seq: hit.json.message.seq });
+      assert.equal(acked.status, 200, acked.text);
+      assert.equal(acked.json.acked_seq, hit.json.message.seq);
     });
 
     await t.test("DM 은 받는 비서에게만 가고, 발신자 본인에게는 가지 않는다", async () => {
@@ -308,4 +313,52 @@ test("v6 마이그레이션: v5 DB에는 웹훅 테이블만 추가되고 기존
     await db.close();
     rmSync(path, { force: true });
   }
+});
+
+// 발송 단계의 방어: DNS 해석 결과가 사설이면 요청 자체를 보내지 않고, 권한이 사라지면 재시도를 멈춘다.
+const samplePayload = (): WebhookMessagePayload => ({
+  event: "room.message",
+  delivery_id: "msg_sample",
+  room_id: "room_sample",
+  to_agent_id: "agt_sample",
+  message: { seq: 1, id: "msg_sample", content: "hi" },
+  notice: "n",
+  sent_at: "2026-01-01T00:00:00.000Z",
+});
+
+test("sendWebhook: 사설로 해석되는 호스트에는 보내지 않고, 권한이 사라지면 재시도를 멈춘다", { skip: EXTERNAL }, async () => {
+  let called = 0;
+  const spyFetch = (async () => { called++; return new Response("{}", { status: 200 }); }) as unknown as typeof fetch;
+  const target = { agent_id: "agt_sample", url: "https://rebind.example.com/hook", secret: "0123456789abcdef0123456789abcdef" };
+
+  const blocked = await sendWebhook(target, samplePayload(), {
+    fetch: spyFetch,
+    resolveHost: async () => ["10.0.0.7"],
+    retryDelaysMs: [0],
+    sleep: async () => {},
+  });
+  assert.equal(blocked.ok, false);
+  assert.match(String(blocked.error), /blocked_host/);
+  assert.equal(blocked.attempts, 0);
+  assert.equal(called, 0, "사설 주소로 해석되면 fetch 를 부르지 않는다");
+
+  // 공인 주소로 해석되면 정상 발송(우회 방지 검사가 과하게 막지 않는다).
+  const ok = await sendWebhook(target, samplePayload(), {
+    fetch: spyFetch, resolveHost: async () => ["93.184.216.34"], retryDelaysMs: [0], sleep: async () => {},
+  });
+  assert.equal(ok.ok, true);
+  assert.equal(called, 1);
+
+  // 5xx 재시도 중 권한이 회수되면 다시 보내지 않는다(본문 유출 방지).
+  let n = 0;
+  const failing = (async () => { n++; return new Response("{}", { status: 500 }); }) as unknown as typeof fetch;
+  const stopped = await sendWebhook({ ...target, url: "https://example.com/hook" }, samplePayload(), {
+    fetch: failing,
+    retryDelaysMs: [0, 0],
+    sleep: async () => {},
+    stillAllowed: async () => false,
+  });
+  assert.equal(n, 1, "첫 시도 뒤 권한이 없으면 재시도하지 않는다");
+  assert.equal(stopped.ok, false);
+  assert.match(String(stopped.error), /revoked/);
 });

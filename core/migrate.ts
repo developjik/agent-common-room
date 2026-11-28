@@ -1,9 +1,9 @@
-// 스키마 마이그레이션(v4 → v5, 멀티룸). 모든 런타임이 같은 절차를 쓴다:
+// 스키마 마이그레이션(v4 → v5 멀티룸, v5 → v6 에이전트 웹훅). 모든 런타임이 같은 절차를 쓴다:
 //   1) 전체 DDL(IF NOT EXISTS)을 한 batch(=트랜잭션)로 실행  → 새 DB는 여기서 끝난다
 //   2) v4에만 없는 컬럼을 "존재 확인 후" ALTER (SQLite/D1은 NOT NULL 해제·재작성이 필요 없게 컬럼을 추가만 한다)
 //   3) 백필: 레거시 방 하나 = 워크스페이스 하나, 방은 그 워크스페이스의 로비, 에이전트는 로비 구성원
 //   4) 4개 불변식 검증 — 실패하면 예외를 던지고 버전을 쓰지 않는다(다음 요청에서 재시도, 백필은 멱등)
-//   5) meta.schema_version = 5
+//   5) meta.schema_version = 최신(SCHEMA_VERSION). 백필·불변식은 v4 이하에서만 돈다.
 //
 // 백필은 전부 "이미 있으면 건너뛰는" 문장만 쓴다. batch 중간 실패는 롤백되고(Postgres·SQLite·D1 모두),
 // 같은 절차를 다시 돌려도 데이터가 중복되지 않는다.
@@ -163,13 +163,17 @@ export async function migrateToLatest(db: SqlDb): Promise<void> {
   // 3) 인덱스. 컬럼이 준비된 뒤에 만든다(중복은 IF NOT EXISTS).
   await db.batch(indexes.map((s) => db.prep(s)));
 
-  // 4) 백필 (멱등)
-  await backfillV5(db);
+  // 4) 백필 (멱등). v4 이하에서만 돈다 — v5 는 이미 백필·검증을 마친 DB라 다시 훑을 필요가 없다.
+  //    무료 D1 은 요청당 쿼리 한도가 있어, 방·메시지가 많은 배포에서 v6 승격이 전체 재스캔 때문에
+  //    실패하면 그 뒤 모든 요청이 스키마 준비에서 막혔다. v6 는 테이블 추가만 하므로 여기서 끝난다.
+  if (version < 5) {
+    await backfillV5(db);
 
-  // 5) 불변식. 실패하면 버전을 쓰지 않는다 → 다음 요청에서 1~3을 다시 시도한다(모두 멱등).
-  const bad = await checkInvariants(db);
-  if (bad.length) {
-    throw new Error(`schema invariant failed: ${bad.map((b) => `${b.name}=${b.count}`).join(", ")}`);
+    // 5) 불변식. 실패하면 버전을 쓰지 않는다 → 다음 요청에서 1~3을 다시 시도한다(모두 멱등).
+    const bad = await checkInvariants(db);
+    if (bad.length) {
+      throw new Error(`schema invariant failed: ${bad.map((b) => `${b.name}=${b.count}`).join(", ")}`);
+    }
   }
 
   await db.run(

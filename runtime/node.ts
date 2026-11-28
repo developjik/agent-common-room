@@ -2,6 +2,7 @@
 // 코어 라우터(core/http.ts)는 Web 표준만 알기 때문에, 여기서 요청을 옮겨 담고 응답을 되쓴다.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
+import { lookup } from "node:dns/promises";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { handleFetch, type Assets, type Ctx, type Env } from "../core/http.js";
@@ -24,6 +25,12 @@ export interface NodeRuntimeOptions {
   purgeIntervalMs?: number;
   /** 웹훅 발송 설정(테스트가 타임아웃·재시도·http 예외를 주입). 생략하면 환경변수를 따른다. */
   webhook?: WebhookSettings;
+  /**
+   * 서버리스(Vercel 등)에서 응답을 쓴 뒤 백그라운드 작업(웹훅 발송·재시도)이 끝날 때까지 기다리는 상한(ms).
+   * 0(기본)이면 기다리지 않는다 — 장수 프로세스는 기다릴 필요가 없고, 서버리스는 응답 후 함수가 끝나
+   * 진행 중인 fetch 가 잘릴 수 있어 짧게 붙잡는다.
+   */
+  drainBackgroundMs?: number;
 }
 
 export interface NodeRuntime {
@@ -133,7 +140,7 @@ async function writeWebResponse(res: ServerResponse, response: Response): Promis
 }
 
 /** 요청 하나를 코어로 넘기고 응답을 되쓴다. 413처럼 본문을 다 읽기 전에 끝나는 경우도 처리한다. */
-async function serve(svc: RoomService, env: Env, assets: Assets, ctx: Ctx, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function serve(svc: RoomService, env: Env, assets: Assets, ctx: Ctx, req: IncomingMessage, res: ServerResponse, drain?: () => Promise<void>): Promise<void> {
   try {
     const webReq = await toWebRequest(req);
     const response = await handleFetch(svc, env, webReq, ctx, assets);
@@ -145,6 +152,9 @@ async function serve(svc: RoomService, env: Env, assets: Assets, ctx: Ctx, req: 
     const body = JSON.stringify({ error: { code: err.code, message: err.message } });
     res.writeHead(err.status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" });
     res.end(body);
+  } finally {
+    // 응답은 이미 나갔다. 서버리스에서는 여기서 붙잡아야 웹훅 발송이 잘리지 않는다(장수 프로세스는 drain 없음).
+    if (drain) await drain();
   }
 }
 
@@ -164,9 +174,34 @@ export async function createNodeRuntime(opts: NodeRuntimeOptions = {}): Promise<
   const env = opts.env ?? envFromProcess();
   const { db, note } = await resolveDb(opts);
   if (db.ensureSchema) await db.ensureSchema();
+  // 응답 뒤 작업(웹훅 발송·재시도)을 모아 둔다. 프로세스가 살아 있으면 그냥 진행되고,
+  // 서버리스는 아래 drain 이 상한까지 기다려 준다(Vercel 은 응답이 끝나면 함수를 정리한다).
+  const pending = new Set<Promise<unknown>>();
+  const ctx: Ctx = {
+    waitUntil(promise: Promise<unknown>) {
+      const p = promise.catch(() => {});
+      pending.add(p);
+      void p.finally(() => pending.delete(p));
+    },
+  };
+  const drainMs = opts.drainBackgroundMs ?? 0;
+  const drain = async () => {
+    if (!drainMs) return;
+    const all = [...pending];
+    if (!all.length) return;
+    await Promise.race([
+      Promise.allSettled(all),
+      new Promise<void>((resolve) => { const t = setTimeout(resolve, drainMs); t.unref?.(); }),
+    ]);
+  };
   // 웹훅 예외 플래그는 환경변수로만 켠다(로컬 개발·CI). 미설정이면 https·공인 주소만 허용.
+  const insecure = opts.webhook?.allowInsecure ?? (process.env.ACR_WEBHOOK_ALLOW_INSECURE === "1");
   const svc = new RoomService(db, opts.clock ?? realClock, {
-    allowInsecure: process.env.ACR_WEBHOOK_ALLOW_INSECURE === "1",
+    allowInsecure: insecure,
+    // 자체 호스팅은 발송 직전 DNS 해석 결과까지 다시 검사한다(등록 뒤 사설 주소로 바뀌는 리바인딩 방어).
+    // 예외 모드에서는 이름→루프백을 일부러 허용하므로 검사를 끈다.
+    ...(insecure ? {} : { resolveHost: async (host: string) => (await lookup(host, { all: true, verbatim: true })).map((a) => a.address) }),
+    background: (p: Promise<unknown>) => { if (ctx.waitUntil) ctx.waitUntil(p); else void p.catch(() => {}); },
     ...opts.webhook,
   });
   const publicDir = opts.publicDir ?? process.env.ACR_PUBLIC_DIR ?? join(process.cwd(), "public");
@@ -174,9 +209,6 @@ export async function createNodeRuntime(opts: NodeRuntimeOptions = {}): Promise<
 
   let lastPurge = 0;
   const lazyPurgeMs = opts.lazyPurgeMs ?? Number(process.env.ACR_LAZY_PURGE_MS ?? 0);
-  const ctx: Ctx = {
-    waitUntil(promise: Promise<unknown>) { void promise.catch(() => {}); },
-  };
   const maybeLazyPurge = () => {
     if (!lazyPurgeMs) return;
     const now = Date.now();
@@ -187,7 +219,7 @@ export async function createNodeRuntime(opts: NodeRuntimeOptions = {}): Promise<
 
   const handler = (req: IncomingMessage, res: ServerResponse) => {
     maybeLazyPurge();
-    void serve(svc, env, assets, ctx, req, res);
+    void serve(svc, env, assets, ctx, req, res, drain);
   };
 
   let timer: NodeJS.Timeout | undefined;
@@ -215,10 +247,13 @@ export async function createNodeRuntime(opts: NodeRuntimeOptions = {}): Promise<
  * 준비에 실패하면 다음 요청이 다시 시도한다.
  */
 export function createNodeHandler(opts: NodeRuntimeOptions = {}): (req: IncomingMessage, res: ServerResponse) => void {
+  // 서버리스는 응답 후 함수가 정리되므로, 웹훅 발송·재시도가 잘리지 않게 9초까지 붙잡는다
+  // (Vercel 기본 실행 상한 안에서 재시도 대부분이 끝나는 값. 장수 프로세스는 이 옵션을 쓰지 않는다).
+  const withDrain: NodeRuntimeOptions = { drainBackgroundMs: 9000, ...opts };
   let ready: Promise<NodeRuntime> | null = null;
   return (req, res) => {
     if (!ready) {
-      ready = createNodeRuntime(opts).then((rt) => {
+      ready = createNodeRuntime(withDrain).then((rt) => {
         if (opts.purgeIntervalMs && opts.purgeIntervalMs > 0) void rt.svc.purgeExpired().catch(() => {});
         return rt;
       });
